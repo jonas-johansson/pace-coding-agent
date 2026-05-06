@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { getUserInput } from "./input"
 import { z, ZodSchema } from "zod";
-import { readFile } from "fs/promises"
+import { readFile, writeFile } from "fs/promises"
 
 const ant = new Anthropic();
 const messages: Anthropic.MessageParam[] = [];
@@ -27,8 +27,8 @@ function Tool(descriptor: ToolDescriptor) {
 
 const readTool = Tool({
   name: "read",
-  description: "Read file content from an absolute or relative path.",
-  inputSchema: z.object({ path: z.string() }),
+  description: "Read content from a file.",
+  inputSchema: z.object({ path: z.string().describe("Absolute or relative path.") }),
   execute: async (input): Promise<ToolOutput> => {
     const fileData = await readFile(input.path, 'utf8');
     return {
@@ -36,6 +36,21 @@ const readTool = Tool({
     }
   }
 });
+
+const writeTool = Tool({
+  name: "write",
+  description: "Write content to a file.",
+  inputSchema: z.object({
+    path: z.string().describe("Absolute or relative path."),
+    content: z.string()
+  }),
+  execute: async (input): Promise<ToolOutput> => {
+    await writeFile(input.path, input.content);
+    return {
+      content: [{ type: "text", text: `Wrote file` }]
+    }
+  }
+})
 
 function makeAnthropicToolsFromCustomTools() {
   let transformedTools: Anthropic.Tool[] = [];
