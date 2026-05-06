@@ -7,19 +7,20 @@ const ant = new Anthropic();
 const messages: Anthropic.MessageParam[] = [];
 
 type ToolOutput = {
-  content: any[]; // TODO: Suitably type this
+  content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.SearchResultBlockParam | Anthropic.DocumentBlockParam | Anthropic.ToolReferenceBlockParam>;
 }
 
-type ToolDescriptor = {
+type ToolDescriptor<T extends ZodSchema = ZodSchema> = {
   name: string;
   description: string;
-  inputSchema: ZodSchema;
-  execute: any; // TODO: Infer function signature so that the execute function takes an input object (follows input schema) and returns a ToolOutput object
+  inputSchema: T;
+  stringify: (input: z.infer<T>) => string;
+  execute: (input: z.infer<T>) => Promise<ToolOutput>;
 }
 
 const registeredCustomTools: ToolDescriptor[] = [];
 
-function Tool(descriptor: ToolDescriptor) {
+function Tool<T extends ZodSchema>(descriptor: ToolDescriptor<T>) {
   registeredCustomTools.push(descriptor);
   console.log(`Registered tool ${descriptor.name}`);
   return descriptor;
@@ -28,7 +29,10 @@ function Tool(descriptor: ToolDescriptor) {
 const readTool = Tool({
   name: "read",
   description: "Read content from a file.",
-  inputSchema: z.object({ path: z.string().describe("Absolute or relative path.") }),
+  inputSchema: z.object({
+    path: z.string().describe("Absolute or relative path.")
+  }),
+  stringify: (input) => `read: ${input.path}`,
   execute: async (input): Promise<ToolOutput> => {
     const fileData = await readFile(input.path, 'utf8');
     return {
@@ -44,6 +48,7 @@ const writeTool = Tool({
     path: z.string(),
     content: z.string()
   }),
+  stringify: (input) => `write: ${input.path}`,
   execute: async (input): Promise<ToolOutput> => {
     await writeFile(input.path, input.content);
     return {
@@ -60,6 +65,7 @@ const editTool = Tool({
     oldText: z.string().describe("Old text to find and replace (must match exactly)"),
     newText: z.string().describe("New text to replace the old with")
   }),
+  stringify: (input) => `edit: ${input.path}`,
   execute: async (input): Promise<ToolOutput> => {
     const oldFileData = await readFile(input.path, 'utf8');
     const newFileData = oldFileData.replaceAll(input.oldText, input.newText);
@@ -78,10 +84,17 @@ const bashTool = Tool({
   inputSchema: z.object({
     command: z.string(),
   }),
+  stringify: (input) => `bash: ${input.command}`,
   execute: async (input): Promise<ToolOutput> => {
-    const bashOutput = execSync(input.command).toString();
-    return {
-      content: [{ type: "text", text: bashOutput }]
+    try {
+      const bashOutput = execSync(input.command).toString();
+      return {
+        content: [{ type: "text", text: bashOutput }]
+      }
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error?.toString()}`}]
+      }
     }
   }
 })
@@ -123,18 +136,17 @@ async function main() {
       // Tool use
       for (let i=0; i<response.content.length; i++) {
         const cb = response.content[i];
-        // console.log("content block", cb);
         if (cb.type == "text") {
           console.log(cb.text);
         }
         else if (cb.type == "tool_use") {
           const nameOfToolToExecute = cb.name;
           // console.log(`[${cb.name}]`);
-          console.log(`[${cb.name}: ${JSON.stringify(cb.input, null, 2)}]`);
           const toolToExecute = registeredCustomTools.find(tool => tool.name === nameOfToolToExecute);
           if (!toolToExecute) {
             throw new Error("Couldn't find tool " + nameOfToolToExecute);
           }
+          console.log(`-> ${toolToExecute.stringify(cb.input)}`);
           const inputParseResult = toolToExecute.inputSchema.safeParse(cb.input);
           if (!inputParseResult.success) {
             throw new Error(`Input object in content block doesn't match the input schema for the tool`);
