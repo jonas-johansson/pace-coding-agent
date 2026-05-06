@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { getUserInput } from "./input"
-import { z, ZodSchema } from "zod";
+import { z } from "zod";
 import { readFile, writeFile } from "fs/promises"
 
 const ant = new Anthropic();
@@ -10,7 +10,9 @@ type ToolOutput = {
   content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.SearchResultBlockParam | Anthropic.DocumentBlockParam | Anthropic.ToolReferenceBlockParam>;
 }
 
-type ToolDescriptor<T extends ZodSchema = ZodSchema> = {
+type ZodObjectSchema = z.ZodObject<z.core.$ZodShape>;
+
+type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
   name: string;
   description: string;
   inputSchema: T;
@@ -20,8 +22,8 @@ type ToolDescriptor<T extends ZodSchema = ZodSchema> = {
 
 const registeredCustomTools: ToolDescriptor[] = [];
 
-function Tool<T extends ZodSchema>(descriptor: ToolDescriptor<T>) {
-  registeredCustomTools.push(descriptor);
+function Tool<T extends ZodObjectSchema>(descriptor: ToolDescriptor<T>) {
+  registeredCustomTools.push(descriptor as ToolDescriptor);
   console.log(`Registered tool ${descriptor.name}`);
   return descriptor;
 }
