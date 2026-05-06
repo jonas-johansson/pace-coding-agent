@@ -21,7 +21,7 @@ const registeredCustomTools: ToolDescriptor[] = [];
 
 function Tool(descriptor: ToolDescriptor) {
   registeredCustomTools.push(descriptor);
-  console.log(`Registered custom tool ${descriptor.name}`);
+  console.log(`Registered tool ${descriptor.name}`);
   return descriptor;
 }
 
@@ -112,7 +112,7 @@ async function main() {
     // Assistant
     while (true) {
       const response = await ant.messages.create({
-        model: "claude-haiku-4-5",
+        model: "claude-opus-4-6",
         max_tokens: 1000,
         messages,
         tools: antTools
