@@ -146,11 +146,27 @@ async function main() {
           if (!toolToExecute) {
             throw new Error("Couldn't find tool " + nameOfToolToExecute);
           }
-          console.log(`-> ${toolToExecute.stringify(cb.input)}`);
           const inputParseResult = toolToExecute.inputSchema.safeParse(cb.input);
           if (!inputParseResult.success) {
-            throw new Error(`Input object in content block doesn't match the input schema for the tool`);
+            console.error(
+              `[tool:${nameOfToolToExecute}] input did not match schema.\n` +
+              `Received input: ${JSON.stringify(cb.input, null, 2)}\n` +
+              `Zod errors: ${JSON.stringify(inputParseResult.error.issues, null, 2)}`
+            );
+            messages.push({
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: cb.id,
+                  is_error: true,
+                  content: [{ type: "text", text: `Input did not match schema: ${JSON.stringify(inputParseResult.error.issues)}` }]
+                }
+              ]
+            });
+            continue;
           }
+          console.log(`[tool] ${toolToExecute.stringify(inputParseResult.data)}`);
           const toolOutput = await toolToExecute.execute(inputParseResult.data) as ToolOutput;
           // console.log("toolResult", JSON.stringify(toolOutput, null, 2));
           messages.push({
