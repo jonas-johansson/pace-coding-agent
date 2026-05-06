@@ -41,13 +41,31 @@ const writeTool = Tool({
   name: "write",
   description: "Write content to a file.",
   inputSchema: z.object({
-    path: z.string().describe("Absolute or relative path."),
+    path: z.string(),
     content: z.string()
   }),
   execute: async (input): Promise<ToolOutput> => {
     await writeFile(input.path, input.content);
     return {
       content: [{ type: "text", text: `Wrote file` }]
+    }
+  }
+});
+
+const editTool = Tool({
+  name: "edit",
+  description: "Edit a file by replacing exact text.",
+  inputSchema: z.object({
+    path: z.string(),
+    oldText: z.string().describe("Old text to find and replace (must match exactly)"),
+    newText: z.string().describe("New text to replace the old with")
+  }),
+  execute: async (input): Promise<ToolOutput> => {
+    const oldFileData = await readFile(input.path, 'utf8');
+    const newFileData = oldFileData.replaceAll(input.oldText, input.newText);
+    await writeFile(input.path, newFileData);
+    return {
+      content: [{ type: "text", text: `Edited file` }]
     }
   }
 })
@@ -95,7 +113,8 @@ async function main() {
         }
         else if (cb.type == "tool_use") {
           const nameOfToolToExecute = cb.name;
-          console.log(`[${cb.name}]`);
+          // console.log(`[${cb.name}]`);
+          console.log(`[${cb.name}: ${JSON.stringify(cb.input, null, 2)}]`);
           const toolToExecute = registeredCustomTools.find(tool => tool.name === nameOfToolToExecute);
           if (!toolToExecute) {
             throw new Error("Couldn't find tool " + nameOfToolToExecute);
