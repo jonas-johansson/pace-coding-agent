@@ -11,12 +11,14 @@ async function main() {
   while (true) {
 
     // User
+    console.log("\n----------------------------\n")
     const input = await getUserInput("User: ");
     messages.push({ role: "user", content: [ { type: "text", text: input } ]});
 
     // Assistant
     while (true) {
-      console.log("...");
+      // console.log("...");
+      console.log();
       const response = await ant.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 16_000,

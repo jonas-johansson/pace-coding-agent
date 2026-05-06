@@ -33,7 +33,7 @@ const readTool = Tool({
   inputSchema: z.object({
     path: z.string().describe("Absolute or relative path.")
   }),
-  stringify: (input) => `read: ${input.path}`,
+  stringify: (input) => `Read ${input.path}`,
   execute: async (input): Promise<ToolOutput> => {
     const fileData = await readFile(input.path, 'utf8');
     return {
@@ -49,7 +49,7 @@ const writeTool = Tool({
     path: z.string(),
     content: z.string()
   }),
-  stringify: (input) => `write: ${input.path}`,
+  stringify: (input) => `Write ${input.path}`,
   execute: async (input): Promise<ToolOutput> => {
     await writeFile(input.path, input.content);
     return {
@@ -66,7 +66,7 @@ const editTool = Tool({
     oldText: z.string().describe("Old text to find and replace (must match exactly)"),
     newText: z.string().describe("New text to replace the old with")
   }),
-  stringify: (input) => `edit: ${input.path}`,
+  stringify: (input) => `Edit ${input.path}`,
   execute: async (input): Promise<ToolOutput> => {
     const oldFileData = await readFile(input.path, 'utf8');
     const newFileData = oldFileData.replaceAll(input.oldText, input.newText);
@@ -85,10 +85,11 @@ const bashTool = Tool({
   inputSchema: z.object({
     command: z.string(),
   }),
-  stringify: (input) => `bash: ${input.command}`,
+  stringify: (input) => `Bash: ${input.command}`,
   execute: async (input): Promise<ToolOutput> => {
     try {
       const bashOutput = execSync(input.command).toString();
+      console.log(bashOutput);
       return {
         content: [{ type: "text", text: bashOutput }]
       }
