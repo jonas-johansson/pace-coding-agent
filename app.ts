@@ -69,14 +69,18 @@ async function main() {
         tools: antTools
       });
       messages.push({ role: "assistant", content: response.content })
-      console.log(JSON.stringify(response, null, 2));
+      // console.log(JSON.stringify(response, null, 2));
 
       // Tool use
       for (let i=0; i<response.content.length; i++) {
         const cb = response.content[i];
-        if (cb.type == "tool_use") {
-          console.log("[processing tool use]", cb);
+        // console.log("content block", cb);
+        if (cb.type == "text") {
+          console.log(cb.text);
+        }
+        else if (cb.type == "tool_use") {
           const nameOfToolToExecute = cb.name;
+          console.log(`[${cb.name}]`);
           const toolToExecute = registeredCustomTools.find(tool => tool.name === nameOfToolToExecute);
           if (!toolToExecute) {
             throw new Error("Couldn't find tool " + nameOfToolToExecute);
@@ -86,7 +90,7 @@ async function main() {
             throw new Error(`Input object in content block doesn't match the input schema for the tool`);
           }
           const toolOutput = await toolToExecute.execute(inputParseResult.data) as ToolOutput;
-          console.log("toolResult", JSON.stringify(toolOutput, null, 2));
+          // console.log("toolResult", JSON.stringify(toolOutput, null, 2));
           messages.push({
             role: "user",
             content: [
@@ -97,6 +101,8 @@ async function main() {
               }
             ]}
           );
+        } else {
+          console.warn(`Unhandled content block type: ${cb.type}`);
         }
       }
 
