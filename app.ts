@@ -70,6 +70,22 @@ const editTool = Tool({
   }
 })
 
+const { execSync } = require('child_process');
+
+const bashTool = Tool({
+  name: "bash",
+  description: "Execute a bash command.",
+  inputSchema: z.object({
+    command: z.string(),
+  }),
+  execute: async (input): Promise<ToolOutput> => {
+    const bashOutput = execSync(input.command).toString();
+    return {
+      content: [{ type: "text", text: bashOutput }]
+    }
+  }
+})
+
 function makeAnthropicToolsFromCustomTools() {
   let transformedTools: Anthropic.Tool[] = [];
   for (let i=0; i < registeredCustomTools.length; i++) {
