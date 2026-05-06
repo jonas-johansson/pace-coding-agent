@@ -1,3 +1,3 @@
-- [ ] Tighten the `ToolDescriptor` generic so `execute` input is strongly typed end-to-end
+- [x] Tighten the `ToolDescriptor` generic so `execute` input is strongly typed end-to-end
 - [ ] Replace the `any`-style `error?.toString()` in the bash tool with a properly typed error handler
 - [ ] Add runtime validation that no two tools share the same `name` during registration

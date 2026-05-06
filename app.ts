@@ -93,9 +93,10 @@ const bashTool = Tool({
       return {
         content: [{ type: "text", text: bashOutput }]
       }
-    } catch (error) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
-        content: [{ type: "text", text: `Error: ${error?.toString()}`}]
+        content: [{ type: "text", text: `Error: ${message}`}]
       }
     }
   }
