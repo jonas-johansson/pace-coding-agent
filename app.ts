@@ -23,6 +23,9 @@ type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
 const registeredCustomTools: ToolDescriptor[] = [];
 
 function Tool<T extends ZodObjectSchema>(descriptor: ToolDescriptor<T>) {
+  if (registeredCustomTools.some(tool => tool.name === descriptor.name)) {
+    throw new Error(`Duplicate tool name: "${descriptor.name}" is already registered`);
+  }
   registeredCustomTools.push(descriptor as ToolDescriptor);
   console.log(`Registered tool ${descriptor.name}`);
   return descriptor;
