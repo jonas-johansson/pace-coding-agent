@@ -1,0 +1,1 @@
+Run: `tsx app.ts`
