@@ -116,6 +116,8 @@ Your chat history has been cleared and you're ready to start fresh.
 ### Quick Reminders
 - **Enter** to send messages
 - **Ctrl+J** or **Shift+Enter** for newlines
+- **Arrow keys** to move cursor in input
+- **Alt+Up/Down** to scroll messages
 - **Tab** to switch models
 - Use **/model** to select a specific model
 - **ESC** to cancel the current operation
@@ -483,6 +485,13 @@ async function main() {
     content: `## Keyboard Shortcuts
 - **Enter** — Send your message
 - **Ctrl+J** — Add a newline
+- **Arrow keys** — Move cursor in the input field
+- **Alt+Left/Right** — Move cursor by word
+- **Home/End** — Move to start/end of visual line
+- **Alt+Up/Down** — Scroll messages
+- **Page Up/Down** — Scroll messages by half page
+- **Ctrl+Home/End** — Scroll to top/bottom
+- **Delete** — Delete character after cursor
 - **Tab** — Cycle through available models
 - **ESC** — Cancel current operation
 - **Ctrl+C** — Quit the application

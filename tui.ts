@@ -76,6 +76,8 @@ const ERROR_GLYPH = { glyph: "✗", color: 217 };
 export class Tui {
   private blocks: RenderBlock[] = [];
   private input = "";
+  private inputCursor = 0;
+  private inputScrollRow = 0;
   private nextBlockId = 1;
   private running = false;
   private status = "idle";
@@ -319,8 +321,7 @@ export class Tui {
       }
 
       if (char === "\u007f") {
-        this.input = Array.from(this.input).slice(0, -1).join("");
-        this.requestRender();
+        this.deleteBackward();
         continue;
       }
 
@@ -336,8 +337,7 @@ export class Tui {
 
       if (char === "\u0015") {
         if (this.input) {
-          this.input = "";
-          this.requestRender();
+          this.clearInputBeforeCursor();
         } else {
           this.scrollPageUp();
         }
@@ -352,8 +352,7 @@ export class Tui {
       }
 
       if (char >= " " && char !== "\u007f") {
-        this.input += char;
-        this.requestRender();
+        this.insertCharAtCursor(char);
       }
     }
   };
@@ -378,28 +377,81 @@ export class Tui {
     }
 
     switch (data) {
+      // Arrow keys — cursor movement in the input field
       case "\x1b[A":
-        this.scrollBy(1);
+        this.clearSelection();
+        this.moveCursorUp();
         return true;
       case "\x1b[B":
+        this.clearSelection();
+        this.moveCursorDown();
+        return true;
+      case "\x1b[C":
+        this.clearSelection();
+        this.moveCursorRight();
+        return true;
+      case "\x1b[D":
+        this.clearSelection();
+        this.moveCursorLeft();
+        return true;
+
+      // Alt+Up / Alt+Down — scroll the message area
+      case "\x1b[1;3A":
+        this.scrollBy(1);
+        return true;
+      case "\x1b[1;3B":
         this.scrollBy(-1);
         return true;
+
+      // Alt+Left / Alt+Right — word movement
+      case "\x1b[1;3D":
+      case "\x1bb":
+        this.clearSelection();
+        this.moveCursorWordLeft();
+        return true;
+      case "\x1b[1;3C":
+      case "\x1bf":
+        this.clearSelection();
+        this.moveCursorWordRight();
+        return true;
+
+      // Page Up / Page Down
       case "\x1b[5~":
         this.scrollPageUp();
         return true;
       case "\x1b[6~":
         this.scrollPageDown();
         return true;
+
+      // Home / End — move cursor to start/end of current visual line
       case "\x1b[H":
       case "\x1b[1~":
       case "\x1bOH":
-        this.scrollToTop();
+        this.clearSelection();
+        this.moveCursorHome();
         return true;
       case "\x1b[F":
       case "\x1b[4~":
       case "\x1bOF":
+        this.clearSelection();
+        this.moveCursorEnd();
+        return true;
+
+      // Ctrl+Home / Ctrl+End — scroll to top/bottom of messages
+      case "\x1b[1;5H":
+        this.scrollToTop();
+        return true;
+      case "\x1b[1;5F":
         this.scrollToBottom();
         return true;
+
+      // Delete key — delete character after cursor
+      case "\x1b[3~":
+        this.clearSelection();
+        this.deleteForward();
+        return true;
+
+      // Alt+Backspace — delete word
       case "\x1b\u007f":
       case "\x1b\b":
         this.deleteWord();
@@ -410,27 +462,66 @@ export class Tui {
   }
 
   private insertInputNewline() {
-    this.input += "\n";
+    this.insertCharAtCursor("\n");
+  }
+
+  private insertCharAtCursor(char: string) {
+    const chars = Array.from(this.input);
+    chars.splice(this.inputCursor, 0, char);
+    this.input = chars.join("");
+    this.inputCursor += 1;
     this.requestRender();
   }
 
-  private deleteWord() {
-    if (!this.input) {
+  private deleteBackward() {
+    if (this.inputCursor <= 0) {
       return;
     }
 
     const chars = Array.from(this.input);
-    let index = chars.length - 1;
+    chars.splice(this.inputCursor - 1, 1);
+    this.input = chars.join("");
+    this.inputCursor -= 1;
+    this.requestRender();
+  }
 
-    // If last char is a special character (not alphanumeric, not space), remove just it
+  private deleteForward() {
+    const chars = Array.from(this.input);
+    if (this.inputCursor >= chars.length) {
+      return;
+    }
+
+    chars.splice(this.inputCursor, 1);
+    this.input = chars.join("");
+    this.requestRender();
+  }
+
+  private clearInputBeforeCursor() {
+    const chars = Array.from(this.input);
+    this.input = chars.slice(this.inputCursor).join("");
+    this.inputCursor = 0;
+    this.requestRender();
+  }
+
+  private deleteWord() {
+    if (this.inputCursor <= 0) {
+      return;
+    }
+
+    const chars = Array.from(this.input);
+    let index = this.inputCursor - 1;
+
+    // If char before cursor is a special character (not alphanumeric, not space), remove just it
     const lastChar = chars[index];
     if (lastChar && !/^[\p{L}\p{Nd}]$/u.test(lastChar) && lastChar !== " ") {
-      this.input = chars.slice(0, index).join("");
+      chars.splice(index, 1);
+      this.input = chars.join("");
+      this.inputCursor -= 1;
       this.requestRender();
       return;
     }
 
-    // If last char is a space, remove trailing spaces then the preceding word
+    // If char before cursor is a space, remove trailing spaces then the preceding word
     if (lastChar === " ") {
       while (index >= 0 && chars[index] === " ") {
         index -= 1;
@@ -442,7 +533,146 @@ export class Tui {
       index -= 1;
     }
 
-    this.input = chars.slice(0, index + 1).join("");
+    const deleteFrom = index + 1;
+    const deleteCount = this.inputCursor - deleteFrom;
+    chars.splice(deleteFrom, deleteCount);
+    this.input = chars.join("");
+    this.inputCursor = deleteFrom;
+    this.requestRender();
+  }
+
+  private moveCursorLeft() {
+    if (this.inputCursor > 0) {
+      this.inputCursor -= 1;
+      this.requestRender();
+    }
+  }
+
+  private moveCursorRight() {
+    const length = Array.from(this.input).length;
+    if (this.inputCursor < length) {
+      this.inputCursor += 1;
+      this.requestRender();
+    }
+  }
+
+  private moveCursorWordLeft() {
+    if (this.inputCursor <= 0) {
+      return;
+    }
+
+    const chars = Array.from(this.input);
+    let index = this.inputCursor - 1;
+
+    // Skip spaces
+    while (index >= 0 && (chars[index] === " " || chars[index] === "\t")) {
+      index -= 1;
+    }
+
+    // Skip word characters
+    while (index >= 0 && /^[\p{L}\p{Nd}]$/u.test(chars[index])) {
+      index -= 1;
+    }
+
+    // If we only skipped spaces and hit a non-word char, move past it
+    if (index === this.inputCursor - 1) {
+      index -= 1;
+    }
+
+    this.inputCursor = Math.max(0, index + 1);
+    this.requestRender();
+  }
+
+  private moveCursorWordRight() {
+    const chars = Array.from(this.input);
+    if (this.inputCursor >= chars.length) {
+      return;
+    }
+
+    let index = this.inputCursor;
+
+    // Skip word characters
+    while (index < chars.length && /^[\p{L}\p{Nd}]$/u.test(chars[index])) {
+      index += 1;
+    }
+
+    // Skip spaces
+    while (index < chars.length && (chars[index] === " " || chars[index] === "\t")) {
+      index += 1;
+    }
+
+    // If we didn't move (started on a non-word, non-space char), skip it
+    if (index === this.inputCursor) {
+      index += 1;
+    }
+
+    this.inputCursor = Math.min(chars.length, index);
+    this.requestRender();
+  }
+
+  private moveCursorUp() {
+    const columns = Math.max(process.stdout.columns ?? 80, 1);
+    const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
+    const textWidth = Math.max(1, columns - horizontalPadding * 2);
+    const raw = sanitizeContent(this.input);
+    const layout = wrapInputTextWithCursor(raw, textWidth, this.inputCursor);
+
+    if (layout.cursorLine <= 0) {
+      // Already on the first visual line — move to start
+      this.inputCursor = 0;
+      this.requestRender();
+      return;
+    }
+
+    // Move to same visual column on the previous line
+    const targetLine = layout.cursorLine - 1;
+    const targetCol = layout.cursorCol;
+    this.inputCursor = layout.charOffsetAt(targetLine, targetCol);
+    this.requestRender();
+  }
+
+  private moveCursorDown() {
+    const columns = Math.max(process.stdout.columns ?? 80, 1);
+    const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
+    const textWidth = Math.max(1, columns - horizontalPadding * 2);
+    const raw = sanitizeContent(this.input);
+    const layout = wrapInputTextWithCursor(raw, textWidth, this.inputCursor);
+
+    if (layout.cursorLine >= layout.lines.length - 1) {
+      // Already on the last visual line — move to end
+      this.inputCursor = Array.from(this.input).length;
+      this.requestRender();
+      return;
+    }
+
+    // Move to same visual column on the next line
+    const targetLine = layout.cursorLine + 1;
+    const targetCol = layout.cursorCol;
+    this.inputCursor = layout.charOffsetAt(targetLine, targetCol);
+    this.requestRender();
+  }
+
+  private moveCursorHome() {
+    const columns = Math.max(process.stdout.columns ?? 80, 1);
+    const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
+    const textWidth = Math.max(1, columns - horizontalPadding * 2);
+    const raw = sanitizeContent(this.input);
+    const layout = wrapInputTextWithCursor(raw, textWidth, this.inputCursor);
+
+    this.inputCursor = layout.charOffsetAt(layout.cursorLine, 0);
+    this.requestRender();
+  }
+
+  private moveCursorEnd() {
+    const columns = Math.max(process.stdout.columns ?? 80, 1);
+    const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
+    const textWidth = Math.max(1, columns - horizontalPadding * 2);
+    const raw = sanitizeContent(this.input);
+    const layout = wrapInputTextWithCursor(raw, textWidth, this.inputCursor);
+
+    const lineText = layout.lines[layout.cursorLine] ?? "";
+    const lineWidth = displayWidth(lineText);
+    this.inputCursor = layout.charOffsetAt(layout.cursorLine, lineWidth);
     this.requestRender();
   }
 
@@ -644,6 +874,8 @@ export class Tui {
     const submitted = this.input.trimEnd();
     if (!submitted.trim()) {
       this.input = "";
+      this.inputCursor = 0;
+      this.inputScrollRow = 0;
       this.requestRender();
       return;
     }
@@ -655,6 +887,8 @@ export class Tui {
     }
 
     this.input = "";
+    this.inputCursor = 0;
+    this.inputScrollRow = 0;
     this.scrollOffset = 0;
     this.clearSelection();
     this.requestRender();
@@ -782,19 +1016,43 @@ export class Tui {
     const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
     const textWidth = Math.max(1, columns - horizontalPadding * 2);
     const raw = sanitizeContent(`${prompt}${this.input}`);
-    const wrapped = wrapInputText(raw, textWidth);
+
+    // Clamp cursor to valid range
+    const inputLength = Array.from(this.input).length;
+    if (this.inputCursor > inputLength) {
+      this.inputCursor = inputLength;
+    }
+    if (this.inputCursor < 0) {
+      this.inputCursor = 0;
+    }
+
+    const layout = wrapInputTextWithCursor(raw, textWidth, this.inputCursor);
+    const wrapped = layout.lines;
     const hasPadding = maxRows >= INPUT_VERTICAL_PADDING + 1;
     const contentRows = Math.max(1, maxRows - (hasPadding ? INPUT_VERTICAL_PADDING : 0));
-    const visibleRows = wrapped.slice(-contentRows);
-    const cursorText = visibleRows[visibleRows.length - 1] ?? "";
-    const cursorCol = Math.max(1, Math.min(columns, horizontalPadding + visibleLength(cursorText) + 1));
+
+    // Ensure the cursor line is visible by adjusting inputScrollRow
+    const cursorLine = layout.cursorLine;
+    if (cursorLine < this.inputScrollRow) {
+      this.inputScrollRow = cursorLine;
+    }
+    if (cursorLine >= this.inputScrollRow + contentRows) {
+      this.inputScrollRow = cursorLine - contentRows + 1;
+    }
+    // Clamp scroll to valid range
+    const maxInputScroll = Math.max(0, wrapped.length - contentRows);
+    this.inputScrollRow = Math.min(Math.max(0, this.inputScrollRow), maxInputScroll);
+
+    const visibleRows = wrapped.slice(this.inputScrollRow, this.inputScrollRow + contentRows);
+    const cursorRowInView = cursorLine - this.inputScrollRow;
+    const cursorCol = Math.max(1, Math.min(columns, horizontalPadding + layout.cursorCol + 1));
     const renderedContent = visibleRows.map((line) => renderBar(`${" ".repeat(horizontalPadding)}${line}`, columns, 236, 252));
 
     return {
       lines: hasPadding
         ? [renderBar("", columns, 236, 252), ...renderedContent, renderBar("", columns, 236, 252)]
         : renderedContent,
-      cursorRow: (hasPadding ? 1 : 0) + visibleRows.length,
+      cursorRow: (hasPadding ? 1 : 0) + cursorRowInView + 1,
       cursorCol,
     };
   }
@@ -1118,20 +1376,171 @@ function parseMarkdownLine(line: string): StyledSegment[] {
   return segments.length > 0 ? segments : [{ text: "", style: "normal" }];
 }
 
-function wrapInputText(text: string, width: number) {
-  const rows = text.split("\n").flatMap((line) => wrapInputLine(line, width));
-  return rows.length > 0 ? rows : [""];
+type InputLayout = {
+  lines: string[];
+  cursorLine: number;
+  cursorCol: number;
+  /** Given a visual (line, col) position, return the character offset into the input text. */
+  charOffsetAt: (line: number, col: number) => number;
+};
+
+/**
+ * Wraps input text for display and computes cursor position within the
+ * wrapped layout. Also provides a reverse mapping from visual coordinates
+ * back to character offsets, used for Up/Down/Home/End cursor movement.
+ *
+ * `cursorPos` is a character (grapheme) offset into `text`, ranging from
+ * 0 to Array.from(text).length inclusive.
+ */
+function wrapInputTextWithCursor(text: string, width: number, cursorPos: number): InputLayout {
+  const allChars = Array.from(text);
+  const maxWidth = Math.max(1, width);
+
+  // We process the text line-by-line (split on \n), wrapping each line.
+  // For each character we track which visual row/col it maps to, and
+  // build the reverse mapping at the same time.
+
+  const lines: string[] = [];
+  // For each visual line, store the char offset of its first character
+  const lineStartOffsets: number[] = [];
+  // For each visual line, store an array of { charOffset, cellStart } for
+  // each character on that line, to enable reverse lookup.
+  const lineCharMaps: { charOffset: number; cellStart: number; cellEnd: number }[][] = [];
+
+  let cursorLine = 0;
+  let cursorCol = 0;
+  let globalCharIndex = 0; // index into allChars
+
+  const rawLines = text.split("\n");
+  for (let lineIdx = 0; lineIdx < rawLines.length; lineIdx++) {
+    const rawLine = rawLines[lineIdx];
+    const lineChars = Array.from(rawLine);
+    const lineStartGlobal = globalCharIndex;
+
+    // Wrap this single line, tracking character positions
+    const wrappedRows = wrapInputLineWithOffsets(lineChars, maxWidth, lineStartGlobal);
+
+    if (wrappedRows.length === 0) {
+      // Empty line
+      const row = lines.length;
+      lines.push("");
+      lineStartOffsets.push(lineStartGlobal);
+      lineCharMaps.push([]);
+
+      // Check if cursor is at this position (at the \n or end of text)
+      if (cursorPos === globalCharIndex) {
+        cursorLine = row;
+        cursorCol = 0;
+      }
+    } else {
+      for (const wrappedRow of wrappedRows) {
+        const row = lines.length;
+        lines.push(wrappedRow.text);
+        lineStartOffsets.push(wrappedRow.startOffset);
+        lineCharMaps.push(wrappedRow.charMap);
+
+        // Check if cursor falls within this row
+        for (const entry of wrappedRow.charMap) {
+          if (entry.charOffset === cursorPos) {
+            cursorLine = row;
+            cursorCol = entry.cellStart;
+          }
+        }
+
+        // Cursor might be at the end of this row (after the last char)
+        const lastEntry = wrappedRow.charMap[wrappedRow.charMap.length - 1];
+        if (lastEntry && lastEntry.charOffset + 1 === cursorPos) {
+          // Only set if this is the last wrapped row for this raw line,
+          // or if cursorPos points to a \n
+          const isLastWrappedRow = wrappedRow === wrappedRows[wrappedRows.length - 1];
+          if (isLastWrappedRow) {
+            cursorLine = row;
+            cursorCol = lastEntry.cellEnd;
+          }
+        }
+      }
+    }
+
+    // Account for the \n between raw lines
+    globalCharIndex = lineStartGlobal + lineChars.length;
+    if (lineIdx < rawLines.length - 1) {
+      // There's a \n separator
+      if (cursorPos === globalCharIndex) {
+        // Cursor is right on the \n — show at end of last wrapped row of this line
+        const row = lines.length - 1;
+        const map = lineCharMaps[row];
+        const lastEntry = map?.[map.length - 1];
+        cursorLine = row;
+        cursorCol = lastEntry ? lastEntry.cellEnd : 0;
+      }
+      globalCharIndex += 1; // skip the \n
+    }
+  }
+
+  // Handle cursor at very end of text
+  if (cursorPos >= allChars.length && lines.length > 0) {
+    const lastRow = lines.length - 1;
+    const map = lineCharMaps[lastRow];
+    const lastEntry = map?.[map.length - 1];
+    cursorLine = lastRow;
+    cursorCol = lastEntry ? lastEntry.cellEnd : 0;
+  }
+
+  const charOffsetAt = (line: number, col: number): number => {
+    const clampedLine = Math.max(0, Math.min(lines.length - 1, line));
+    const map = lineCharMaps[clampedLine];
+    if (!map || map.length === 0) {
+      return lineStartOffsets[clampedLine] ?? 0;
+    }
+
+    // Find the character whose cell range contains `col`, or the closest one
+    let best = map[0].charOffset;
+    for (const entry of map) {
+      if (col >= entry.cellEnd) {
+        best = entry.charOffset + 1;
+      } else if (col >= entry.cellStart) {
+        best = entry.charOffset;
+        break;
+      } else {
+        break;
+      }
+    }
+
+    return Math.min(best, allChars.length);
+  };
+
+  return { lines, cursorLine, cursorCol, charOffsetAt };
 }
 
-function wrapInputLine(text: string, width: number) {
-  const rows: string[] = [];
-  const chars = Array.from(text);
-  const maxWidth = Math.max(1, width);
+type WrappedRowInfo = {
+  text: string;
+  startOffset: number;
+  charMap: { charOffset: number; cellStart: number; cellEnd: number }[];
+};
+
+/**
+ * Wraps a single line's characters into visual rows, tracking the global
+ * character offset for each character placed.
+ */
+function wrapInputLineWithOffsets(
+  chars: string[],
+  maxWidth: number,
+  globalStart: number,
+): WrappedRowInfo[] {
+  const rows: WrappedRowInfo[] = [];
   let index = 0;
 
+  if (chars.length === 0) {
+    return [];
+  }
+
   while (index < chars.length) {
+    // Skip leading whitespace on continuation rows
     while (rows.length > 0 && isInputWrapWhitespace(chars[index])) {
       index += 1;
+    }
+    if (index >= chars.length) {
+      break;
     }
 
     let end = index;
@@ -1152,7 +1561,16 @@ function wrapInputLine(text: string, width: number) {
     }
 
     if (end >= chars.length) {
-      rows.push(chars.slice(index, end).join(""));
+      // Last row — take everything
+      const rowChars = chars.slice(index, end);
+      const charMap: WrappedRowInfo["charMap"] = [];
+      let cell = 0;
+      for (let i = 0; i < rowChars.length; i++) {
+        const w = charWidth(rowChars[i]);
+        charMap.push({ charOffset: globalStart + index + i, cellStart: cell, cellEnd: cell + w });
+        cell += w;
+      }
+      rows.push({ text: rowChars.join(""), startOffset: globalStart + index, charMap });
       break;
     }
 
@@ -1171,11 +1589,19 @@ function wrapInputLine(text: string, width: number) {
       next = rowEnd;
     }
 
-    rows.push(chars.slice(index, rowEnd).join(""));
+    const rowChars = chars.slice(index, rowEnd);
+    const charMap: WrappedRowInfo["charMap"] = [];
+    let cell = 0;
+    for (let i = 0; i < rowChars.length; i++) {
+      const w = charWidth(rowChars[i]);
+      charMap.push({ charOffset: globalStart + index + i, cellStart: cell, cellEnd: cell + w });
+      cell += w;
+    }
+    rows.push({ text: rowChars.join(""), startOffset: globalStart + index, charMap });
     index = next;
   }
 
-  return rows.length > 0 ? rows : [""];
+  return rows;
 }
 
 function isInputWrapWhitespace(char: string | undefined) {
