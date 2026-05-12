@@ -13,6 +13,11 @@ export type RenderBlock = {
 
 export type BlockPatch = Partial<Pick<RenderBlock, "title" | "content" | "state">>;
 
+export type ContextInfo = {
+  usedTokens: number;
+  contextWindow: number;
+};
+
 type SubmitHandler = (input: string) => void | Promise<void>;
 type SegmentStyle = "normal" | "bold" | "italic" | "code" | "heading" | "title";
 
@@ -89,6 +94,7 @@ export class Tui {
   private blockLineMap: number[] = [];
   private lastMessageStart = 0;
   private lastMessageRows = 0;
+  private contextInfo: ContextInfo | undefined;
 
   constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; model?: string } = {}) {
     this.model = options.model ?? "";
@@ -198,6 +204,11 @@ export class Tui {
 
   setModel(model: string) {
     this.model = model;
+    this.requestRender();
+  }
+
+  setContextInfo(info: ContextInfo) {
+    this.contextInfo = info;
     this.requestRender();
   }
 
@@ -740,17 +751,20 @@ export class Tui {
     const statusText = !this.running && (!this.status || this.status === "idle") ? "" : this.status || "idle";
     const scrollText = this.scrollOffset > 0 ? `${statusText ? " | " : ""}scroll ${this.scrollOffset}/${maxScroll} | End latest` : "";
     const leftText = `${spinner}${statusText}${scrollText}`;
+    const contextText = this.contextInfo ? `  ${formatContextInfo(this.contextInfo)}  ` : "";
     const modelText = this.model ? `  ${this.model}  ` : "";
     const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
-    const modelWidth = visibleLength(modelText);
-    const leftWidth = Math.max(1, columns - horizontalPadding * 2 - modelWidth);
+    const rightWidth = visibleLength(contextText) + visibleLength(modelText);
+    const leftWidth = Math.max(1, columns - horizontalPadding * 2 - rightWidth);
     const leftVisible = takeRight(leftText, leftWidth);
     const leftPadded = `${" ".repeat(horizontalPadding)}${leftVisible}`;
     const leftPaddedWidth = visibleLength(leftPadded);
-    const gapWidth = Math.max(0, columns - leftPaddedWidth - modelWidth);
+    const gapWidth = Math.max(0, columns - leftPaddedWidth - rightWidth);
     const fgColor = this.running ? 229 : 250;
+    const contextFgColor = this.contextInfo && this.contextInfo.usedTokens / this.contextInfo.contextWindow >= 0.8 ? 217 : 245;
     return (
       `${bg(235)}${fg(fgColor)}${leftPadded}${" ".repeat(gapWidth)}` +
+      `${bg(238)}${fg(contextFgColor)}${contextText}` +
       `${bg(238)}${fg(109)}${modelText}${RESET}`
     );
   }
@@ -1346,6 +1360,27 @@ function isWide(codePoint: number) {
     (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
     (codePoint >= 0x1f000 && codePoint <= 0x1faff)
   );
+}
+
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    const value = tokens / 1_000_000;
+    return value % 1 === 0 ? `${value}M` : `${value.toFixed(1)}M`;
+  }
+  if (tokens >= 1_000) {
+    const value = tokens / 1_000;
+    return value % 1 === 0 ? `${value}k` : `${value.toFixed(1)}k`;
+  }
+  return `${tokens}`;
+}
+
+function formatContextInfo(info: ContextInfo): string {
+  const used = formatTokenCount(info.usedTokens);
+  const total = formatTokenCount(info.contextWindow);
+  const percent = info.contextWindow > 0
+    ? Math.round((info.usedTokens / info.contextWindow) * 100)
+    : 0;
+  return `${used}/${total} (${percent}%)`;
 }
 
 function fg(code: number) {

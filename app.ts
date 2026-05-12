@@ -15,6 +15,12 @@ const MODEL_ALIASES: Record<string, (typeof AVAILABLE_MODELS)[number]> = {
   "opus": "claude-opus-4-6",
 };
 
+const MODEL_CONTEXT_WINDOW: Record<(typeof AVAILABLE_MODELS)[number], number> = {
+  "claude-haiku-4-5": 200_000,
+  "claude-sonnet-4-6": 1_000_000,
+  "claude-opus-4-6": 1_000_000,
+};
+
 const DEFAULT_MODEL = "claude-haiku-4-5";
 
 let currentModel: (typeof AVAILABLE_MODELS)[number] = DEFAULT_MODEL;
@@ -24,6 +30,14 @@ const messages: Anthropic.MessageParam[] = [];
 const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, model: DEFAULT_MODEL });
 
 let promptRunning = false;
+let totalInputTokens = 0;
+let totalOutputTokens = 0;
+
+function updateContextInfo() {
+  const contextWindow = MODEL_CONTEXT_WINDOW[currentModel];
+  const usedTokens = totalInputTokens + totalOutputTokens;
+  tui.setContextInfo({ usedTokens, contextWindow });
+}
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.stack ?? error.message : String(error);
@@ -41,6 +55,7 @@ function cycleModel() {
   const nextIndex = (currentIndex + 1) % AVAILABLE_MODELS.length;
   currentModel = AVAILABLE_MODELS[nextIndex];
   tui.setModel(currentModel);
+  updateContextInfo();
 }
 
 function formatModelList() {
@@ -65,7 +80,10 @@ function handleCommand(command: string): boolean {
   switch (name) {
     case "/new":
       messages.length = 0;
+      totalInputTokens = 0;
+      totalOutputTokens = 0;
       tui.clearBlocks();
+      updateContextInfo();
       tui.addBlock({
         role: "assistant",
         title: "Agento",
@@ -95,6 +113,7 @@ function handleCommand(command: string): boolean {
 
       currentModel = resolved;
       tui.setModel(currentModel);
+      updateContextInfo();
       tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModel}.` });
       return true;
     }
@@ -238,6 +257,15 @@ async function prompt(userMessage: string) {
     }
 
     const response = await stream.finalMessage();
+    totalInputTokens += response.usage.input_tokens;
+    totalOutputTokens += response.usage.output_tokens;
+    if (response.usage.cache_creation_input_tokens) {
+      totalInputTokens += response.usage.cache_creation_input_tokens;
+    }
+    if (response.usage.cache_read_input_tokens) {
+      totalInputTokens += response.usage.cache_read_input_tokens;
+    }
+    updateContextInfo();
     messages.push({ role: "assistant", content: response.content });
 
     for (const contentBlock of response.content) {
@@ -334,6 +362,7 @@ async function prompt(userMessage: string) {
 
 async function main() {
   tui.start();
+  updateContextInfo();
   tui.addBlock({
     role: "assistant",
     title: "Agento",
