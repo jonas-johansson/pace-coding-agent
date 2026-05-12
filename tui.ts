@@ -1002,8 +1002,11 @@ export class Tui {
       //   group, but no separator between adjacent inline tools.
       if (prevType !== undefined) {
         if (curType === "user") {
-          renderedBlocks.push(blackLine(columns));
-          blockLineMap.push(0);
+          // Skip margin if previous was a panel — its internal padding suffices
+          if (prevType !== "panel") {
+            renderedBlocks.push(blackLine(columns));
+            blockLineMap.push(0);
+          }
         } else if (curType === "inline-tool") {
           // Only add margin before the first inline tool in a group
           if (prevType !== "inline-tool" && prevType !== "user") {
