@@ -1027,10 +1027,14 @@ export class Tui {
         blockLineMap.push(block.id);
       }
 
-      // Trailing margin after user blocks (skip if last block — input margin suffices)
+      // Trailing margin after user blocks — skip if last block (input margin
+      // suffices) or if the next block has its own internal padding.
       if (curType === "user" && blockIdx < this.blocks.length - 1) {
-        renderedBlocks.push(blackLine(columns));
-        blockLineMap.push(0);
+        const nextType = visualType(this.blocks[blockIdx + 1]);
+        if (nextType !== "panel" && nextType !== "error") {
+          renderedBlocks.push(blackLine(columns));
+          blockLineMap.push(0);
+        }
       }
 
       prevType = curType;
