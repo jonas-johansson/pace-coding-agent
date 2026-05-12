@@ -52,12 +52,16 @@ const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, onEscape: ca
 
 let promptRunning = false;
 let currentAbortController: AbortController | null = null;
-let totalInputTokens = 0;
-let totalOutputTokens = 0;
+let lastInputTokens = 0;
+let lastOutputTokens = 0;
 
 function updateContextInfo() {
   const contextWindow = MODEL_CONTEXT_WINDOW[currentModel];
-  const usedTokens = totalInputTokens + totalOutputTokens;
+  // The used tokens represent the context size of the *last* API call.
+  // input_tokens from the API already includes the full conversation history
+  // (including cache_creation_input_tokens and cache_read_input_tokens),
+  // so adding output_tokens gives us the total context size.
+  const usedTokens = lastInputTokens + lastOutputTokens;
   tui.setContextInfo({ usedTokens, contextWindow });
 }
 
@@ -106,8 +110,8 @@ function handleCommand(command: string): boolean {
   switch (name) {
     case "/new":
       messages.length = 0;
-      totalInputTokens = 0;
-      totalOutputTokens = 0;
+      lastInputTokens = 0;
+      lastOutputTokens = 0;
       tui.clearBlocks();
       updateContextInfo();
       tui.addBlock({
@@ -351,14 +355,16 @@ async function prompt(userMessage: string) {
       }
 
       const response = await stream.finalMessage();
-      totalInputTokens += response.usage.input_tokens;
-      totalOutputTokens += response.usage.output_tokens;
-      if (response.usage.cache_creation_input_tokens) {
-        totalInputTokens += response.usage.cache_creation_input_tokens;
-      }
-      if (response.usage.cache_read_input_tokens) {
-        totalInputTokens += response.usage.cache_read_input_tokens;
-      }
+      // The API's input_tokens, cache_creation_input_tokens, and
+      // cache_read_input_tokens together represent the total input tokens
+      // for the *current* request (the full conversation context).
+      // We store the latest values (not cumulative) so the context gauge
+      // reflects the actual current context window usage.
+      lastInputTokens =
+        response.usage.input_tokens +
+        (response.usage.cache_creation_input_tokens ?? 0) +
+        (response.usage.cache_read_input_tokens ?? 0);
+      lastOutputTokens = response.usage.output_tokens;
       updateContextInfo();
       messages.push({ role: "assistant", content: response.content });
       assistantMessagePushed = true;
