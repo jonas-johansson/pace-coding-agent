@@ -26,9 +26,13 @@ const BOLD = "\x1b[1m";
 const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
 const CLEAR_SCREEN = "\x1b[2J";
+const ENABLE_MOUSE = "\x1b[?1000h\x1b[?1006h";
+const DISABLE_MOUSE = "\x1b[?1000l\x1b[?1006l";
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 const ANSI_AT_START = /^\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/;
+const SGR_MOUSE_PATTERN = /\x1b\[<(\d+);(\d+);(\d+)([mM])/g;
 const SPINNER_FRAMES = ["-", "\\", "|", "/"];
+const MOUSE_WHEEL_LINES = 3;
 
 const themes: Record<BlockRole, BlockTheme> = {
   user: { fg: 231, bg: 24, accent: 117 },
@@ -67,7 +71,7 @@ export class Tui {
     process.stdin.on("data", this.handleData);
     process.stdout.on("resize", this.handleResize);
     process.once("exit", this.handleExit);
-    process.stdout.write(`${CLEAR_SCREEN}${HIDE_CURSOR}`);
+    process.stdout.write(`${CLEAR_SCREEN}${HIDE_CURSOR}${ENABLE_MOUSE}`);
     this.render();
   }
 
@@ -84,7 +88,7 @@ export class Tui {
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }
-    process.stdout.write(`${RESET}${SHOW_CURSOR}\n`);
+    process.stdout.write(`${RESET}${DISABLE_MOUSE}${SHOW_CURSOR}\n`);
   }
 
   addBlock(block: Omit<RenderBlock, "id">) {
@@ -160,7 +164,7 @@ export class Tui {
   };
 
   private handleExit = () => {
-    process.stdout.write(`${RESET}${SHOW_CURSOR}`);
+    process.stdout.write(`${RESET}${DISABLE_MOUSE}${SHOW_CURSOR}`);
   };
 
   private handleData = (data: string) => {
@@ -210,6 +214,10 @@ export class Tui {
   };
 
   private handleEscape(data: string) {
+    if (this.handleMouse(data)) {
+      return true;
+    }
+
     switch (data) {
       case "\x1b[A":
         this.scrollBy(1);
@@ -236,6 +244,50 @@ export class Tui {
       default:
         return data.startsWith("\x1b");
     }
+  }
+
+  private handleMouse(data: string) {
+    let handled = false;
+
+    for (const match of data.matchAll(SGR_MOUSE_PATTERN)) {
+      handled = this.handleMouseButton(Number(match[1]), match[4]) || handled;
+    }
+
+    let index = 0;
+    while (index < data.length) {
+      const start = data.indexOf("\x1b[M", index);
+      if (start === -1) {
+        break;
+      }
+
+      if (start + 6 > data.length) {
+        break;
+      }
+
+      handled = this.handleMouseButton(data.charCodeAt(start + 3) - 32, "M") || handled;
+      index = start + 6;
+    }
+
+    return handled;
+  }
+
+  private handleMouseButton(buttonCode: number, action: string) {
+    if (action !== "M" || (buttonCode & 64) === 0) {
+      return false;
+    }
+
+    const wheelButton = buttonCode & 3;
+    if (wheelButton === 0) {
+      this.scrollBy(MOUSE_WHEEL_LINES);
+      return true;
+    }
+
+    if (wheelButton === 1) {
+      this.scrollBy(-MOUSE_WHEEL_LINES);
+      return true;
+    }
+
+    return false;
   }
 
   private scrollPageUp() {
