@@ -281,9 +281,24 @@ export class Tui {
 
     this.clearSelection();
 
-    for (const char of Array.from(data)) {
+    // Detect paste: if the data contains more than a single \r or \n,
+    // treat carriage returns and newlines as newline insertions rather
+    // than submit triggers.  A real Enter keypress arrives as a lone "\r".
+    const isPaste = data.length > 1 && data !== "\r\n";
+
+    const chars = Array.from(data);
+    for (let i = 0; i < chars.length; i++) {
+      const char = chars[i];
       if (char === "\r") {
-        this.submitInput();
+        if (isPaste) {
+          this.insertInputNewline();
+          // Skip a \n that immediately follows \r (i.e. \r\n pair)
+          if (chars[i + 1] === "\n") {
+            i += 1;
+          }
+        } else {
+          this.submitInput();
+        }
         continue;
       }
 
