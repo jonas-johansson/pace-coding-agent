@@ -541,16 +541,6 @@ async function main() {
 
 Ready to help! Type a message or use a command to get started.`,
   });
-
-  // Notify the user if AGENTS.md was found in the working directory.
-  const agentsFile = await loadAgentsFile();
-  if (agentsFile) {
-    tui.addBlock({
-      role: "assistant",
-      title: "AGENTS.md loaded",
-      content: `Project-specific instructions from \`AGENTS.md\` have been appended to the system prompt.`,
-    });
-  }
 }
 
 process.on("uncaughtException", (error: unknown) => {
