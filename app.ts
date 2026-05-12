@@ -93,7 +93,17 @@ function handleCommand(command: string): boolean {
       tui.addBlock({
         role: "assistant",
         title: "Agento",
-        content: "New conversation started. Press Enter to send, Ctrl+J for a newline. Press Tab to cycle models. Use /model to select a model. Press ESC to cancel. Press Ctrl+C to quit.",
+        content: `## New Conversation Started!
+
+Your chat history has been cleared and you're ready to start fresh.
+
+### Quick Reminders
+- **Enter** to send messages
+- **Ctrl+J** or **Shift+Enter** for newlines
+- **Tab** to switch models
+- Use **/model** to select a specific model
+- **ESC** to cancel the current operation
+- **Ctrl+C** to exit`,
       });
       return true;
     case "/model": {
@@ -444,7 +454,21 @@ async function main() {
   tui.addBlock({
     role: "assistant",
     title: "Agento",
-    content: "Press Enter to send, Ctrl+J or Shift+Enter for a newline. Press Tab to cycle models. Use /model to select a model. Press ESC to cancel. Press Ctrl+C to quit.",
+    content: `## Keyboard Shortcuts
+- **Enter** — Send your message
+- **Ctrl+J** — Add a newline
+- **Tab** — Cycle through available models
+- **ESC** — Cancel current operation
+- **Ctrl+C** — Quit the application
+
+## Commands
+- **/model** — View or select a different model
+- **/new** — Start a new conversation
+
+## Current Working Directory
+\`${process.cwd()}\`
+
+Ready to help! Type a message or use a command to get started.`,
   });
 }
 
