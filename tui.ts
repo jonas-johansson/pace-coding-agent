@@ -1002,8 +1002,8 @@ export class Tui {
       //   group, but no separator between adjacent inline tools.
       if (prevType !== undefined) {
         if (curType === "user") {
-          // Skip margin if previous was a panel — its internal padding suffices
-          if (prevType !== "panel") {
+          // Skip margin if previous block has its own internal padding
+          if (prevType !== "panel" && prevType !== "error") {
             renderedBlocks.push(blackLine(columns));
             blockLineMap.push(0);
           }
