@@ -66,9 +66,9 @@ const MIN_MESSAGE_ROWS = 1;
 const INSERT_NEWLINE_KEYS = new Set(["\x1b[13;2u", "\x1b[13;2~", "\x1b[27;2;13~"]);
 
 /** Pitch black background used for the main canvas (assistant text, inline tools). */
-const CANVAS_BG = 233;
+const CANVAS_BG = 234;
 /** Slightly gray background for tool panels that show content. */
-const PANEL_BG = 234;
+const PANEL_BG = 235;
 
 const themes: Record<BlockRole, BlockTheme> = {
   user: { fg: 231, bg: 24, accent: 117, bold: 230 },
