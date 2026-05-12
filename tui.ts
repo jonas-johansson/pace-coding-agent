@@ -997,7 +997,7 @@ function renderSegment(segment: StyledSegment, theme: BlockTheme) {
     case "italic":
       return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${ITALIC}${segment.text}`;
     case "code":
-      return `${RESET}${bg(230)}${fg(16)}${segment.text}`;
+      return `${RESET}${bg(theme.bg)}${fg(118)}${segment.text}`;
     default:
       return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${segment.text}`;
   }
