@@ -16,6 +16,8 @@ export type BlockPatch = Partial<Pick<RenderBlock, "title" | "content" | "state"
 export type ContextInfo = {
   usedTokens: number;
   contextWindow: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
 };
 
 type SubmitHandler = (input: string) => void | Promise<void>;
@@ -1839,7 +1841,23 @@ function formatContextInfo(info: ContextInfo): string {
   const percent = info.contextWindow > 0
     ? Math.round((info.usedTokens / info.contextWindow) * 100)
     : 0;
-  return `${used}/${total} (${percent}%)`;
+  const base = `${used}/${total} (${percent}%)`;
+
+  // Show cache status when there are cached tokens
+  const cacheRead = info.cacheReadTokens ?? 0;
+  const cacheCreation = info.cacheCreationTokens ?? 0;
+  if (cacheRead > 0 || cacheCreation > 0) {
+    const cachedTotal = cacheRead + cacheCreation;
+    const cachePercent = info.usedTokens > 0
+      ? Math.round((cacheRead / info.usedTokens) * 100)
+      : 0;
+    if (cacheRead > 0) {
+      return `${base} cache ${formatTokenCount(cacheRead)}/${formatTokenCount(cachedTotal)} (${cachePercent}% hit)`;
+    }
+    return `${base} cache ${formatTokenCount(cachedTotal)} (new)`;
+  }
+
+  return base;
 }
 
 function fg(code: number) {

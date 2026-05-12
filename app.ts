@@ -54,6 +54,8 @@ let promptRunning = false;
 let currentAbortController: AbortController | null = null;
 let lastInputTokens = 0;
 let lastOutputTokens = 0;
+let lastCacheReadTokens = 0;
+let lastCacheCreationTokens = 0;
 
 function updateContextInfo() {
   const contextWindow = MODEL_CONTEXT_WINDOW[currentModel];
@@ -62,7 +64,12 @@ function updateContextInfo() {
   // (including cache_creation_input_tokens and cache_read_input_tokens),
   // so adding output_tokens gives us the total context size.
   const usedTokens = lastInputTokens + lastOutputTokens;
-  tui.setContextInfo({ usedTokens, contextWindow });
+  tui.setContextInfo({
+    usedTokens,
+    contextWindow,
+    cacheReadTokens: lastCacheReadTokens,
+    cacheCreationTokens: lastCacheCreationTokens,
+  });
 }
 
 function refreshCwd() {
@@ -112,6 +119,8 @@ function handleCommand(command: string): boolean {
       messages.length = 0;
       lastInputTokens = 0;
       lastOutputTokens = 0;
+      lastCacheReadTokens = 0;
+      lastCacheCreationTokens = 0;
       tui.clearBlocks();
       updateContextInfo();
       tui.addBlock({
@@ -259,10 +268,20 @@ async function prompt(userMessage: string) {
   const agentsFileContents = await loadAgentsFile();
 
   // Build the system prompt, optionally appending AGENTS.md instructions.
+  // We use an explicit cache_control breakpoint on the system prompt so it
+  // is always cached across turns. The top-level cache_control on the
+  // request body handles automatic caching of the growing conversation.
   const baseSystem = `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${process.cwd()}\n\nWhen listing files, use \`/bin/ls -1\` to show only filenames (one per line, no icons or extra info). Only add flags like \`-la\` if the user explicitly asks for more details.`;
-  const systemPrompt = agentsFileContents
+  const systemText = agentsFileContents
     ? `${baseSystem}\n\n---\n\n# Project-specific instructions (from AGENTS.md)\n\n${agentsFileContents}`
     : baseSystem;
+  const systemPrompt: Anthropic.TextBlockParam[] = [
+    {
+      type: "text" as const,
+      text: systemText,
+      cache_control: { type: "ephemeral" as const },
+    },
+  ];
 
   try {
     while (true) {
@@ -275,6 +294,9 @@ async function prompt(userMessage: string) {
           system: systemPrompt,
           messages,
           tools: toolsTransformedToAnthropicStyle,
+          // Automatic caching: the API places a cache breakpoint on the last
+          // cacheable block so the growing conversation prefix is reused.
+          cache_control: { type: "ephemeral" },
         },
         { signal },
       );
@@ -360,10 +382,12 @@ async function prompt(userMessage: string) {
       // for the *current* request (the full conversation context).
       // We store the latest values (not cumulative) so the context gauge
       // reflects the actual current context window usage.
+      lastCacheReadTokens = response.usage.cache_read_input_tokens ?? 0;
+      lastCacheCreationTokens = response.usage.cache_creation_input_tokens ?? 0;
       lastInputTokens =
         response.usage.input_tokens +
-        (response.usage.cache_creation_input_tokens ?? 0) +
-        (response.usage.cache_read_input_tokens ?? 0);
+        lastCacheCreationTokens +
+        lastCacheReadTokens;
       lastOutputTokens = response.usage.output_tokens;
       updateContextInfo();
       messages.push({ role: "assistant", content: response.content });
