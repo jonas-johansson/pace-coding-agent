@@ -69,7 +69,7 @@ async function handleUserInput(userMessage: string) {
 }
 
 async function prompt(userMessage: string) {
-  tui.addBlock({ role: "user", title: "You", content: userMessage });
+  tui.addBlock({ role: "user", content: userMessage });
   messages.push({ role: "user", content: [{ type: "text", text: userMessage }] });
 
   while (true) {
@@ -106,7 +106,6 @@ async function prompt(userMessage: string) {
             accText = contentBlock.text ?? "";
             currentTextBlockId = tui.addBlock({
               role: "assistant",
-              title: "Assistant",
               content: accText,
             });
             tui.setStatus("Streaming response");
@@ -126,7 +125,6 @@ async function prompt(userMessage: string) {
               if (currentTextBlockId === undefined) {
                 currentTextBlockId = tui.addBlock({
                   role: "assistant",
-                  title: "Assistant",
                   content: accText,
                 });
               } else {

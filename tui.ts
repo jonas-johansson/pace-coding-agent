@@ -870,6 +870,7 @@ function renderBlock(block: RenderBlock, columns: number) {
 
   if (block.title) {
     rows.push(...wrapSegments([{ text: block.title, style: "title" }], innerWidth));
+    rows.push([]);
   }
 
   const content = sanitizeContent(block.content);
