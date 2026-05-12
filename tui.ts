@@ -65,15 +65,24 @@ const STATUS_ROWS = 1;
 const MIN_MESSAGE_ROWS = 1;
 const INSERT_NEWLINE_KEYS = new Set(["\x1b[13;2u", "\x1b[13;2~", "\x1b[27;2;13~"]);
 
+/** Pitch black background used for the main canvas (assistant text, inline tools). */
+const CANVAS_BG = 16;
+/** Slightly gray background for tool panels that show content. */
+const PANEL_BG = 234;
+
 const themes: Record<BlockRole, BlockTheme> = {
   user: { fg: 231, bg: 24, accent: 117, bold: 230 },
-  assistant: { fg: 255, bg: 236, accent: 221, bold: 215 },
-  tool: { fg: 252, bg: 236, accent: 117, bold: 230 },
+  assistant: { fg: 255, bg: CANVAS_BG, accent: 221, bold: 215 },
+  tool: { fg: 252, bg: PANEL_BG, accent: 117, bold: 230 },
   error: { fg: 231, bg: 88, accent: 217, bold: 223 },
 };
 
+/** Theme used for inline tool lines (single-line, no content) rendered on the canvas. */
+const inlineToolTheme: BlockTheme = { fg: 245, bg: CANVAS_BG, accent: 117, bold: 230 };
+
 const DONE_GLYPH = { glyph: "✓", color: 151 };
 const ERROR_GLYPH = { glyph: "✗", color: 217 };
+const TOOL_ARROW = "→";
 
 export class Tui {
   private blocks: RenderBlock[] = [];
@@ -886,7 +895,9 @@ export class Tui {
     const rows = Math.max(process.stdout.rows ?? 24, 1);
     const statusRows = this.statusRows(rows);
     const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
-    return Math.max(0, rows - statusRows - input.lines.length);
+    // Account for the margin lines above and below the input box
+    const inputMarginRows = rows > statusRows + input.lines.length + 2 ? 2 : 0;
+    return Math.max(0, rows - statusRows - input.lines.length - inputMarginRows);
   }
 
   private statusRows(rows: number) {
@@ -951,18 +962,72 @@ export class Tui {
     const rows = Math.max(process.stdout.rows ?? 24, 1);
     const statusRows = this.statusRows(rows);
     const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
-    const messageRows = Math.max(0, rows - statusRows - input.lines.length);
+    // Account for margin lines above and below the input box
+    const inputMarginRows = rows > statusRows + input.lines.length + 2 ? 2 : 0;
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length - inputMarginRows);
     const renderedBlocks: string[] = [];
     const blockLineMap: number[] = [];
     const spinnerFrame = SPINNER_FRAMES[this.spinnerFrame];
-    for (const block of this.blocks) {
+
+    // Classify each block's visual type for margin logic
+    type VisualType = "user" | "assistant" | "inline-tool" | "panel" | "error";
+    const visualType = (b: RenderBlock): VisualType => {
+      if (b.role === "user") return "user";
+      if (b.role === "assistant") return "assistant";
+      if (b.role === "error") return "error";
+      // tool
+      return isInlineTool(b) ? "inline-tool" : "panel";
+    };
+
+    let prevType: VisualType | undefined;
+    for (let blockIdx = 0; blockIdx < this.blocks.length; blockIdx++) {
+      const block = this.blocks[blockIdx];
+      const curType = visualType(block);
       const blockLines = renderBlock(block, columns, spinnerFrame);
+
+      // Skip empty blocks (e.g. assistant still streaming with no content yet)
+      if (blockLines.length === 0) {
+        continue;
+      }
+
+      // ── Margin logic ──
+      // User blocks: always get a margin line before (unless first) and after.
+      // Assistant / panel / error blocks: get a margin line before, unless
+      //   the previous block was a user block (which already added a trailing margin)
+      //   or this is the first block.
+      // Inline tools: get a margin line before the *first* in a consecutive
+      //   group, but no separator between adjacent inline tools.
+      if (prevType !== undefined) {
+        if (curType === "user") {
+          renderedBlocks.push(blackLine(columns));
+          blockLineMap.push(0);
+        } else if (curType === "inline-tool") {
+          // Only add margin before the first inline tool in a group
+          if (prevType !== "inline-tool" && prevType !== "user") {
+            renderedBlocks.push(blackLine(columns));
+            blockLineMap.push(0);
+          }
+        } else {
+          // assistant, panel, error — margin before, unless prev was user
+          if (prevType !== "user") {
+            renderedBlocks.push(blackLine(columns));
+            blockLineMap.push(0);
+          }
+        }
+      }
+
       renderedBlocks.push(...blockLines);
       for (let i = 0; i < blockLines.length; i++) {
         blockLineMap.push(block.id);
       }
-      renderedBlocks.push("");
-      blockLineMap.push(0);
+
+      // Trailing margin after user blocks
+      if (curType === "user") {
+        renderedBlocks.push(blackLine(columns));
+        blockLineMap.push(0);
+      }
+
+      prevType = curType;
     }
     const lineDelta = renderedBlocks.length - this.lastRenderedLineCount;
     if (this.scrollOffset > 0 && this.lastRenderedLineCount > 0 && lineDelta !== 0) {
@@ -984,9 +1049,16 @@ export class Tui {
     const messageLines = visibleMessages.map((line) => padAnsi(line, columns));
     const statusLine = this.renderStatusLine(columns, maxScroll);
 
+    // Add margin lines above and below the input box if there's room
+    const inputMarginLine = blackLine(columns);
+    const inputSection = inputMarginRows > 0
+      ? [inputMarginLine, ...input.lines, inputMarginLine]
+      : input.lines;
+    const inputCursorRowOffset = inputMarginRows > 0 ? 1 : 0;
+
     const lines = statusRows > 0
-      ? [...messageLines, ...input.lines, statusLine]
-      : [...messageLines, ...input.lines];
+      ? [...messageLines, ...inputSection, statusLine]
+      : [...messageLines, ...inputSection];
     this.screenColumns = columns;
     this.screenLines = lines.slice(0, rows).map((line) => stripAnsi(clipAnsi(line, columns)));
     this.blockLineMap = blockLineMap;
@@ -997,7 +1069,7 @@ export class Tui {
     for (let row = 0; row < rows; row += 1) {
       output.push(`\x1b[${row + 1};1H\x1b[2K${clipAnsi(this.renderSelectedLine(lines[row] ?? "", row + 1, columns), columns)}`);
     }
-    output.push(`\x1b[${Math.min(rows, messageRows + input.cursorRow)};${input.cursorCol}H${SHOW_CURSOR}`);
+    output.push(`\x1b[${Math.min(rows, messageRows + inputCursorRowOffset + input.cursorRow)};${input.cursorCol}H${SHOW_CURSOR}`);
 
     process.stdout.write(output.join(""));
   }
@@ -1228,24 +1300,54 @@ function updateActiveStyle(activeStyle: string, sequence: string) {
   return activeStyle + sequence;
 }
 
-function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) {
-  const theme = themes[block.role];
-  const sanitizedContent = sanitizeContent(block.content);
-  const stateIndicator = block.role === "tool"
-    ? renderStateIndicator(block.state, sanitizedContent, spinnerFrame, theme)
-    : undefined;
-  const indicatorWidth = stateIndicator ? visibleLength(stateIndicator.text) : 0;
-  const titleInnerWidth = Math.max(1, columns - 4 - (indicatorWidth > 0 ? indicatorWidth + 1 : 0));
-  const innerWidth = Math.max(1, columns - 4);
-  const rows: StyledSegment[][] = [[]];
+/**
+ * Determines whether a tool block should render as a single inline line
+ * (on the black canvas) or as a panel with gray background.
+ *
+ * Inline: no visible content body (collapsed with no content, or done with
+ * showContent=false, etc.)
+ * Panel: has content to display.
+ */
+function isInlineTool(block: RenderBlock): boolean {
+  if (block.role !== "tool") return false;
+  const content = sanitizeContent(block.content).replace(/^\n+/, "").replace(/\n+$/, "");
+  return !content;
+}
 
+function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) {
+  // ── User blocks: rendered as a boxed card (existing style) ──
+  if (block.role === "user") {
+    return renderUserBlock(block, columns);
+  }
+
+  // ── Assistant blocks: inline text on black canvas ──
+  if (block.role === "assistant") {
+    return renderAssistantBlock(block, columns);
+  }
+
+  // ── Tool blocks ──
+  if (block.role === "tool") {
+    if (isInlineTool(block)) {
+      return renderInlineToolBlock(block, columns, spinnerFrame);
+    }
+    return renderPanelToolBlock(block, columns, spinnerFrame);
+  }
+
+  // ── Error blocks: rendered as a panel with error theme ──
+  return renderErrorBlock(block, columns);
+}
+
+/** Render a user message as a boxed card with padding (keeps existing look). */
+function renderUserBlock(block: RenderBlock, columns: number) {
+  const theme = themes.user;
+  const sanitizedContent = sanitizeContent(block.content);
+  const innerWidth = Math.max(1, columns - 4);
   const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
+  const rows: StyledSegment[][] = [[]]; // top padding
 
   if (block.title) {
-    rows.push(...wrapSegments([{ text: block.title, style: "title" }], titleInnerWidth));
-    if (content) {
-      rows.push([]);
-    }
+    rows.push(...wrapSegments([{ text: block.title, style: "title" }], innerWidth));
+    if (content) rows.push([]);
   }
 
   if (content) {
@@ -1254,14 +1356,102 @@ function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) 
     }
   }
 
-  rows.push([]);
+  rows.push([]); // bottom padding
+
+  return rows.map((row) => renderBlockRow(row, theme, columns));
+}
+
+/** Render assistant text inline on the black canvas — no box, no padding rows. */
+function renderAssistantBlock(block: RenderBlock, columns: number) {
+  const theme = themes.assistant;
+  const sanitizedContent = sanitizeContent(block.content);
+  const innerWidth = Math.max(1, columns - 4);
+  const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
+  const result: string[] = [];
+
+  if (block.title && content) {
+    // If there's both a title and content, show title as a heading then content
+    const titleRows = wrapSegments([{ text: block.title, style: "title" }], innerWidth);
+    for (const row of titleRows) {
+      result.push(renderBlockRow(row, theme, columns));
+    }
+    // blank line between title and content
+    result.push(renderBlockRow([], theme, columns));
+    for (const line of content.split("\n")) {
+      const wrapped = wrapSegments(parseMarkdownLine(line), innerWidth);
+      for (const row of wrapped) {
+        result.push(renderBlockRow(row, theme, columns));
+      }
+    }
+  } else if (block.title) {
+    const titleRows = wrapSegments([{ text: block.title, style: "title" }], innerWidth);
+    for (const row of titleRows) {
+      result.push(renderBlockRow(row, theme, columns));
+    }
+  } else if (content) {
+    for (const line of content.split("\n")) {
+      const wrapped = wrapSegments(parseMarkdownLine(line), innerWidth);
+      for (const row of wrapped) {
+        result.push(renderBlockRow(row, theme, columns));
+      }
+    }
+  }
+
+  return result;
+}
+
+/** Render a tool block as a single inline line: `→ title  ✓` */
+function renderInlineToolBlock(block: RenderBlock, columns: number, spinnerFrame: string) {
+  const theme = inlineToolTheme;
+  const title = block.title ?? block.role;
+  const indicator = renderInlineStateIndicator(block.state, spinnerFrame);
+  const indicatorWidth = indicator ? visibleLength(indicator.text) + 1 : 0;
+  const arrowWidth = displayWidth(TOOL_ARROW) + 1; // arrow + space
+  const titleWidth = Math.max(1, columns - 4 - arrowWidth - indicatorWidth);
+  // Truncate title to fit
+  const truncatedTitle = truncateToWidth(title, titleWidth);
+  const titleVisible = displayWidth(truncatedTitle);
+  const totalContentWidth = arrowWidth + titleVisible + (indicator ? 1 + visibleLength(indicator.text) : 0);
+  const rightPad = Math.max(0, columns - 2 - totalContentWidth);
+
+  const arrowRendered = `${RESET}${bg(theme.bg)}${fg(245)}${TOOL_ARROW} `;
+  const titleRendered = `${RESET}${bg(theme.bg)}${fg(theme.accent)}${truncatedTitle}`;
+  const indicatorRendered = indicator ? ` ${indicator.rendered}` : "";
+  const padRendered = `${RESET}${bg(theme.bg)}${" ".repeat(rightPad)}${RESET}`;
+
+  return [`${bg(theme.bg)}  ${arrowRendered}${titleRendered}${indicatorRendered}${padRendered}`];
+}
+
+/** Render a tool block as a gray panel (has content to show). */
+function renderPanelToolBlock(block: RenderBlock, columns: number, spinnerFrame: string) {
+  const theme = themes.tool;
+  const sanitizedContent = sanitizeContent(block.content);
+  const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
+  const indicator = renderStateIndicator(block.state, content, spinnerFrame, theme);
+  const indicatorWidth = indicator ? visibleLength(indicator.text) : 0;
+  const titleInnerWidth = Math.max(1, columns - 4 - (indicatorWidth > 0 ? indicatorWidth + 1 : 0));
+  const innerWidth = Math.max(1, columns - 4);
+  const rows: StyledSegment[][] = [[]]; // top padding
+
+  if (block.title) {
+    rows.push(...wrapSegments([{ text: block.title, style: "title" }], titleInnerWidth));
+    if (content) rows.push([]);
+  }
+
+  if (content) {
+    for (const line of content.split("\n")) {
+      rows.push(...wrapSegments(parseMarkdownLine(line), innerWidth));
+    }
+  }
+
+  rows.push([]); // bottom padding
 
   const isCollapsed = block.collapsed === true;
   const maxRows = 15;
 
   let result = rows.map((row, index) => {
-    if (index === 1 && stateIndicator && block.title) {
-      return renderBlockRowWithGutter(row, stateIndicator, theme, columns);
+    if (index === 1 && indicator && block.title) {
+      return renderBlockRowWithGutter(row, indicator, theme, columns);
     }
     return renderBlockRow(row, theme, columns);
   });
@@ -1274,6 +1464,44 @@ function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) 
   }
 
   return result;
+}
+
+/** Render an error block as a panel with the error theme. */
+function renderErrorBlock(block: RenderBlock, columns: number) {
+  const theme = themes.error;
+  const sanitizedContent = sanitizeContent(block.content);
+  const innerWidth = Math.max(1, columns - 4);
+  const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
+  const rows: StyledSegment[][] = [[]]; // top padding
+
+  if (block.title) {
+    rows.push(...wrapSegments([{ text: block.title, style: "title" }], innerWidth));
+    if (content) rows.push([]);
+  }
+
+  if (content) {
+    for (const line of content.split("\n")) {
+      rows.push(...wrapSegments(parseMarkdownLine(line), innerWidth));
+    }
+  }
+
+  rows.push([]); // bottom padding
+
+  return rows.map((row) => renderBlockRow(row, theme, columns));
+}
+
+/** Truncate text to fit within a given display width. */
+function truncateToWidth(text: string, maxWidth: number): string {
+  const chars = Array.from(text);
+  let width = 0;
+  for (let i = 0; i < chars.length; i++) {
+    const w = charWidth(chars[i]);
+    if (width + w > maxWidth) {
+      return chars.slice(0, i).join("") + "…";
+    }
+    width += w;
+  }
+  return text;
 }
 
 function renderStateIndicator(
@@ -1309,6 +1537,36 @@ function renderStateIndicator(
   }
 
   return undefined;
+}
+
+/** State indicator for inline tool lines (rendered on the black canvas). */
+function renderInlineStateIndicator(
+  state: BlockState | undefined,
+  spinnerFrame: string,
+): { text: string; rendered: string } | undefined {
+  if (!state) {
+    return undefined;
+  }
+
+  if (state === "running") {
+    return {
+      text: spinnerFrame,
+      rendered: `${RESET}${bg(CANVAS_BG)}${fg(229)}${spinnerFrame}`,
+    };
+  }
+
+  if (state === "error") {
+    return {
+      text: ERROR_GLYPH.glyph,
+      rendered: `${RESET}${bg(CANVAS_BG)}${fg(ERROR_GLYPH.color)}${BOLD}${ERROR_GLYPH.glyph}`,
+    };
+  }
+
+  // done
+  return {
+    text: DONE_GLYPH.glyph,
+    rendered: `${RESET}${bg(CANVAS_BG)}${fg(DONE_GLYPH.color)}${DONE_GLYPH.glyph}`,
+  };
 }
 
 function renderBlockRowWithGutter(
@@ -1716,12 +1974,19 @@ function renderBar(text: string, columns: number, bgColor: number, fgColor: numb
   return `${bg(bgColor)}${fg(fgColor)}${clipped}${" ".repeat(Math.max(0, columns - visibleLength(clipped)))}${RESET}`;
 }
 
+function blackLine(columns: number) {
+  return `${bg(CANVAS_BG)}${" ".repeat(columns)}${RESET}`;
+}
+
 function plainLine(text: string, columns: number) {
-  return `${text}${" ".repeat(Math.max(0, columns - visibleLength(text)))}`;
+  const pad = Math.max(0, columns - visibleLength(text));
+  return `${bg(CANVAS_BG)}${text}${" ".repeat(pad)}${RESET}`;
 }
 
 function padAnsi(text: string, columns: number) {
-  return `${text}${" ".repeat(Math.max(0, columns - visibleLength(text)))}`;
+  const pad = Math.max(0, columns - visibleLength(text));
+  if (pad <= 0) return text;
+  return `${text}${bg(CANVAS_BG)}${" ".repeat(pad)}${RESET}`;
 }
 
 function sanitizeContent(text: string) {
