@@ -18,46 +18,38 @@ export type ToolDisplayBlock = {
 
 type ZodObjectSchema = z.ZodObject<z.core.$ZodShape>;
 
-type ToolVisualization<T extends ZodObjectSchema = ZodObjectSchema> = {
-  start: () => ToolDisplayBlock | undefined;
-  partialInput: (jsonString: string) => ToolDisplayBlock | undefined;
-  input: (input: z.infer<T>) => ToolDisplayBlock;
-  result: (output: ToolOutput) => ToolDisplayBlock | undefined;
-}
-
 type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
   name: string;
   description: string;
   inputSchema: T;
   execute: (input: z.infer<T>) => Promise<ToolOutput>;
-  visualize: ToolVisualization<T>;
 }
-
-type ToolDefinition<T extends ZodObjectSchema = ZodObjectSchema> = Omit<ToolDescriptor<T>, "visualize">;
 
 export const tools: ToolDescriptor[] = [];
 
-function Tool<T extends ZodObjectSchema>(definition: ToolDefinition<T>) {
+function Tool<T extends ZodObjectSchema>(definition: ToolDescriptor<T>) {
   if (tools.some(tool => tool.name === definition.name)) {
     throw new Error(`Duplicate tool name: "${definition.name}" is already registered`);
   }
 
-  const descriptor: ToolDescriptor<T> = {
-    ...definition,
-    visualize: defaultToolVisualization(definition),
-  };
-
-  tools.push(descriptor as ToolDescriptor);
-  return descriptor;
+  tools.push(definition as ToolDescriptor);
+  return definition;
 }
 
-function defaultToolVisualization<T extends ZodObjectSchema>(tool: Omit<ToolDescriptor<T>, "visualize" | "execute" | "description" | "inputSchema">): ToolVisualization<T> {
-  return {
-    start: () => ({ title: `Tool use: ${tool.name}`, content: "Input:\n{}" }),
-    partialInput: (jsonString) => ({ title: `Tool use: ${tool.name}`, content: `Input:\n${formatPartialJson(jsonString)}` }),
-    input: (input) => ({ title: `Tool use: ${tool.name}`, content: `Input:\n${formatToolInput(input)}` }),
-    result: (output) => ({ title: `Tool result: ${tool.name}`, content: formatToolOutput(output) }),
-  };
+export function visualizeToolStart(toolName: string): ToolDisplayBlock {
+  return { title: `Tool use: ${toolName}`, content: "Input:\n{}" };
+}
+
+export function visualizeToolPartialInput(toolName: string, jsonString: string): ToolDisplayBlock {
+  return { title: `Tool use: ${toolName}`, content: `Input:\n${formatPartialJson(jsonString)}` };
+}
+
+export function visualizeToolInput(toolName: string, input: unknown): ToolDisplayBlock {
+  return { title: `Tool use: ${toolName}`, content: `Input:\n${formatToolInput(input)}` };
+}
+
+export function visualizeToolResult(toolName: string, output: ToolOutput): ToolDisplayBlock {
+  return { title: `Tool result: ${toolName}`, content: formatToolOutput(output) };
 }
 
 function parsePartialJson(jsonString: string): unknown {

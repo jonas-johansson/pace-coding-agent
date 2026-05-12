@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import assert from "assert";
 import { Tui } from "./tui";
-import { tools, toolsTransformedToAnthropicStyle } from "./tool";
+import { tools, toolsTransformedToAnthropicStyle, visualizeToolInput, visualizeToolPartialInput, visualizeToolResult, visualizeToolStart } from "./tool";
 
 const ant = new Anthropic();
 const messages: Anthropic.MessageParam[] = [];
@@ -85,7 +85,7 @@ async function prompt(userMessage: string) {
     let currentContentBlockIndex = -1;
     let currentTextBlockId: number | undefined;
     let currentToolUseId: string | undefined;
-    let currentTool: typeof tools[number] | undefined;
+    let currentToolName: string | undefined;
     let accInputJson = "";
     let accText = "";
     const toolUseBlocks = new Map<string, number>();
@@ -97,7 +97,7 @@ async function prompt(userMessage: string) {
           currentContentBlockIndex = event.index;
           currentTextBlockId = undefined;
           currentToolUseId = undefined;
-          currentTool = undefined;
+          currentToolName = undefined;
           accInputJson = "";
           accText = "";
 
@@ -112,8 +112,8 @@ async function prompt(userMessage: string) {
             tui.setStatus("streaming response");
           } else if (contentBlock.type === "tool_use") {
             currentToolUseId = contentBlock.id;
-            currentTool = tools.find((tool) => tool.name === contentBlock.name);
-            upsertToolUseBlock(toolUseBlocks, contentBlock.id, currentTool?.visualize.start());
+            currentToolName = contentBlock.name;
+            upsertToolUseBlock(toolUseBlocks, contentBlock.id, visualizeToolStart(contentBlock.name));
             tui.setStatus(`preparing tool: ${contentBlock.name}`);
           }
           break;
@@ -137,8 +137,8 @@ async function prompt(userMessage: string) {
 
             case "input_json_delta": {
               accInputJson += event.delta.partial_json;
-              if (currentToolUseId) {
-                upsertToolUseBlock(toolUseBlocks, currentToolUseId, currentTool?.visualize.partialInput(accInputJson));
+              if (currentToolUseId && currentToolName) {
+                upsertToolUseBlock(toolUseBlocks, currentToolUseId, visualizeToolPartialInput(currentToolName, accInputJson));
               }
               break;
             }
@@ -150,7 +150,7 @@ async function prompt(userMessage: string) {
           currentContentBlockIndex = -1;
           currentTextBlockId = undefined;
           currentToolUseId = undefined;
-          currentTool = undefined;
+          currentToolName = undefined;
           accInputJson = "";
           accText = "";
           break;
@@ -200,16 +200,13 @@ async function prompt(userMessage: string) {
         continue;
       }
 
-      upsertToolUseBlock(toolUseBlocks, contentBlock.id, toolToExecute.visualize.input(inputParseResult.data));
+      upsertToolUseBlock(toolUseBlocks, contentBlock.id, visualizeToolInput(contentBlock.name, inputParseResult.data));
 
       tui.setStatus(`using tool: ${contentBlock.name}`);
 
       try {
         const toolOutput = await toolToExecute.execute(inputParseResult.data);
-        const resultDisplay = toolToExecute.visualize.result(toolOutput);
-        if (resultDisplay) {
-          tui.addBlock({ role: "tool_result", ...resultDisplay });
-        }
+        tui.addBlock({ role: "tool_result", ...visualizeToolResult(contentBlock.name, toolOutput) });
         messages.push({
           role: "user",
           content: [
