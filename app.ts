@@ -7,25 +7,91 @@ const ant = new Anthropic();
 const messages: Anthropic.MessageParam[] = [];
 const tui = new Tui({ onSubmit: handleUserInput });
 
+const AVAILABLE_MODELS = [
+  "claude-haiku-4-5",
+  "claude-sonnet-4-6",
+  "claude-opus-4-6",
+] as const;
+
+const MODEL_ALIASES: Record<string, (typeof AVAILABLE_MODELS)[number]> = {
+  "haiku": "claude-haiku-4-5",
+  "sonnet": "claude-sonnet-4-6",
+  "opus": "claude-opus-4-6",
+};
+
+const DEFAULT_MODEL = "claude-haiku-4-5";
+
+let currentModel: (typeof AVAILABLE_MODELS)[number] = DEFAULT_MODEL;
+
 let promptRunning = false;
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.stack ?? error.message : String(error);
 }
 
+function resolveModel(input: string): (typeof AVAILABLE_MODELS)[number] | undefined {
+  if (AVAILABLE_MODELS.includes(input as (typeof AVAILABLE_MODELS)[number])) {
+    return input as (typeof AVAILABLE_MODELS)[number];
+  }
+  return MODEL_ALIASES[input.toLowerCase()];
+}
+
+function formatModelList() {
+  const aliasLookup = new Map<string, string[]>();
+  for (const [alias, modelId] of Object.entries(MODEL_ALIASES)) {
+    const existing = aliasLookup.get(modelId) ?? [];
+    existing.push(alias);
+    aliasLookup.set(modelId, existing);
+  }
+
+  return AVAILABLE_MODELS
+    .map((modelId) => {
+      const aliases = aliasLookup.get(modelId);
+      return aliases ? `${modelId} (${aliases.join(", ")})` : modelId;
+    })
+    .join("\n");
+}
+
 function handleCommand(command: string): boolean {
-  switch (command) {
+  const [name, ...args] = command.split(/\s+/);
+
+  switch (name) {
     case "/new":
       messages.length = 0;
       tui.clearBlocks();
       tui.addBlock({
         role: "assistant",
         title: "Agento",
-        content: "New conversation started. Press Enter to send, Ctrl+J or Shift+Enter for a newline. Press Ctrl+C to quit.",
+        content: "New conversation started. Press Enter to send, Ctrl+J or Shift+Enter for a newline. Use /model to select a model. Press Ctrl+C to quit.",
       });
       return true;
+    case "/model": {
+      const requestedModel = args[0];
+      if (!requestedModel) {
+        tui.addBlock({
+          role: "assistant",
+          title: "Model",
+          content: `Current model: ${currentModel}\n\nAvailable models:\n${formatModelList()}\n\nUsage: /model <model-id>`,
+        });
+        return true;
+      }
+
+      const resolved = resolveModel(requestedModel);
+      if (!resolved) {
+        tui.addBlock({
+          role: "error",
+          title: "Unknown model",
+          content: `Unknown model: ${requestedModel}\n\nAvailable models:\n${formatModelList()}`,
+        });
+        return true;
+      }
+
+      currentModel = resolved;
+      tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModel}.` });
+      return true;
+    }
     default:
-      tui.addBlock({ role: "error", title: "Unknown command", content: `Unknown command: ${command}` });
+      tui.addBlock({ role: "error", title: "Unknown command", content: `Unknown command: ${name}` });
       return true;
   }
 }
@@ -76,8 +142,9 @@ async function prompt(userMessage: string) {
     tui.setStatus("Thinking");
 
     const stream = await ant.messages.stream({
-      model: "claude-haiku-4-5",
+      model: currentModel,
       max_tokens: 16_000,
+      system: `You are Agento, a highly capable coding agent designed to assist with software development tasks.`,
       messages,
       tools: toolsTransformedToAnthropicStyle,
     });
@@ -245,7 +312,7 @@ async function main() {
   tui.addBlock({
     role: "assistant",
     title: "Agento",
-    content: "Press Enter to send, Ctrl+J or Shift+Enter for a newline. Press Ctrl+C to quit.",
+    content: "Press Enter to send, Ctrl+J or Shift+Enter for a newline. Use /model to select a model. Press Ctrl+C to quit.",
   });
 }
 
