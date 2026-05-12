@@ -66,7 +66,7 @@ const MIN_MESSAGE_ROWS = 1;
 const INSERT_NEWLINE_KEYS = new Set(["\x1b[13;2u", "\x1b[13;2~", "\x1b[27;2;13~"]);
 
 /** Pitch black background used for the main canvas (assistant text, inline tools). */
-const CANVAS_BG = 16;
+const CANVAS_BG = 233;
 /** Slightly gray background for tool panels that show content. */
 const PANEL_BG = 234;
 
