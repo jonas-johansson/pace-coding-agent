@@ -48,6 +48,8 @@ export class Tui {
   private spinnerTimer: ReturnType<typeof setInterval> | undefined;
   private renderQueued = false;
   private open = false;
+  private scrollOffset = 0;
+  private lastRenderedLineCount = 0;
 
   constructor(private readonly options: { onSubmit?: SubmitHandler } = {}) {}
 
@@ -167,7 +169,7 @@ export class Tui {
       process.exit(0);
     }
 
-    if (data.startsWith("\x1b")) {
+    if (this.handleEscape(data)) {
       return;
     }
 
@@ -184,8 +186,19 @@ export class Tui {
       }
 
       if (char === "\u0015") {
-        this.input = "";
-        this.requestRender();
+        if (this.input) {
+          this.input = "";
+          this.requestRender();
+        } else {
+          this.scrollPageUp();
+        }
+        continue;
+      }
+
+      if (char === "\u0004") {
+        if (!this.input) {
+          this.scrollPageDown();
+        }
         continue;
       }
 
@@ -195,6 +208,62 @@ export class Tui {
       }
     }
   };
+
+  private handleEscape(data: string) {
+    switch (data) {
+      case "\x1b[A":
+        this.scrollBy(1);
+        return true;
+      case "\x1b[B":
+        this.scrollBy(-1);
+        return true;
+      case "\x1b[5~":
+        this.scrollPageUp();
+        return true;
+      case "\x1b[6~":
+        this.scrollPageDown();
+        return true;
+      case "\x1b[H":
+      case "\x1b[1~":
+      case "\x1bOH":
+        this.scrollToTop();
+        return true;
+      case "\x1b[F":
+      case "\x1b[4~":
+      case "\x1bOF":
+        this.scrollToBottom();
+        return true;
+      default:
+        return data.startsWith("\x1b");
+    }
+  }
+
+  private scrollPageUp() {
+    this.scrollBy(Math.max(1, Math.floor(this.messageRows() / 2)));
+  }
+
+  private scrollPageDown() {
+    this.scrollBy(-Math.max(1, Math.floor(this.messageRows() / 2)));
+  }
+
+  private scrollBy(lines: number) {
+    this.scrollOffset = Math.max(0, this.scrollOffset + Math.trunc(lines));
+    this.requestRender();
+  }
+
+  private scrollToTop() {
+    this.scrollOffset = Number.MAX_SAFE_INTEGER;
+    this.requestRender();
+  }
+
+  private scrollToBottom() {
+    this.scrollOffset = 0;
+    this.requestRender();
+  }
+
+  private messageRows() {
+    return Math.max(process.stdout.rows ?? 24, 3) - 2;
+  }
 
   private submitInput() {
     const submitted = this.input.trimEnd();
@@ -211,6 +280,7 @@ export class Tui {
     }
 
     this.input = "";
+    this.scrollOffset = 0;
     this.requestRender();
 
     Promise.resolve(this.options.onSubmit?.(submitted)).catch((error: unknown) => {
@@ -247,14 +317,25 @@ export class Tui {
       ...renderBlock(block, columns),
       "",
     ]);
-    const visibleMessages = renderedBlocks.slice(-messageRows);
+    const lineDelta = renderedBlocks.length - this.lastRenderedLineCount;
+    if (this.scrollOffset > 0 && this.lastRenderedLineCount > 0 && lineDelta !== 0) {
+      this.scrollOffset += lineDelta;
+    }
+
+    this.lastRenderedLineCount = renderedBlocks.length;
+
+    const maxScroll = Math.max(0, renderedBlocks.length - messageRows);
+    this.scrollOffset = Math.min(Math.max(0, this.scrollOffset), maxScroll);
+
+    const start = Math.max(0, renderedBlocks.length - messageRows - this.scrollOffset);
+    const visibleMessages = renderedBlocks.slice(start, start + messageRows);
 
     while (visibleMessages.length < messageRows) {
       visibleMessages.unshift(plainLine("", columns));
     }
 
     const messageLines = visibleMessages.map((line) => padAnsi(line, columns));
-    const statusLine = this.renderStatusLine(columns);
+    const statusLine = this.renderStatusLine(columns, maxScroll);
     const input = this.renderInputLine(columns);
 
     const lines = [...messageLines, statusLine, input.line];
@@ -267,9 +348,10 @@ export class Tui {
     process.stdout.write(output.join(""));
   }
 
-  private renderStatusLine(columns: number) {
+  private renderStatusLine(columns: number, maxScroll: number) {
     const spinner = this.running ? SPINNER_FRAMES[this.spinnerFrame] : " ";
-    const text = `${spinner} ${this.status || "idle"}`;
+    const scrollText = this.scrollOffset > 0 ? ` | scroll ${this.scrollOffset}/${maxScroll} | End latest` : "";
+    const text = `${spinner} ${this.status || "idle"}${scrollText}`;
     return renderBar(text, columns, 235, this.running ? 229 : 250);
   }
 
