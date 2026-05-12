@@ -5,6 +5,7 @@ export type RenderBlock = {
   role: BlockRole;
   title?: string;
   content: string;
+  collapsed?: boolean;
 };
 
 type SubmitHandler = (input: string) => void | Promise<void>;
@@ -77,6 +78,9 @@ export class Tui {
   private selection: SelectionRange | undefined;
   private selecting = false;
   private selectionMoved = false;
+  private blockLineMap: number[] = [];
+  private lastMessageStart = 0;
+  private lastMessageRows = 0;
 
   constructor(private readonly options: { onSubmit?: SubmitHandler } = {}) {}
 
@@ -116,7 +120,11 @@ export class Tui {
 
   addBlock(block: Omit<RenderBlock, "id">) {
     const id = this.nextBlockId++;
-    this.blocks.push({ id, ...block });
+    this.blocks.push({
+      id,
+      ...block,
+      collapsed: block.collapsed ?? ((block.role === "tool_use" || block.role === "tool_result") ? true : undefined),
+    });
     this.requestRender();
     return id;
   }
@@ -170,6 +178,35 @@ export class Tui {
     }
 
     this.requestRender();
+  }
+
+  toggleBlockCollapse(id: number) {
+    const block = this.blocks.find((candidate) => candidate.id === id);
+    if (!block) {
+      return;
+    }
+    if (block.role !== "tool_use" && block.role !== "tool_result") {
+      return;
+    }
+    block.collapsed = !block.collapsed;
+    this.requestRender();
+  }
+
+  private handleBlockClick(position: ScreenPosition | undefined) {
+    if (!position) {
+      return;
+    }
+    if (position.row > this.lastMessageRows) {
+      return;
+    }
+    const renderedIndex = this.lastMessageStart + (position.row - 1);
+    if (renderedIndex < 0 || renderedIndex >= this.blockLineMap.length) {
+      return;
+    }
+    const blockId = this.blockLineMap[renderedIndex];
+    if (blockId) {
+      this.toggleBlockCollapse(blockId);
+    }
   }
 
   private clearSelection() {
@@ -455,6 +492,7 @@ export class Tui {
   private finishSelection() {
     this.selecting = false;
     if (!this.selectionMoved) {
+      this.handleBlockClick(this.selection?.anchor);
       this.clearSelection();
       return;
     }
@@ -593,10 +631,17 @@ export class Tui {
     const statusRows = this.statusRows(rows);
     const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
     const messageRows = Math.max(0, rows - statusRows - input.lines.length);
-    const renderedBlocks = this.blocks.flatMap((block) => [
-      ...renderBlock(block, columns),
-      "",
-    ]);
+    const renderedBlocks: string[] = [];
+    const blockLineMap: number[] = [];
+    for (const block of this.blocks) {
+      const blockLines = renderBlock(block, columns);
+      renderedBlocks.push(...blockLines);
+      for (let i = 0; i < blockLines.length; i++) {
+        blockLineMap.push(block.id);
+      }
+      renderedBlocks.push("");
+      blockLineMap.push(0);
+    }
     const lineDelta = renderedBlocks.length - this.lastRenderedLineCount;
     if (this.scrollOffset > 0 && this.lastRenderedLineCount > 0 && lineDelta !== 0) {
       this.scrollOffset += lineDelta;
@@ -622,6 +667,9 @@ export class Tui {
       : [...messageLines, ...input.lines];
     this.screenColumns = columns;
     this.screenLines = lines.slice(0, rows).map((line) => stripAnsi(clipAnsi(line, columns)));
+    this.blockLineMap = blockLineMap;
+    this.lastMessageStart = start;
+    this.lastMessageRows = messageRows;
 
     const output = [`${HIDE_CURSOR}`];
     for (let row = 0; row < rows; row += 1) {
@@ -832,7 +880,20 @@ function renderBlock(block: RenderBlock, columns: number) {
   }
 
   rows.push([]);
-  return rows.map((row) => renderBlockRow(row, theme, columns));
+
+  const isCollapsed = block.collapsed === true;
+  const maxRows = 20;
+
+  let result = rows.map((row) => renderBlockRow(row, theme, columns));
+
+  if (isCollapsed && result.length > maxRows) {
+    result = result.slice(0, maxRows - 3);
+    result.push(renderBlockRow([], theme, columns));
+    result.push(renderBlockRow([{ text: "Click to expand", style: "italic" }], theme, columns));
+    result.push(renderBlockRow([], theme, columns));
+  }
+
+  return result;
 }
 
 function renderBlockRow(segments: StyledSegment[], theme: BlockTheme, columns: number) {
