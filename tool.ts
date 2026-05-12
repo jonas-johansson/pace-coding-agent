@@ -3,6 +3,7 @@ import { z } from "zod";
 import { readFile, writeFile } from "fs/promises"
 import { spawn } from "child_process";
 import { parse } from "partial-json";
+import { resolve, relative } from "path";
 import TurndownService from "turndown";
 
 function throwIfAborted(signal?: AbortSignal) {
@@ -120,13 +121,22 @@ function formatToolOutput(toolOutput: ToolOutput) {
     .join("\n\n");
 }
 
+/**
+ * Normalize a file path for display: resolve it against cwd, then make it
+ * relative so that both `./tool.ts` and `/home/user/project/tool.ts` are
+ * displayed as `tool.ts`.
+ */
+function normalizePath(path: string): string {
+  return relative(process.cwd(), resolve(path)) || ".";
+}
+
 const readTool = Tool({
   name: "read",
   description: "Read content from a file.",
   inputSchema: z.object({
     path: z.string().describe("Absolute or relative path."),
   }),
-  titleFormatter: (input) => `read: ${input.path ?? ""}`,
+  titleFormatter: (input) => `read: ${input.path ? normalizePath(input.path) : ""}`,
   showContent: false,
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
@@ -144,7 +154,7 @@ const writeTool = Tool({
     path: z.string(),
     content: z.string()
   }),
-  titleFormatter: (input) => `write: ${input.path ?? ""}`,
+  titleFormatter: (input) => `write: ${input.path ? normalizePath(input.path) : ""}`,
   showContent: false,
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
@@ -163,7 +173,7 @@ const editTool = Tool({
     oldText: z.string().describe("Old text to find and replace (must match exactly)"),
     newText: z.string().describe("New text to replace the old with")
   }),
-  titleFormatter: (input) => `edit: ${input.path ?? ""}`,
+  titleFormatter: (input) => `edit: ${input.path ? normalizePath(input.path) : ""}`,
   showContent: false,
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
