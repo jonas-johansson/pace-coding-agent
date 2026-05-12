@@ -107,6 +107,7 @@ export class Tui {
   private blockLineMap: number[] = [];
   private lastMessageStart = 0;
   private lastMessageRows = 0;
+  private emptyPrefixLines = 0;
   private contextInfo: ContextInfo | undefined;
   private cost = 0;
   private cwd = "";
@@ -257,7 +258,9 @@ export class Tui {
     if (position.row > this.lastMessageRows) {
       return;
     }
-    const renderedIndex = this.lastMessageStart + (position.row - 1);
+    // Subtract the empty prefix lines that were prepended to fill the
+    // screen when there are fewer rendered block lines than message rows.
+    const renderedIndex = this.lastMessageStart + (position.row - 1) - this.emptyPrefixLines;
     if (renderedIndex < 0 || renderedIndex >= this.blockLineMap.length) {
       return;
     }
@@ -1049,8 +1052,13 @@ export class Tui {
     const start = Math.max(0, renderedBlocks.length - messageRows - this.scrollOffset);
     const visibleMessages = renderedBlocks.slice(start, start + messageRows);
 
+    // When there are fewer rendered block lines than message rows, empty
+    // lines are prepended to fill the screen. Track how many so click
+    // handling can offset correctly.
+    let emptyPrefixLines = 0;
     while (visibleMessages.length < messageRows) {
       visibleMessages.unshift(plainLine("", columns));
+      emptyPrefixLines += 1;
     }
 
     const messageLines = visibleMessages.map((line) => padAnsi(line, columns));
@@ -1071,6 +1079,7 @@ export class Tui {
     this.blockLineMap = blockLineMap;
     this.lastMessageStart = start;
     this.lastMessageRows = messageRows;
+    this.emptyPrefixLines = emptyPrefixLines;
 
     const output = [`${HIDE_CURSOR}`];
     for (let row = 0; row < rows; row += 1) {
