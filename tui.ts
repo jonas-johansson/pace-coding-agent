@@ -45,9 +45,9 @@ const SGR_MOUSE_PATTERN = /\x1b\[<(\d+);(\d+);(\d+)([mM])/g;
 const SPINNER_FRAMES = ["-", "\\", "|", "/"];
 const MOUSE_WHEEL_LINES = 3;
 const INPUT_HORIZONTAL_PADDING = 2;
-const INPUT_ROWS = 3;
+const INPUT_VERTICAL_PADDING = 2;
 const STATUS_ROWS = 1;
-const RESERVED_ROWS = INPUT_ROWS + STATUS_ROWS;
+const MIN_MESSAGE_ROWS = 1;
 
 const themes: Record<BlockRole, BlockTheme> = {
   user: { fg: 231, bg: 24, accent: 117 },
@@ -508,7 +508,19 @@ export class Tui {
   }
 
   private messageRows() {
-    return Math.max(process.stdout.rows ?? 24, RESERVED_ROWS + 1) - RESERVED_ROWS;
+    const columns = Math.max(process.stdout.columns ?? 80, 1);
+    const rows = Math.max(process.stdout.rows ?? 24, 1);
+    const statusRows = this.statusRows(rows);
+    const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
+    return Math.max(0, rows - statusRows - input.lines.length);
+  }
+
+  private statusRows(rows: number) {
+    return rows > 1 ? STATUS_ROWS : 0;
+  }
+
+  private maxInputRows(rows: number, statusRows: number) {
+    return Math.max(1, rows - statusRows - MIN_MESSAGE_ROWS);
   }
 
   private submitInput() {
@@ -557,9 +569,11 @@ export class Tui {
       return;
     }
 
-    const columns = Math.max(process.stdout.columns ?? 80, 20);
-    const rows = Math.max(process.stdout.rows ?? 24, RESERVED_ROWS + 1);
-    const messageRows = rows - RESERVED_ROWS;
+    const columns = Math.max(process.stdout.columns ?? 80, 1);
+    const rows = Math.max(process.stdout.rows ?? 24, 1);
+    const statusRows = this.statusRows(rows);
+    const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length);
     const renderedBlocks = this.blocks.flatMap((block) => [
       ...renderBlock(block, columns),
       "",
@@ -583,9 +597,10 @@ export class Tui {
 
     const messageLines = visibleMessages.map((line) => padAnsi(line, columns));
     const statusLine = this.renderStatusLine(columns, maxScroll);
-    const input = this.renderInputLine(columns);
 
-    const lines = [...messageLines, ...input.lines, statusLine];
+    const lines = statusRows > 0
+      ? [...messageLines, ...input.lines, statusLine]
+      : [...messageLines, ...input.lines];
     this.screenColumns = columns;
     this.screenLines = lines.slice(0, rows).map((line) => stripAnsi(clipAnsi(line, columns)));
 
@@ -593,7 +608,7 @@ export class Tui {
     for (let row = 0; row < rows; row += 1) {
       output.push(`\x1b[${row + 1};1H\x1b[2K${clipAnsi(this.renderSelectedLine(lines[row] ?? "", row + 1, columns), columns)}`);
     }
-    output.push(`\x1b[${rows - STATUS_ROWS - Math.floor(INPUT_ROWS / 2)};${input.cursorCol}H${SHOW_CURSOR}`);
+    output.push(`\x1b[${Math.min(rows, messageRows + input.cursorRow)};${input.cursorCol}H${SHOW_CURSOR}`);
 
     process.stdout.write(output.join(""));
   }
@@ -622,19 +637,24 @@ export class Tui {
     return renderBar(`${" ".repeat(horizontalPadding)}${visible}`, columns, 235, this.running ? 229 : 250);
   }
 
-  private renderInputLine(columns: number) {
+  private renderInputLine(columns: number, maxRows: number) {
     const prompt = "";
     const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
     const textWidth = Math.max(1, columns - horizontalPadding * 2);
-    const raw = `${prompt}${this.input}`;
-    const visible = takeRight(raw, textWidth);
-    const cursorCol = Math.max(1, Math.min(columns, horizontalPadding + visibleLength(visible) + 1));
+    const raw = sanitizeSingleLine(`${prompt}${this.input}`);
+    const wrapped = wrapInputText(raw, textWidth);
+    const hasPadding = maxRows >= INPUT_VERTICAL_PADDING + 1;
+    const contentRows = Math.max(1, maxRows - (hasPadding ? INPUT_VERTICAL_PADDING : 0));
+    const visibleRows = wrapped.slice(-contentRows);
+    const cursorText = visibleRows[visibleRows.length - 1] ?? "";
+    const cursorCol = Math.max(1, Math.min(columns, horizontalPadding + visibleLength(cursorText) + 1));
+    const renderedContent = visibleRows.map((line) => renderBar(`${" ".repeat(horizontalPadding)}${line}`, columns, 236, 252));
+
     return {
-      lines: [
-        renderBar("", columns, 236, 252),
-        renderBar(`${" ".repeat(horizontalPadding)}${visible}`, columns, 236, 252),
-        renderBar("", columns, 236, 252),
-      ],
+      lines: hasPadding
+        ? [renderBar("", columns, 236, 252), ...renderedContent, renderBar("", columns, 236, 252)]
+        : renderedContent,
+      cursorRow: (hasPadding ? 1 : 0) + visibleRows.length,
       cursorCol,
     };
   }
@@ -867,6 +887,65 @@ function parseMarkdownLine(line: string): StyledSegment[] {
 
   flushNormal();
   return segments.length > 0 ? segments : [{ text: "", style: "normal" }];
+}
+
+function wrapInputText(text: string, width: number) {
+  const rows: string[] = [];
+  const chars = Array.from(text);
+  const maxWidth = Math.max(1, width);
+  let index = 0;
+
+  while (index < chars.length) {
+    while (rows.length > 0 && isInputWrapWhitespace(chars[index])) {
+      index += 1;
+    }
+
+    let end = index;
+    let used = 0;
+    let lastWhitespace = -1;
+
+    while (end < chars.length) {
+      const charCells = charWidth(chars[end]);
+      if (used > 0 && used + charCells > maxWidth) {
+        break;
+      }
+
+      used += charCells;
+      if (isInputWrapWhitespace(chars[end])) {
+        lastWhitespace = end;
+      }
+      end += 1;
+    }
+
+    if (end >= chars.length) {
+      rows.push(chars.slice(index, end).join(""));
+      break;
+    }
+
+    let rowEnd = end;
+    let next = end;
+    if (lastWhitespace > index) {
+      rowEnd = lastWhitespace;
+      while (rowEnd > index && isInputWrapWhitespace(chars[rowEnd - 1])) {
+        rowEnd -= 1;
+      }
+      next = lastWhitespace + 1;
+    }
+
+    if (rowEnd === index) {
+      rowEnd = index + 1;
+      next = rowEnd;
+    }
+
+    rows.push(chars.slice(index, rowEnd).join(""));
+    index = next;
+  }
+
+  return rows.length > 0 ? rows : [""];
+}
+
+function isInputWrapWhitespace(char: string | undefined) {
+  return char === " " || char === "\t";
 }
 
 function wrapSegments(segments: StyledSegment[], width: number) {
