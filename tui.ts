@@ -284,6 +284,13 @@ export class Tui {
 
   private handleData = (data: string) => {
     if (data === "\u0003") {
+      if (this.input) {
+        this.input = "";
+        this.inputCursor = 0;
+        this.inputScrollRow = 0;
+        this.requestRender();
+        return;
+      }
       this.stop();
       process.exit(0);
     }
