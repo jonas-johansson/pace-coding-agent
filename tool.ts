@@ -16,6 +16,11 @@ export type ToolDisplayBlock = {
   content: string;
 }
 
+export type ToolResultBody = {
+  content: string;
+  trivial: boolean;
+}
+
 type ZodObjectSchema = z.ZodObject<z.core.$ZodShape>;
 
 type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
@@ -23,6 +28,7 @@ type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
   description: string;
   inputSchema: T;
   execute: (input: z.infer<T>) => Promise<ToolOutput>;
+  titleFormatter?: (input: Partial<z.infer<T>>) => string;
 }
 
 export const tools: ToolDescriptor[] = [];
@@ -36,20 +42,61 @@ function Tool<T extends ZodObjectSchema>(definition: ToolDescriptor<T>) {
   return definition;
 }
 
-export function visualizeToolStart(toolName: string): ToolDisplayBlock {
-  return { title: `Tool use: ${toolName}`, content: "Input:\n{}" };
+export function visualizeToolTitle(toolName: string, input: unknown): string {
+  const tool = tools.find((candidate) => candidate.name === toolName);
+  if (tool?.titleFormatter && input && typeof input === "object") {
+    try {
+      return oneLine(tool.titleFormatter(input as never));
+    } catch {
+      // fall through to generic
+    }
+  }
+  return oneLine(`${toolName}: ${defaultInputSummary(input)}`);
 }
 
-export function visualizeToolPartialInput(toolName: string, jsonString: string): ToolDisplayBlock {
-  return { title: `Tool use: ${toolName}`, content: `Input:\n${formatPartialJson(jsonString)}` };
+export function visualizeToolPartialTitle(toolName: string, jsonString: string): string {
+  let parsed: unknown = {};
+  try {
+    parsed = parsePartialJson(jsonString);
+  } catch {
+    parsed = {};
+  }
+  return visualizeToolTitle(toolName, parsed);
 }
 
-export function visualizeToolInput(toolName: string, input: unknown): ToolDisplayBlock {
-  return { title: `Tool use: ${toolName}`, content: `Input:\n${formatToolInput(input)}` };
+export function formatToolResultBody(output: ToolOutput): ToolResultBody {
+  const content = formatToolOutput(output).trimEnd();
+  const trivial = isTrivialBody(content);
+  return { content, trivial };
 }
 
-export function visualizeToolResult(toolName: string, output: ToolOutput): ToolDisplayBlock {
-  return { title: `Tool result: ${toolName}`, content: formatToolOutput(output) };
+function isTrivialBody(text: string): boolean {
+  if (!text) return true;
+  const lines = text.split("\n").filter((line) => line.trim().length > 0);
+  if (lines.length !== 1) return false;
+  return lines[0].length <= 80;
+}
+
+function defaultInputSummary(input: unknown): string {
+  if (input === null || input === undefined) return "";
+  if (typeof input === "string") return input;
+  if (typeof input !== "object") return String(input);
+  const obj = input as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  if (keys.length === 0) return "";
+  // Prefer common "path" or "command" keys
+  for (const preferred of ["command", "path", "file", "name"]) {
+    if (typeof obj[preferred] === "string") return obj[preferred] as string;
+  }
+  // Fall back to first string value
+  for (const key of keys) {
+    if (typeof obj[key] === "string") return obj[key] as string;
+  }
+  return JSON.stringify(input);
+}
+
+function oneLine(text: string): string {
+  return String(text).replace(/\s+/g, " ").trim();
 }
 
 function parsePartialJson(jsonString: string): unknown {
@@ -58,18 +105,6 @@ function parsePartialJson(jsonString: string): unknown {
   }
 
   return parse(jsonString);
-}
-
-function formatPartialJson(jsonString: string) {
-  if (!jsonString.trim()) {
-    return "{}";
-  }
-
-  try {
-    return JSON.stringify(parsePartialJson(jsonString), null, 2);
-  } catch {
-    return jsonString;
-  }
 }
 
 function formatToolOutput(toolOutput: ToolOutput) {
@@ -84,16 +119,13 @@ function formatToolOutput(toolOutput: ToolOutput) {
     .join("\n\n");
 }
 
-function formatToolInput(input: unknown) {
-  return JSON.stringify(input, null, 2);
-}
-
 const readTool = Tool({
   name: "read",
   description: "Read content from a file.",
   inputSchema: z.object({
     path: z.string().describe("Absolute or relative path."),
   }),
+  titleFormatter: (input) => `read: ${input.path ?? ""}`,
   execute: async (input): Promise<ToolOutput> => {
     const text = await readFile(input.path, 'utf8');
     return {
@@ -109,6 +141,7 @@ const writeTool = Tool({
     path: z.string(),
     content: z.string()
   }),
+  titleFormatter: (input) => `write: ${input.path ?? ""}`,
   execute: async (input): Promise<ToolOutput> => {
     await writeFile(input.path, input.content);
     return {
@@ -125,6 +158,7 @@ const editTool = Tool({
     oldText: z.string().describe("Old text to find and replace (must match exactly)"),
     newText: z.string().describe("New text to replace the old with")
   }),
+  titleFormatter: (input) => `edit: ${input.path ?? ""}`,
   execute: async (input): Promise<ToolOutput> => {
     const oldFileData = await readFile(input.path, 'utf8');
     const newFileData = oldFileData.replaceAll(input.oldText, input.newText);
@@ -141,6 +175,7 @@ const bashTool = Tool({
   inputSchema: z.object({
     command: z.string(),
   }),
+  titleFormatter: (input) => `bash: ${input.command ?? ""}`,
   execute: async (input): Promise<ToolOutput> => {
     try {
       const { stdout, stderr } = await execAsync(input.command, { maxBuffer: 10 * 1024 * 1024 });

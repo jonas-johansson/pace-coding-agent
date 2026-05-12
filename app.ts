@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import assert from "assert";
 import { Tui } from "./tui";
-import { tools, toolsTransformedToAnthropicStyle, visualizeToolInput, visualizeToolPartialInput, visualizeToolResult, visualizeToolStart } from "./tool";
+import { tools, toolsTransformedToAnthropicStyle, visualizeToolTitle, visualizeToolPartialTitle, formatToolResultBody } from "./tool";
 
 const ant = new Anthropic();
 const messages: Anthropic.MessageParam[] = [];
@@ -96,18 +96,24 @@ function handleCommand(command: string): boolean {
   }
 }
 
-function upsertToolUseBlock(toolUseBlocks: Map<string, number>, toolUseId: string, display: { title?: string; content: string } | undefined) {
-  if (!display) {
-    return;
+function ensureToolBlock(
+  toolBlocks: Map<string, number>,
+  toolUseId: string,
+  toolName: string,
+): number {
+  const existing = toolBlocks.get(toolUseId);
+  if (existing !== undefined) {
+    return existing;
   }
 
-  const blockId = toolUseBlocks.get(toolUseId);
-  if (blockId !== undefined) {
-    tui.updateBlock(blockId, display.content);
-    return;
-  }
-
-  toolUseBlocks.set(toolUseId, tui.addBlock({ role: "tool_use", ...display }));
+  const id = tui.addBlock({
+    role: "tool",
+    title: visualizeToolTitle(toolName, {}),
+    content: "",
+    state: "running",
+  });
+  toolBlocks.set(toolUseId, id);
+  return id;
 }
 
 async function handleUserInput(userMessage: string) {
@@ -155,7 +161,7 @@ async function prompt(userMessage: string) {
     let currentToolName: string | undefined;
     let accInputJson = "";
     let accText = "";
-    const toolUseBlocks = new Map<string, number>();
+    const toolBlocks = new Map<string, number>();
 
     for await (const event of stream) {
       switch (event.type) {
@@ -179,7 +185,7 @@ async function prompt(userMessage: string) {
           } else if (contentBlock.type === "tool_use") {
             currentToolUseId = contentBlock.id;
             currentToolName = contentBlock.name;
-            upsertToolUseBlock(toolUseBlocks, contentBlock.id, visualizeToolStart(contentBlock.name));
+            ensureToolBlock(toolBlocks, contentBlock.id, contentBlock.name);
             tui.setStatus(`Preparing tool: ${contentBlock.name}`);
           }
           break;
@@ -203,7 +209,8 @@ async function prompt(userMessage: string) {
             case "input_json_delta": {
               accInputJson += event.delta.partial_json;
               if (currentToolUseId && currentToolName) {
-                upsertToolUseBlock(toolUseBlocks, currentToolUseId, visualizeToolPartialInput(currentToolName, accInputJson));
+                const id = ensureToolBlock(toolBlocks, currentToolUseId, currentToolName);
+                tui.updateBlock(id, { title: visualizeToolPartialTitle(currentToolName, accInputJson) });
               }
               break;
             }
@@ -244,13 +251,19 @@ async function prompt(userMessage: string) {
         throw new Error(`Couldn't find tool ${contentBlock.name}`);
       }
 
+      const blockId = ensureToolBlock(toolBlocks, contentBlock.id, contentBlock.name);
+
       const inputParseResult = toolToExecute.inputSchema.safeParse(contentBlock.input);
       if (!inputParseResult.success) {
         const errorText =
           `Input did not match schema:\n${JSON.stringify(inputParseResult.error.issues, null, 2)}\n\n` +
           `Received input:\n${JSON.stringify(contentBlock.input, null, 2)}`;
 
-        tui.addBlock({ role: "error", title: `Tool input error: ${contentBlock.name}`, content: errorText });
+        tui.updateBlock(blockId, {
+          title: visualizeToolTitle(contentBlock.name, contentBlock.input),
+          content: errorText,
+          state: "error",
+        });
         messages.push({
           role: "user",
           content: [
@@ -265,13 +278,16 @@ async function prompt(userMessage: string) {
         continue;
       }
 
-      upsertToolUseBlock(toolUseBlocks, contentBlock.id, visualizeToolInput(contentBlock.name, inputParseResult.data));
-
+      tui.updateBlock(blockId, { title: visualizeToolTitle(contentBlock.name, inputParseResult.data) });
       tui.setStatus(`Using tool: ${contentBlock.name}`);
 
       try {
         const toolOutput = await toolToExecute.execute(inputParseResult.data);
-        tui.addBlock({ role: "tool_result", ...visualizeToolResult(contentBlock.name, toolOutput) });
+        const body = formatToolResultBody(toolOutput);
+        tui.updateBlock(blockId, {
+          content: body.content,
+          state: body.trivial ? "done-trivial" : "done",
+        });
         messages.push({
           role: "user",
           content: [
@@ -284,7 +300,7 @@ async function prompt(userMessage: string) {
         });
       } catch (error: unknown) {
         const errorText = formatError(error);
-        tui.addBlock({ role: "error", title: `Tool failed: ${contentBlock.name}`, content: errorText });
+        tui.updateBlock(blockId, { content: errorText, state: "error" });
         messages.push({
           role: "user",
           content: [

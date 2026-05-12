@@ -1,4 +1,6 @@
-type BlockRole = "user" | "assistant" | "tool_use" | "tool_result" | "error";
+type BlockRole = "user" | "assistant" | "tool" | "error";
+
+export type BlockState = "running" | "done" | "done-trivial" | "error";
 
 export type RenderBlock = {
   id: number;
@@ -6,7 +8,10 @@ export type RenderBlock = {
   title?: string;
   content: string;
   collapsed?: boolean;
+  state?: BlockState;
 };
+
+export type BlockPatch = Partial<Pick<RenderBlock, "title" | "content" | "state">>;
 
 type SubmitHandler = (input: string) => void | Promise<void>;
 type SegmentStyle = "normal" | "bold" | "italic" | "code" | "heading" | "title";
@@ -56,9 +61,14 @@ const INSERT_NEWLINE_KEYS = new Set(["\x1b[13;2u", "\x1b[13;2~", "\x1b[27;2;13~"
 const themes: Record<BlockRole, BlockTheme> = {
   user: { fg: 231, bg: 24, accent: 117, bold: 230 },
   assistant: { fg: 255, bg: 236, accent: 221, bold: 215 },
-  tool_use: { fg: 230, bg: 58, accent: 229, bold: 223 },
-  tool_result: { fg: 254, bg: 238, accent: 151, bold: 193 },
+  tool: { fg: 252, bg: 236, accent: 117, bold: 230 },
   error: { fg: 231, bg: 88, accent: 217, bold: 223 },
+};
+
+const STATE_GLYPHS: Record<Exclude<BlockState, "running">, { glyph: string; color: number }> = {
+  done: { glyph: "✓", color: 151 },
+  "done-trivial": { glyph: "✓", color: 151 },
+  error: { glyph: "✗", color: 217 },
 };
 
 export class Tui {
@@ -123,19 +133,25 @@ export class Tui {
     this.blocks.push({
       id,
       ...block,
-      collapsed: block.collapsed ?? ((block.role === "tool_use" || block.role === "tool_result") ? true : undefined),
+      collapsed: block.collapsed ?? (block.role === "tool" ? true : undefined),
     });
     this.requestRender();
     return id;
   }
 
-  updateBlock(id: number, content: string) {
+  updateBlock(id: number, patch: string | BlockPatch) {
     const block = this.blocks.find((candidate) => candidate.id === id);
     if (!block) {
       return;
     }
 
-    block.content = content;
+    if (typeof patch === "string") {
+      block.content = patch;
+    } else {
+      if (patch.title !== undefined) block.title = patch.title;
+      if (patch.content !== undefined) block.content = patch.content;
+      if (patch.state !== undefined) block.state = patch.state;
+    }
     this.requestRender();
   }
 
@@ -185,7 +201,7 @@ export class Tui {
     if (!block) {
       return;
     }
-    if (block.role !== "tool_use" && block.role !== "tool_result") {
+    if (block.role !== "tool") {
       return;
     }
     block.collapsed = !block.collapsed;
@@ -633,8 +649,9 @@ export class Tui {
     const messageRows = Math.max(0, rows - statusRows - input.lines.length);
     const renderedBlocks: string[] = [];
     const blockLineMap: number[] = [];
+    const spinnerFrame = SPINNER_FRAMES[this.spinnerFrame];
     for (const block of this.blocks) {
-      const blockLines = renderBlock(block, columns);
+      const blockLines = renderBlock(block, columns, spinnerFrame);
       renderedBlocks.push(...blockLines);
       for (let i = 0; i < blockLines.length; i++) {
         blockLineMap.push(block.id);
@@ -863,17 +880,21 @@ function updateActiveStyle(activeStyle: string, sequence: string) {
   return activeStyle + sequence;
 }
 
-function renderBlock(block: RenderBlock, columns: number) {
+function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) {
   const theme = themes[block.role];
+  const stateIndicator = block.role === "tool" ? renderStateIndicator(block.state, spinnerFrame, theme) : undefined;
+  const indicatorWidth = stateIndicator ? visibleLength(stateIndicator.text) : 0;
+  const titleInnerWidth = Math.max(1, columns - 4 - (indicatorWidth > 0 ? indicatorWidth + 1 : 0));
   const innerWidth = Math.max(1, columns - 4);
   const rows: StyledSegment[][] = [[]];
 
   if (block.title) {
-    rows.push(...wrapSegments([{ text: block.title, style: "title" }], innerWidth));
+    rows.push(...wrapSegments([{ text: block.title, style: "title" }], titleInnerWidth));
     rows.push([]);
   }
 
-  const content = sanitizeContent(block.content);
+  const hideBody = block.role === "tool" && block.state === "done-trivial";
+  const content = hideBody ? "" : sanitizeContent(block.content);
   if (content) {
     for (const line of content.split("\n")) {
       rows.push(...wrapSegments(parseMarkdownLine(line), innerWidth));
@@ -885,7 +906,12 @@ function renderBlock(block: RenderBlock, columns: number) {
   const isCollapsed = block.collapsed === true;
   const maxRows = 20;
 
-  let result = rows.map((row) => renderBlockRow(row, theme, columns));
+  let result = rows.map((row, index) => {
+    if (index === 1 && stateIndicator && block.title) {
+      return renderBlockRowWithGutter(row, stateIndicator, theme, columns);
+    }
+    return renderBlockRow(row, theme, columns);
+  });
 
   if (isCollapsed && result.length > maxRows) {
     result = result.slice(0, maxRows - 3);
@@ -895,6 +921,47 @@ function renderBlock(block: RenderBlock, columns: number) {
   }
 
   return result;
+}
+
+function renderStateIndicator(
+  state: BlockState | undefined,
+  spinnerFrame: string,
+  theme: BlockTheme,
+): { text: string; rendered: string } | undefined {
+  if (!state || state === "done") {
+    return undefined;
+  }
+
+  if (state === "running") {
+    return {
+      text: spinnerFrame,
+      rendered: `${RESET}${bg(theme.bg)}${fg(229)}${spinnerFrame}`,
+    };
+  }
+
+  const meta = STATE_GLYPHS[state];
+  if (!meta) {
+    return undefined;
+  }
+
+  return {
+    text: meta.glyph,
+    rendered: `${RESET}${bg(theme.bg)}${fg(meta.color)}${BOLD}${meta.glyph}`,
+  };
+}
+
+function renderBlockRowWithGutter(
+  segments: StyledSegment[],
+  indicator: { text: string; rendered: string },
+  theme: BlockTheme,
+  columns: number,
+) {
+  const visible = segments.reduce((total, segment) => total + visibleLength(segment.text), 0);
+  const indicatorWidth = visibleLength(indicator.text);
+  const middlePadding = Math.max(1, columns - 2 - visible - indicatorWidth - 2);
+  const base = `${bg(theme.bg)}${fg(theme.fg)}`;
+  const content = segments.map((segment) => renderSegment(segment, theme)).join("");
+  return `${base}  ${content}${RESET}${bg(theme.bg)}${fg(theme.fg)}${" ".repeat(middlePadding)}${indicator.rendered}${RESET}${bg(theme.bg)}  ${RESET}`;
 }
 
 function renderBlockRow(segments: StyledSegment[], theme: BlockTheme, columns: number) {
