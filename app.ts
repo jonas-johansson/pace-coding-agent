@@ -103,7 +103,7 @@ async function prompt(userMessage: string) {
     tui.setStatus("thinking");
 
     const stream = await ant.messages.stream({
-      model: "claude-sonnet-4-6",
+      model: "claude-haiku-4-5",
       max_tokens: 16_000,
       messages,
       tools: toolsTransformedToAnthropicStyle,
