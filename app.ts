@@ -51,7 +51,7 @@ async function handleUserInput(userMessage: string) {
   }
 
   if (promptRunning) {
-    tui.setStatus("agent is still running");
+    tui.setStatus("Agent is still running");
     return;
   }
 
@@ -73,7 +73,7 @@ async function prompt(userMessage: string) {
   messages.push({ role: "user", content: [{ type: "text", text: userMessage }] });
 
   while (true) {
-    tui.setStatus("thinking");
+    tui.setStatus("Thinking");
 
     const stream = await ant.messages.stream({
       model: "claude-haiku-4-5",
@@ -109,12 +109,12 @@ async function prompt(userMessage: string) {
               title: "Assistant",
               content: accText,
             });
-            tui.setStatus("streaming response");
+            tui.setStatus("Streaming response");
           } else if (contentBlock.type === "tool_use") {
             currentToolUseId = contentBlock.id;
             currentToolName = contentBlock.name;
             upsertToolUseBlock(toolUseBlocks, contentBlock.id, visualizeToolStart(contentBlock.name));
-            tui.setStatus(`preparing tool: ${contentBlock.name}`);
+            tui.setStatus(`Preparing tool: ${contentBlock.name}`);
           }
           break;
         }
@@ -132,7 +132,7 @@ async function prompt(userMessage: string) {
               } else {
                 tui.updateBlock(currentTextBlockId, accText);
               }
-              tui.setStatus("streaming response");
+              tui.setStatus("Streaming response");
               break;
 
             case "input_json_delta": {
@@ -202,7 +202,7 @@ async function prompt(userMessage: string) {
 
       upsertToolUseBlock(toolUseBlocks, contentBlock.id, visualizeToolInput(contentBlock.name, inputParseResult.data));
 
-      tui.setStatus(`using tool: ${contentBlock.name}`);
+      tui.setStatus(`Using tool: ${contentBlock.name}`);
 
       try {
         const toolOutput = await toolToExecute.execute(inputParseResult.data);
