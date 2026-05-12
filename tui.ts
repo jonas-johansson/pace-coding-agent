@@ -1027,8 +1027,8 @@ export class Tui {
         blockLineMap.push(block.id);
       }
 
-      // Trailing margin after user blocks
-      if (curType === "user") {
+      // Trailing margin after user blocks (skip if last block — input margin suffices)
+      if (curType === "user" && blockIdx < this.blocks.length - 1) {
         renderedBlocks.push(blackLine(columns));
         blockLineMap.push(0);
       }
