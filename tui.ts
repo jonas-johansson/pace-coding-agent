@@ -48,6 +48,7 @@ const INPUT_HORIZONTAL_PADDING = 2;
 const INPUT_VERTICAL_PADDING = 2;
 const STATUS_ROWS = 1;
 const MIN_MESSAGE_ROWS = 1;
+const INSERT_NEWLINE_KEYS = new Set(["\x1b[13;2u", "\x1b[13;2~", "\x1b[27;2;13~"]);
 
 const themes: Record<BlockRole, BlockTheme> = {
   user: { fg: 231, bg: 24, accent: 117 },
@@ -221,8 +222,13 @@ export class Tui {
     this.clearSelection();
 
     for (const char of Array.from(data)) {
-      if (char === "\r" || char === "\n") {
+      if (char === "\r") {
         this.submitInput();
+        continue;
+      }
+
+      if (char === "\n") {
+        this.insertInputNewline();
         continue;
       }
 
@@ -262,6 +268,12 @@ export class Tui {
   };
 
   private handleEscape(data: string) {
+    if (INSERT_NEWLINE_KEYS.has(data)) {
+      this.clearSelection();
+      this.insertInputNewline();
+      return true;
+    }
+
     if (this.handleMouse(data)) {
       return true;
     }
@@ -296,6 +308,11 @@ export class Tui {
       default:
         return data.startsWith("\x1b");
     }
+  }
+
+  private insertInputNewline() {
+    this.input += "\n";
+    this.requestRender();
   }
 
   private deleteWord() {
@@ -641,7 +658,7 @@ export class Tui {
     const prompt = "";
     const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
     const textWidth = Math.max(1, columns - horizontalPadding * 2);
-    const raw = sanitizeSingleLine(`${prompt}${this.input}`);
+    const raw = sanitizeContent(`${prompt}${this.input}`);
     const wrapped = wrapInputText(raw, textWidth);
     const hasPadding = maxRows >= INPUT_VERTICAL_PADDING + 1;
     const contentRows = Math.max(1, maxRows - (hasPadding ? INPUT_VERTICAL_PADDING : 0));
@@ -890,6 +907,11 @@ function parseMarkdownLine(line: string): StyledSegment[] {
 }
 
 function wrapInputText(text: string, width: number) {
+  const rows = text.split("\n").flatMap((line) => wrapInputLine(line, width));
+  return rows.length > 0 ? rows : [""];
+}
+
+function wrapInputLine(text: string, width: number) {
   const rows: string[] = [];
   const chars = Array.from(text);
   const maxWidth = Math.max(1, width);

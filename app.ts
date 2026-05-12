@@ -62,7 +62,7 @@ function handleCommand(command: string): boolean {
       tui.addBlock({
         role: "assistant",
         title: "Agento",
-        content: "New conversation started. Type a message and press Enter. Press Ctrl+C to quit.",
+        content: "New conversation started. Press Enter to send, Ctrl+J or Shift+Enter for a newline. Press Ctrl+C to quit.",
       });
       return true;
     default:
@@ -289,7 +289,7 @@ async function main() {
   tui.addBlock({
     role: "assistant",
     title: "Agento",
-    content: "Type a message and press Enter. Press Ctrl+C to quit.",
+    content: "Press Enter to send, Ctrl+J or Shift+Enter for a newline. Press Ctrl+C to quit.",
   });
 }
 
