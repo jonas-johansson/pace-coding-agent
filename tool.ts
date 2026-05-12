@@ -10,6 +10,7 @@ const execAsync = promisify(exec);
 
 export type ToolOutput = {
   content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.SearchResultBlockParam | Anthropic.DocumentBlockParam | Anthropic.ToolReferenceBlockParam>;
+  is_error?: boolean;
 }
 
 export type ToolDisplayBlock = {
@@ -165,6 +166,8 @@ const editTool = Tool({
   }
 })
 
+const BASH_DEFAULT_TIMEOUT = 10_000;
+
 const bashTool = Tool({
   name: "bash",
   description: "Execute a bash command.",
@@ -173,14 +176,28 @@ const bashTool = Tool({
   }),
   titleFormatter: (input) => `bash: ${input.command ?? ""}`,
   execute: async (input): Promise<ToolOutput> => {
+    const timeoutMs = (BASH_DEFAULT_TIMEOUT / 1000) * 1000;
     try {
-      const { stdout, stderr } = await execAsync(input.command, { maxBuffer: 10 * 1024 * 1024 });
+      const { stdout, stderr } = await execAsync(input.command, {
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: timeoutMs,
+      });
       const bashOutput = [stdout, stderr].filter(Boolean).join("\n");
       return {
         content: [{ type: "text", text: bashOutput }]
       }
     } catch (error: unknown) {
-      const execError = error as Error & { stdout?: string; stderr?: string };
+      const execError = error as Error & { stdout?: string; stderr?: string; killed?: boolean; signal?: string };
+      if (execError.killed || execError.signal === "SIGTERM") {
+        const partial = [execError.stdout, execError.stderr].filter(Boolean).join("\n");
+        const message = partial
+          ? `Command timed out after ${Math.floor(timeoutMs / 1000)} seconds. Partial output:\n${partial}`
+          : `Command timed out after ${Math.floor(timeoutMs / 1000)} seconds.`;
+        return {
+          content: [{ type: "text", text: `Error: ${message}` }],
+          is_error: true,
+        }
+      }
       const message = [execError.stdout, execError.stderr, execError.message].filter(Boolean).join("\n");
       return {
         content: [{ type: "text", text: `Error: ${message}`}]

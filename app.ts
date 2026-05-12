@@ -284,10 +284,10 @@ async function prompt(userMessage: string) {
 
       try {
         const toolOutput = await toolToExecute.execute(inputParseResult.data);
-        const showContent = toolToExecute.showContent !== false;
+        const showContent = toolToExecute.showContent !== false || toolOutput.is_error;
         tui.updateBlock(blockId, {
           content: showContent ? formatToolResultBody(toolOutput) : "",
-          state: "done",
+          state: toolOutput.is_error ? "error" : "done",
         });
         messages.push({
           role: "user",
@@ -296,6 +296,7 @@ async function prompt(userMessage: string) {
               type: "tool_result",
               tool_use_id: contentBlock.id,
               content: toolOutput.content,
+              ...(toolOutput.is_error && { is_error: true }),
             },
           ],
         });
