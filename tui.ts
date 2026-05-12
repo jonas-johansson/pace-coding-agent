@@ -898,9 +898,7 @@ export class Tui {
     const rows = Math.max(process.stdout.rows ?? 24, 1);
     const statusRows = this.statusRows(rows);
     const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
-    // Account for the margin lines above and below the input box
-    const inputMarginRows = rows > statusRows + input.lines.length + 1 ? 1 : 0;
-    return Math.max(0, rows - statusRows - input.lines.length - inputMarginRows);
+    return Math.max(0, rows - statusRows - input.lines.length);
   }
 
   private statusRows(rows: number) {
@@ -965,9 +963,7 @@ export class Tui {
     const rows = Math.max(process.stdout.rows ?? 24, 1);
     const statusRows = this.statusRows(rows);
     const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
-    // Account for margin lines above and below the input box
-    const inputMarginRows = rows > statusRows + input.lines.length + 1 ? 1 : 0;
-    const messageRows = Math.max(0, rows - statusRows - input.lines.length - inputMarginRows);
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length);
     const renderedBlocks: string[] = [];
     const blockLineMap: number[] = [];
     const spinnerFrame = SPINNER_FRAMES[this.spinnerFrame];
@@ -994,28 +990,34 @@ export class Tui {
       }
 
       // ── Margin logic ──
-      // User blocks: always get a margin line before (unless first) and after.
-      // Assistant / panel / error blocks: get a margin line before, unless
-      //   the previous block was a user block (which already added a trailing margin)
-      //   or this is the first block.
+      // Assistant blocks: always get a top margin and a trailing margin.
+      // User blocks: no trailing margin (they have internal padding).
+      // Panel / error blocks: have internal padding, so blocks following
+      //   them skip their leading margin.
       // Inline tools: get a margin line before the *first* in a consecutive
       //   group, but no separator between adjacent inline tools.
       if (prevType !== undefined) {
-        if (curType === "user") {
-          // Skip margin if previous block has its own internal padding
-          if (prevType !== "panel" && prevType !== "error") {
+        if (curType === "assistant") {
+          // Assistant blocks always get a top margin line.
+          renderedBlocks.push(blackLine(columns));
+          blockLineMap.push(0);
+        } else if (curType === "user") {
+          // Skip margin if previous block has its own internal padding,
+          // or is an inline tool (user cards sit flush against them).
+          if (prevType !== "panel" && prevType !== "error" && prevType !== "assistant" && prevType !== "inline-tool") {
             renderedBlocks.push(blackLine(columns));
             blockLineMap.push(0);
           }
         } else if (curType === "inline-tool") {
           // Only add margin before the first inline tool in a group
-          if (prevType !== "inline-tool" && prevType !== "user") {
+          if (prevType !== "inline-tool" && prevType !== "assistant") {
             renderedBlocks.push(blackLine(columns));
             blockLineMap.push(0);
           }
         } else {
-          // assistant, panel, error — margin before, unless prev was user
-          if (prevType !== "user") {
+          // panel, error — margin before, unless prev was assistant
+          // or user (user blocks have internal padding).
+          if (prevType !== "assistant" && prevType !== "user") {
             renderedBlocks.push(blackLine(columns));
             blockLineMap.push(0);
           }
@@ -1027,11 +1029,24 @@ export class Tui {
         blockLineMap.push(block.id);
       }
 
-      // Trailing margin after user blocks — skip if last block (input margin
-      // suffices) or if the next block has its own internal padding.
-      if (curType === "user" && blockIdx < this.blocks.length - 1) {
-        const nextType = visualType(this.blocks[blockIdx + 1]);
-        if (nextType !== "panel" && nextType !== "error") {
+      // Trailing margin after assistant blocks — skip only if the next
+      // block is another assistant (which will add its own leading margin).
+      if (curType === "assistant") {
+        const nextBlock = blockIdx < this.blocks.length - 1 ? this.blocks[blockIdx + 1] : undefined;
+        const nextType = nextBlock ? visualType(nextBlock) : undefined;
+        if (nextType !== "assistant") {
+          renderedBlocks.push(blackLine(columns));
+          blockLineMap.push(0);
+        }
+      }
+
+      // Trailing margin at the end of an inline-tool group — adds a
+      // bottom margin after the last consecutive inline tool so there
+      // is visual separation from the input box or the next block.
+      if (curType === "inline-tool") {
+        const nextBlock = blockIdx < this.blocks.length - 1 ? this.blocks[blockIdx + 1] : undefined;
+        const nextType = nextBlock ? visualType(nextBlock) : undefined;
+        if (nextType !== "inline-tool" && nextType !== "panel" && nextType !== "error" && nextType !== "assistant") {
           renderedBlocks.push(blackLine(columns));
           blockLineMap.push(0);
         }
@@ -1071,12 +1086,7 @@ export class Tui {
     const messageLines = visibleMessages.map((line) => padAnsi(line, columns));
     const statusLine = this.renderStatusLine(columns, maxScroll);
 
-    // Add margin lines above and below the input box if there's room
-    const inputMarginLine = blackLine(columns);
-    const inputSection = inputMarginRows > 0
-      ? [inputMarginLine, ...input.lines]
-      : input.lines;
-    const inputCursorRowOffset = inputMarginRows > 0 ? 1 : 0;
+    const inputSection = input.lines;
 
     const lines = statusRows > 0
       ? [...messageLines, ...inputSection, statusLine]
@@ -1092,7 +1102,7 @@ export class Tui {
     for (let row = 0; row < rows; row += 1) {
       output.push(`\x1b[${row + 1};1H\x1b[2K${clipAnsi(this.renderSelectedLine(lines[row] ?? "", row + 1, columns), columns)}`);
     }
-    output.push(`\x1b[${Math.min(rows, messageRows + inputCursorRowOffset + input.cursorRow)};${input.cursorCol}H${SHOW_CURSOR}`);
+    output.push(`\x1b[${Math.min(rows, messageRows + input.cursorRow)};${input.cursorCol}H${SHOW_CURSOR}`);
 
     process.stdout.write(output.join(""));
   }
