@@ -1,7 +1,9 @@
 {
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.94.0",
+		"@types/turndown": "^5.0.6",
 		"partial-json": "^0.1.7",
+		"turndown": "^7.2.4",
 		"zod": "^4.4.3",
 		"zod-to-json-schema": "^3.25.2"
 	},
