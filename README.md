@@ -10,6 +10,12 @@ Features:
 - Streaming: agent messages, tool use, tool result
 - Color: agent, human, tool use
 
+## Development
+
+Install dependencies: `npm install`
+
+Type check: `npm run lint`
+
 ## Getting started
 
 Run: `tsx app.ts`

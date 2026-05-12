@@ -947,7 +947,7 @@ function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) 
   const innerWidth = Math.max(1, columns - 4);
   const rows: StyledSegment[][] = [[]];
 
-  const content = sanitizedContent;
+  const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
 
   if (block.title) {
     rows.push(...wrapSegments([{ text: block.title, style: "title" }], titleInnerWidth));
@@ -965,7 +965,7 @@ function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) 
   rows.push([]);
 
   const isCollapsed = block.collapsed === true;
-  const maxRows = 20;
+  const maxRows = 15;
 
   let result = rows.map((row, index) => {
     if (index === 1 && stateIndicator && block.title) {
