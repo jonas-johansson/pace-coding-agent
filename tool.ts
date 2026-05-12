@@ -1,6 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { z } from "zod";
 import { readFile, writeFile } from "fs/promises"
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 export type ToolOutput = {
   content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.SearchResultBlockParam | Anthropic.DocumentBlockParam | Anthropic.ToolReferenceBlockParam>;
@@ -23,7 +27,6 @@ function Tool<T extends ZodObjectSchema>(descriptor: ToolDescriptor<T>) {
     throw new Error(`Duplicate tool name: "${descriptor.name}" is already registered`);
   }
   tools.push(descriptor as ToolDescriptor);
-  console.log(`Registered tool ${descriptor.name}`);
   return descriptor;
 }
 
@@ -77,8 +80,6 @@ const editTool = Tool({
   }
 })
 
-const { execSync } = require('child_process');
-
 const bashTool = Tool({
   name: "bash",
   description: "Execute a bash command.",
@@ -88,13 +89,14 @@ const bashTool = Tool({
   stringify: (input) => `Bash: ${input.command}`,
   execute: async (input): Promise<ToolOutput> => {
     try {
-      const bashOutput = execSync(input.command).toString();
-      console.log(bashOutput);
+      const { stdout, stderr } = await execAsync(input.command, { maxBuffer: 10 * 1024 * 1024 });
+      const bashOutput = [stdout, stderr].filter(Boolean).join("\n");
       return {
         content: [{ type: "text", text: bashOutput }]
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
+      const execError = error as Error & { stdout?: string; stderr?: string };
+      const message = [execError.stdout, execError.stderr, execError.message].filter(Boolean).join("\n");
       return {
         content: [{ type: "text", text: `Error: ${message}`}]
       }

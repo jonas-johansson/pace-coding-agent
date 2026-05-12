@@ -1,91 +1,284 @@
-import Anthropic from "@anthropic-ai/sdk"
-import { getUserInput } from "./input"
+import Anthropic from "@anthropic-ai/sdk";
+import assert from "assert";
+import { parse } from "partial-json";
+import { Tui } from "./tui";
 import { ToolOutput, tools, toolsTransformedToAnthropicStyle } from "./tool";
 
 const ant = new Anthropic();
 const messages: Anthropic.MessageParam[] = [];
+const tui = new Tui({ onSubmit: handleUserInput });
 
-async function main() {
-  console.log("How can I help?");
+let promptRunning = false;
 
-  while (true) {
+function parsePartialJson(jsonString: string): unknown {
+  if (jsonString.length === 0) {
+    return {};
+  }
 
-    // User
-    console.log("\n----------------------------\n")
-    const input = await getUserInput("User: ");
-    messages.push({ role: "user", content: [ { type: "text", text: input } ]});
+  return parse(jsonString);
+}
 
-    // Assistant
-    while (true) {
-      // console.log("...");
-      console.log();
-      const response = await ant.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 16_000,
-        messages,
-        tools: toolsTransformedToAnthropicStyle
-      });
-      messages.push({ role: "assistant", content: response.content })
-      // console.log(JSON.stringify(response, null, 2));
+function formatPartialJson(jsonString: string) {
+  if (!jsonString.trim()) {
+    return "{}";
+  }
 
-      // Tool use
-      for (let i=0; i<response.content.length; i++) {
-        const cb = response.content[i];
-        if (cb.type == "text") {
-          console.log(cb.text);
-        }
-        else if (cb.type == "tool_use") {
-          const nameOfToolToExecute = cb.name;
-          // console.log(`[${cb.name}]`);
-          const toolToExecute = tools.find(tool => tool.name === nameOfToolToExecute);
-          if (!toolToExecute) {
-            throw new Error("Couldn't find tool " + nameOfToolToExecute);
-          }
-          const inputParseResult = toolToExecute.inputSchema.safeParse(cb.input);
-          if (!inputParseResult.success) {
-            console.error(
-              `[tool:${nameOfToolToExecute}] input did not match schema.\n` +
-              `Received input: ${JSON.stringify(cb.input, null, 2)}\n` +
-              `Zod errors: ${JSON.stringify(inputParseResult.error.issues, null, 2)}`
-            );
-            messages.push({
-              role: "user",
-              content: [
-                {
-                  type: "tool_result",
-                  tool_use_id: cb.id,
-                  is_error: true,
-                  content: [{ type: "text", text: `Input did not match schema: ${JSON.stringify(inputParseResult.error.issues)}` }]
-                }
-              ]
-            });
-            continue;
-          }
-          console.log(`[tool] ${toolToExecute.stringify(inputParseResult.data)}`);
-          const toolOutput = await toolToExecute.execute(inputParseResult.data) as ToolOutput;
-          // console.log("toolResult", JSON.stringify(toolOutput, null, 2));
-          messages.push({
-            role: "user",
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: cb.id,
-                content: toolOutput.content
-              }
-            ]}
-          );
-        } else {
-          console.warn(`Unhandled content block type: ${cb.type}`);
-        }
-      }
-
-      if (response.stop_reason === "tool_use") {
-        continue;
-      } else {
-        break;
-      }
-    }
+  try {
+    return JSON.stringify(parsePartialJson(jsonString), null, 2);
+  } catch {
+    return jsonString;
   }
 }
+
+function formatError(error: unknown) {
+  return error instanceof Error ? error.stack ?? error.message : String(error);
+}
+
+function formatToolOutput(toolOutput: ToolOutput) {
+  return toolOutput.content
+    .map((part) => {
+      if (part.type === "text") {
+        return part.text;
+      }
+
+      return `[${part.type}] ${JSON.stringify(part, null, 2)}`;
+    })
+    .join("\n\n");
+}
+
+function formatToolInput(input: unknown) {
+  return JSON.stringify(input, null, 2);
+}
+
+function formatToolUse(summary: string, input: unknown) {
+  return `${summary}\n\nInput:\n${formatToolInput(input)}`;
+}
+
+async function handleUserInput(userMessage: string) {
+  if (promptRunning) {
+    tui.setStatus("agent is still running");
+    return;
+  }
+
+  promptRunning = true;
+  tui.setRunning(true, "thinking");
+
+  try {
+    await prompt(userMessage);
+  } catch (error: unknown) {
+    tui.addBlock({ role: "error", title: "Error", content: formatError(error) });
+  } finally {
+    promptRunning = false;
+    tui.setRunning(false, "idle");
+  }
+}
+
+async function prompt(userMessage: string) {
+  tui.addBlock({ role: "user", title: "You", content: userMessage });
+  messages.push({ role: "user", content: [{ type: "text", text: userMessage }] });
+
+  while (true) {
+    tui.setStatus("thinking");
+
+    const stream = await ant.messages.stream({
+      model: "claude-sonnet-4-6",
+      max_tokens: 16_000,
+      messages,
+      tools: toolsTransformedToAnthropicStyle,
+    });
+
+    let currentContentBlockIndex = -1;
+    let currentTextBlockId: number | undefined;
+    let currentToolUseId: string | undefined;
+    let accInputJson = "";
+    let accText = "";
+    const toolUseBlocks = new Map<string, number>();
+
+    for await (const event of stream) {
+      switch (event.type) {
+        case "content_block_start": {
+          assert(currentContentBlockIndex === -1);
+          currentContentBlockIndex = event.index;
+          currentTextBlockId = undefined;
+          currentToolUseId = undefined;
+          accInputJson = "";
+          accText = "";
+
+          const contentBlock = event.content_block;
+          if (contentBlock.type === "text") {
+            accText = contentBlock.text ?? "";
+            currentTextBlockId = tui.addBlock({
+              role: "assistant",
+              title: "Assistant",
+              content: accText,
+            });
+            tui.setStatus("streaming response");
+          } else if (contentBlock.type === "tool_use") {
+            currentToolUseId = contentBlock.id;
+            const blockId = tui.addBlock({
+              role: "tool_use",
+              title: `Tool: ${contentBlock.name}`,
+              content: "Preparing input",
+            });
+            toolUseBlocks.set(contentBlock.id, blockId);
+            tui.setStatus(`preparing tool: ${contentBlock.name}`);
+          }
+          break;
+        }
+
+        case "content_block_delta":
+          switch (event.delta.type) {
+            case "text_delta":
+              accText += event.delta.text;
+              if (currentTextBlockId === undefined) {
+                currentTextBlockId = tui.addBlock({
+                  role: "assistant",
+                  title: "Assistant",
+                  content: accText,
+                });
+              } else {
+                tui.updateBlock(currentTextBlockId, accText);
+              }
+              tui.setStatus("streaming response");
+              break;
+
+            case "input_json_delta": {
+              accInputJson += event.delta.partial_json;
+              if (currentToolUseId) {
+                const blockId = toolUseBlocks.get(currentToolUseId);
+                if (blockId !== undefined) {
+                  tui.updateBlock(blockId, `Input:\n${formatPartialJson(accInputJson)}`);
+                }
+              }
+              break;
+            }
+          }
+          break;
+
+        case "content_block_stop":
+          assert(event.index === currentContentBlockIndex);
+          currentContentBlockIndex = -1;
+          currentTextBlockId = undefined;
+          currentToolUseId = undefined;
+          accInputJson = "";
+          accText = "";
+          break;
+      }
+    }
+
+    const response = await stream.finalMessage();
+    messages.push({ role: "assistant", content: response.content });
+
+    for (const contentBlock of response.content) {
+      if (contentBlock.type === "text") {
+        continue;
+      }
+
+      if (contentBlock.type !== "tool_use") {
+        tui.addBlock({
+          role: "error",
+          title: "Unhandled content block",
+          content: JSON.stringify(contentBlock, null, 2),
+        });
+        continue;
+      }
+
+      const toolToExecute = tools.find((tool) => tool.name === contentBlock.name);
+      if (!toolToExecute) {
+        throw new Error(`Couldn't find tool ${contentBlock.name}`);
+      }
+
+      const inputParseResult = toolToExecute.inputSchema.safeParse(contentBlock.input);
+      if (!inputParseResult.success) {
+        const errorText =
+          `Input did not match schema:\n${JSON.stringify(inputParseResult.error.issues, null, 2)}\n\n` +
+          `Received input:\n${JSON.stringify(contentBlock.input, null, 2)}`;
+
+        tui.addBlock({ role: "error", title: `Tool input error: ${contentBlock.name}`, content: errorText });
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: contentBlock.id,
+              is_error: true,
+              content: [{ type: "text", text: `Input did not match schema: ${JSON.stringify(inputParseResult.error.issues)}` }],
+            },
+          ],
+        });
+        continue;
+      }
+
+      const toolSummary = toolToExecute.stringify(inputParseResult.data);
+      const toolUseText = formatToolUse(toolSummary, contentBlock.input);
+      const streamedToolBlockId = toolUseBlocks.get(contentBlock.id);
+      if (streamedToolBlockId !== undefined) {
+        tui.updateBlock(streamedToolBlockId, toolUseText);
+      } else {
+        tui.addBlock({ role: "tool_use", title: `Tool: ${contentBlock.name}`, content: toolUseText });
+      }
+
+      tui.setStatus(`using tool: ${contentBlock.name}`);
+
+      try {
+        const toolOutput = await toolToExecute.execute(inputParseResult.data) as ToolOutput;
+        tui.addBlock({
+          role: "tool_result",
+          title: `Tool result: ${contentBlock.name}`,
+          content: formatToolOutput(toolOutput),
+        });
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: contentBlock.id,
+              content: toolOutput.content,
+            },
+          ],
+        });
+      } catch (error: unknown) {
+        const errorText = formatError(error);
+        tui.addBlock({ role: "error", title: `Tool failed: ${contentBlock.name}`, content: errorText });
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: contentBlock.id,
+              is_error: true,
+              content: [{ type: "text", text: errorText }],
+            },
+          ],
+        });
+      }
+    }
+
+    if (response.stop_reason === "tool_use") {
+      continue;
+    }
+
+    break;
+  }
+}
+
+async function main() {
+  tui.start();
+  tui.addBlock({
+    role: "assistant",
+    title: "Agento",
+    content: "Type a message and press Enter. Press Ctrl+C to quit.",
+  });
+}
+
+process.on("uncaughtException", (error: unknown) => {
+  tui.addBlock({ role: "error", title: "Uncaught exception", content: formatError(error) });
+  tui.setRunning(false, "idle");
+});
+
+process.on("unhandledRejection", (reason: unknown) => {
+  tui.addBlock({ role: "error", title: "Unhandled rejection", content: formatError(reason) });
+  tui.setRunning(false, "idle");
+});
 
 main();
