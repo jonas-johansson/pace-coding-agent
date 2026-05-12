@@ -54,7 +54,29 @@ function formatToolUse(summary: string, input: unknown) {
   return `${summary}\n\nInput:\n${formatToolInput(input)}`;
 }
 
+function handleCommand(command: string): boolean {
+  switch (command) {
+    case "/new":
+      messages.length = 0;
+      tui.clearBlocks();
+      tui.addBlock({
+        role: "assistant",
+        title: "Agento",
+        content: "New conversation started. Type a message and press Enter. Press Ctrl+C to quit.",
+      });
+      return true;
+    default:
+      tui.addBlock({ role: "error", title: "Unknown command", content: `Unknown command: ${command}` });
+      return true;
+  }
+}
+
 async function handleUserInput(userMessage: string) {
+  if (userMessage.startsWith("/")) {
+    handleCommand(userMessage.trim());
+    return;
+  }
+
   if (promptRunning) {
     tui.setStatus("agent is still running");
     return;

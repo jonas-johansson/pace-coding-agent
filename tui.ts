@@ -108,6 +108,13 @@ export class Tui {
     this.requestRender();
   }
 
+  clearBlocks() {
+    this.blocks = [];
+    this.scrollOffset = 0;
+    this.lastRenderedLineCount = 0;
+    this.requestRender();
+  }
+
   appendToBlock(id: number, text: string) {
     const block = this.blocks.find((candidate) => candidate.id === id);
     if (!block) {
