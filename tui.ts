@@ -899,7 +899,7 @@ export class Tui {
     const statusRows = this.statusRows(rows);
     const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
     // Account for the margin lines above and below the input box
-    const inputMarginRows = rows > statusRows + input.lines.length + 2 ? 2 : 0;
+    const inputMarginRows = rows > statusRows + input.lines.length + 1 ? 1 : 0;
     return Math.max(0, rows - statusRows - input.lines.length - inputMarginRows);
   }
 
@@ -966,7 +966,7 @@ export class Tui {
     const statusRows = this.statusRows(rows);
     const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
     // Account for margin lines above and below the input box
-    const inputMarginRows = rows > statusRows + input.lines.length + 2 ? 2 : 0;
+    const inputMarginRows = rows > statusRows + input.lines.length + 1 ? 1 : 0;
     const messageRows = Math.max(0, rows - statusRows - input.lines.length - inputMarginRows);
     const renderedBlocks: string[] = [];
     const blockLineMap: number[] = [];
@@ -1074,7 +1074,7 @@ export class Tui {
     // Add margin lines above and below the input box if there's room
     const inputMarginLine = blackLine(columns);
     const inputSection = inputMarginRows > 0
-      ? [inputMarginLine, ...input.lines, inputMarginLine]
+      ? [inputMarginLine, ...input.lines]
       : input.lines;
     const inputCursorRowOffset = inputMarginRows > 0 ? 1 : 0;
 
