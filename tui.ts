@@ -42,7 +42,7 @@ const DISABLE_MOUSE = "\x1b[?1000l\x1b[?1002l\x1b[?1006l";
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 const ANSI_AT_START = /^\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/;
 const SGR_MOUSE_PATTERN = /\x1b\[<(\d+);(\d+);(\d+)([mM])/g;
-const SPINNER_FRAMES = ["-", "\\", "|", "/"];
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const MOUSE_WHEEL_LINES = 3;
 const INPUT_HORIZONTAL_PADDING = 2;
 const INPUT_VERTICAL_PADDING = 2;
@@ -189,7 +189,7 @@ export class Tui {
     this.spinnerTimer = setInterval(() => {
       this.spinnerFrame = (this.spinnerFrame + 1) % SPINNER_FRAMES.length;
       this.requestRender();
-    }, 120);
+    }, 50);
   }
 
   private stopSpinner() {
