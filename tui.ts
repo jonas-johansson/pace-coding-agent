@@ -1,6 +1,6 @@
 type BlockRole = "user" | "assistant" | "tool" | "error";
 
-export type BlockState = "running" | "done" | "done-trivial" | "error";
+export type BlockState = "running" | "done" | "error";
 
 export type RenderBlock = {
   id: number;
@@ -65,11 +65,8 @@ const themes: Record<BlockRole, BlockTheme> = {
   error: { fg: 231, bg: 88, accent: 217, bold: 223 },
 };
 
-const STATE_GLYPHS: Record<Exclude<BlockState, "running">, { glyph: string; color: number }> = {
-  done: { glyph: "✓", color: 151 },
-  "done-trivial": { glyph: "✓", color: 151 },
-  error: { glyph: "✗", color: 217 },
-};
+const DONE_GLYPH = { glyph: "✓", color: 151 };
+const ERROR_GLYPH = { glyph: "✗", color: 217 };
 
 export class Tui {
   private blocks: RenderBlock[] = [];
@@ -882,19 +879,24 @@ function updateActiveStyle(activeStyle: string, sequence: string) {
 
 function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) {
   const theme = themes[block.role];
-  const stateIndicator = block.role === "tool" ? renderStateIndicator(block.state, spinnerFrame, theme) : undefined;
+  const sanitizedContent = sanitizeContent(block.content);
+  const stateIndicator = block.role === "tool"
+    ? renderStateIndicator(block.state, sanitizedContent, spinnerFrame, theme)
+    : undefined;
   const indicatorWidth = stateIndicator ? visibleLength(stateIndicator.text) : 0;
   const titleInnerWidth = Math.max(1, columns - 4 - (indicatorWidth > 0 ? indicatorWidth + 1 : 0));
   const innerWidth = Math.max(1, columns - 4);
   const rows: StyledSegment[][] = [[]];
 
+  const content = sanitizedContent;
+
   if (block.title) {
     rows.push(...wrapSegments([{ text: block.title, style: "title" }], titleInnerWidth));
-    rows.push([]);
+    if (content) {
+      rows.push([]);
+    }
   }
 
-  const hideBody = block.role === "tool" && block.state === "done-trivial";
-  const content = hideBody ? "" : sanitizeContent(block.content);
   if (content) {
     for (const line of content.split("\n")) {
       rows.push(...wrapSegments(parseMarkdownLine(line), innerWidth));
@@ -925,10 +927,11 @@ function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) 
 
 function renderStateIndicator(
   state: BlockState | undefined,
+  content: string,
   spinnerFrame: string,
   theme: BlockTheme,
 ): { text: string; rendered: string } | undefined {
-  if (!state || state === "done") {
+  if (!state) {
     return undefined;
   }
 
@@ -939,15 +942,22 @@ function renderStateIndicator(
     };
   }
 
-  const meta = STATE_GLYPHS[state];
-  if (!meta) {
-    return undefined;
+  if (state === "error") {
+    return {
+      text: ERROR_GLYPH.glyph,
+      rendered: `${RESET}${bg(theme.bg)}${fg(ERROR_GLYPH.color)}${BOLD}${ERROR_GLYPH.glyph}`,
+    };
   }
 
-  return {
-    text: meta.glyph,
-    rendered: `${RESET}${bg(theme.bg)}${fg(meta.color)}${BOLD}${meta.glyph}`,
-  };
+  // state === "done": show a checkmark only when there is no body to render
+  if (!content) {
+    return {
+      text: DONE_GLYPH.glyph,
+      rendered: `${RESET}${bg(theme.bg)}${fg(DONE_GLYPH.color)}${BOLD}${DONE_GLYPH.glyph}`,
+    };
+  }
+
+  return undefined;
 }
 
 function renderBlockRowWithGutter(
@@ -1297,8 +1307,7 @@ function isWide(codePoint: number) {
     (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
     (codePoint >= 0xff00 && codePoint <= 0xff60) ||
     (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
-    (codePoint >= 0x1f000 && codePoint <= 0x1faff) ||
-    (codePoint >= 0x2600 && codePoint <= 0x27bf)
+    (codePoint >= 0x1f000 && codePoint <= 0x1faff)
   );
 }
 

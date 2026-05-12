@@ -16,11 +16,6 @@ export type ToolDisplayBlock = {
   content: string;
 }
 
-export type ToolResultBody = {
-  content: string;
-  trivial: boolean;
-}
-
 type ZodObjectSchema = z.ZodObject<z.core.$ZodShape>;
 
 type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
@@ -29,6 +24,12 @@ type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
   inputSchema: T;
   execute: (input: z.infer<T>) => Promise<ToolOutput>;
   titleFormatter?: (input: Partial<z.infer<T>>) => string;
+  /**
+   * When false, the tool's result body is hidden in the TUI; the block shows
+   * only its title and state glyph. The body is still sent to the model
+   * verbatim. Errors are always shown regardless of this flag. Defaults to true.
+   */
+  showContent?: boolean;
 }
 
 export const tools: ToolDescriptor[] = [];
@@ -64,17 +65,8 @@ export function visualizeToolPartialTitle(toolName: string, jsonString: string):
   return visualizeToolTitle(toolName, parsed);
 }
 
-export function formatToolResultBody(output: ToolOutput): ToolResultBody {
-  const content = formatToolOutput(output).trimEnd();
-  const trivial = isTrivialBody(content);
-  return { content, trivial };
-}
-
-function isTrivialBody(text: string): boolean {
-  if (!text) return true;
-  const lines = text.split("\n").filter((line) => line.trim().length > 0);
-  if (lines.length !== 1) return false;
-  return lines[0].length <= 80;
+export function formatToolResultBody(output: ToolOutput): string {
+  return formatToolOutput(output).trimEnd();
 }
 
 function defaultInputSummary(input: unknown): string {
@@ -126,6 +118,7 @@ const readTool = Tool({
     path: z.string().describe("Absolute or relative path."),
   }),
   titleFormatter: (input) => `read: ${input.path ?? ""}`,
+  showContent: false,
   execute: async (input): Promise<ToolOutput> => {
     const text = await readFile(input.path, 'utf8');
     return {
@@ -142,6 +135,7 @@ const writeTool = Tool({
     content: z.string()
   }),
   titleFormatter: (input) => `write: ${input.path ?? ""}`,
+  showContent: false,
   execute: async (input): Promise<ToolOutput> => {
     await writeFile(input.path, input.content);
     return {
@@ -159,6 +153,7 @@ const editTool = Tool({
     newText: z.string().describe("New text to replace the old with")
   }),
   titleFormatter: (input) => `edit: ${input.path ?? ""}`,
+  showContent: false,
   execute: async (input): Promise<ToolOutput> => {
     const oldFileData = await readFile(input.path, 'utf8');
     const newFileData = oldFileData.replaceAll(input.oldText, input.newText);

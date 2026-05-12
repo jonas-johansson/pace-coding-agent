@@ -283,10 +283,10 @@ async function prompt(userMessage: string) {
 
       try {
         const toolOutput = await toolToExecute.execute(inputParseResult.data);
-        const body = formatToolResultBody(toolOutput);
+        const showContent = toolToExecute.showContent !== false;
         tui.updateBlock(blockId, {
-          content: body.content,
-          state: body.trivial ? "done-trivial" : "done",
+          content: showContent ? formatToolResultBody(toolOutput) : "",
+          state: "done",
         });
         messages.push({
           role: "user",
