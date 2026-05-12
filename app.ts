@@ -37,6 +37,36 @@ const MODEL_CONTEXT_WINDOW: Record<(typeof AVAILABLE_MODELS)[number], number> = 
   "claude-opus-4-6": 1_000_000,
 };
 
+/**
+ * Pricing per million tokens for each model.
+ * Uses the 5-minute ephemeral cache write pricing.
+ */
+const MODEL_PRICING: Record<(typeof AVAILABLE_MODELS)[number], {
+  inputPerMTok: number;
+  cacheWritePerMTok: number;
+  cacheReadPerMTok: number;
+  outputPerMTok: number;
+}> = {
+  "claude-haiku-4-5": {
+    inputPerMTok: 1,
+    cacheWritePerMTok: 1.25,
+    cacheReadPerMTok: 0.10,
+    outputPerMTok: 5,
+  },
+  "claude-sonnet-4-6": {
+    inputPerMTok: 3,
+    cacheWritePerMTok: 3.75,
+    cacheReadPerMTok: 0.30,
+    outputPerMTok: 15,
+  },
+  "claude-opus-4-6": {
+    inputPerMTok: 5,
+    cacheWritePerMTok: 6.25,
+    cacheReadPerMTok: 0.50,
+    outputPerMTok: 25,
+  },
+};
+
 const DEFAULT_MODEL = "claude-haiku-4-5";
 
 let currentModel: (typeof AVAILABLE_MODELS)[number] = DEFAULT_MODEL;
@@ -56,6 +86,23 @@ let lastInputTokens = 0;
 let lastOutputTokens = 0;
 let lastCacheReadTokens = 0;
 let lastCacheCreationTokens = 0;
+let accumulatedCost = 0;
+
+function computeCallCost(
+  model: (typeof AVAILABLE_MODELS)[number],
+  inputTokens: number,
+  cacheCreationTokens: number,
+  cacheReadTokens: number,
+  outputTokens: number,
+): number {
+  const pricing = MODEL_PRICING[model];
+  return (
+    (inputTokens / 1_000_000) * pricing.inputPerMTok +
+    (cacheCreationTokens / 1_000_000) * pricing.cacheWritePerMTok +
+    (cacheReadTokens / 1_000_000) * pricing.cacheReadPerMTok +
+    (outputTokens / 1_000_000) * pricing.outputPerMTok
+  );
+}
 
 function updateContextInfo() {
   const contextWindow = MODEL_CONTEXT_WINDOW[currentModel];
@@ -70,6 +117,7 @@ function updateContextInfo() {
     cacheReadTokens: lastCacheReadTokens,
     cacheCreationTokens: lastCacheCreationTokens,
   });
+  tui.setCost(accumulatedCost);
 }
 
 function refreshCwd() {
@@ -121,6 +169,7 @@ function handleCommand(command: string): boolean {
       lastOutputTokens = 0;
       lastCacheReadTokens = 0;
       lastCacheCreationTokens = 0;
+      accumulatedCost = 0;
       tui.clearBlocks();
       updateContextInfo();
       tui.addBlock({
@@ -389,6 +438,16 @@ async function prompt(userMessage: string) {
         lastCacheCreationTokens +
         lastCacheReadTokens;
       lastOutputTokens = response.usage.output_tokens;
+
+      // Accumulate cost for this API call
+      accumulatedCost += computeCallCost(
+        currentModel,
+        response.usage.input_tokens,
+        lastCacheCreationTokens,
+        lastCacheReadTokens,
+        lastOutputTokens,
+      );
+
       updateContextInfo();
       messages.push({ role: "assistant", content: response.content });
       assistantMessagePushed = true;

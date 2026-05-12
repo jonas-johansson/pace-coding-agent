@@ -99,6 +99,7 @@ export class Tui {
   private lastMessageStart = 0;
   private lastMessageRows = 0;
   private contextInfo: ContextInfo | undefined;
+  private cost = 0;
   private cwd = "";
 
   constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onEscape?: () => void; model?: string; cwd?: string } = {}) {
@@ -215,6 +216,11 @@ export class Tui {
 
   setContextInfo(info: ContextInfo) {
     this.contextInfo = info;
+    this.requestRender();
+  }
+
+  setCost(cost: number) {
+    this.cost = cost;
     this.requestRender();
   }
 
@@ -1012,11 +1018,12 @@ export class Tui {
     const statusText = !this.running && (!this.status || this.status === "idle") ? "" : this.status || "idle";
     const scrollText = this.scrollOffset > 0 ? `${statusText ? " | " : ""}scroll ${this.scrollOffset}/${maxScroll} | End latest` : "";
     const leftText = `${spinner}${statusText}${scrollText}`;
+    const costText = this.cost > 0 ? `  $${formatCost(this.cost)}  ` : "";
     const contextText = this.contextInfo ? `  ${formatContextInfo(this.contextInfo)}  ` : "";
     const modelText = this.model ? `  ${this.model}  ` : "";
     const cwdText = this.cwd ? `  ${this.cwd}  ` : "";
     const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
-    const rightWidth = visibleLength(cwdText) + visibleLength(contextText) + visibleLength(modelText);
+    const rightWidth = visibleLength(cwdText) + visibleLength(costText) + visibleLength(contextText) + visibleLength(modelText);
     const leftWidth = Math.max(1, columns - horizontalPadding * 2 - rightWidth);
     const leftVisible = takeRight(leftText, leftWidth);
     const leftPadded = `${" ".repeat(horizontalPadding)}${leftVisible}`;
@@ -1027,6 +1034,7 @@ export class Tui {
     return (
       `${bg(235)}${fg(fgColor)}${leftPadded}${" ".repeat(gapWidth)}` +
       `${bg(238)}${fg(246)}${cwdText}` +
+      `${bg(238)}${fg(187)}${costText}` +
       `${bg(238)}${fg(contextFgColor)}${contextText}` +
       `${bg(238)}${fg(109)}${modelText}${RESET}`
     );
@@ -1858,6 +1866,17 @@ function formatContextInfo(info: ContextInfo): string {
   }
 
   return base;
+}
+
+function formatCost(cost: number): string {
+  if (cost < 0.01) {
+    // Show sub-cent costs with more precision
+    return `${cost.toFixed(4)}`;
+  }
+  if (cost < 1) {
+    return `${cost.toFixed(3)}`;
+  }
+  return `${cost.toFixed(2)}`;
 }
 
 function fg(code: number) {
