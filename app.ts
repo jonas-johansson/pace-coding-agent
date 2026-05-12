@@ -3,10 +3,6 @@ import assert from "assert";
 import { Tui } from "./tui";
 import { tools, toolsTransformedToAnthropicStyle, visualizeToolTitle, visualizeToolPartialTitle, formatToolResultBody } from "./tool";
 
-const ant = new Anthropic();
-const messages: Anthropic.MessageParam[] = [];
-const tui = new Tui({ onSubmit: handleUserInput });
-
 const AVAILABLE_MODELS = [
   "claude-haiku-4-5",
   "claude-sonnet-4-6",
@@ -22,6 +18,10 @@ const MODEL_ALIASES: Record<string, (typeof AVAILABLE_MODELS)[number]> = {
 const DEFAULT_MODEL = "claude-haiku-4-5";
 
 let currentModel: (typeof AVAILABLE_MODELS)[number] = DEFAULT_MODEL;
+
+const ant = new Anthropic();
+const messages: Anthropic.MessageParam[] = [];
+const tui = new Tui({ onSubmit: handleUserInput, model: DEFAULT_MODEL });
 
 let promptRunning = false;
 
@@ -87,6 +87,7 @@ function handleCommand(command: string): boolean {
       }
 
       currentModel = resolved;
+      tui.setModel(currentModel);
       tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModel}.` });
       return true;
     }

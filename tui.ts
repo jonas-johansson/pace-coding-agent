@@ -74,6 +74,7 @@ export class Tui {
   private nextBlockId = 1;
   private running = false;
   private status = "idle";
+  private model = "";
   private spinnerFrame = 0;
   private spinnerTimer: ReturnType<typeof setInterval> | undefined;
   private renderQueued = false;
@@ -89,7 +90,9 @@ export class Tui {
   private lastMessageStart = 0;
   private lastMessageRows = 0;
 
-  constructor(private readonly options: { onSubmit?: SubmitHandler } = {}) {}
+  constructor(private readonly options: { onSubmit?: SubmitHandler; model?: string } = {}) {
+    this.model = options.model ?? "";
+  }
 
   start() {
     if (this.open) {
@@ -190,6 +193,11 @@ export class Tui {
       this.spinnerFrame = 0;
     }
 
+    this.requestRender();
+  }
+
+  setModel(model: string) {
+    this.model = model;
     this.requestRender();
   }
 
@@ -711,11 +719,20 @@ export class Tui {
     const spinner = this.running ? `${SPINNER_FRAMES[this.spinnerFrame]} ` : "";
     const statusText = !this.running && (!this.status || this.status === "idle") ? "" : this.status || "idle";
     const scrollText = this.scrollOffset > 0 ? `${statusText ? " | " : ""}scroll ${this.scrollOffset}/${maxScroll} | End latest` : "";
-    const text = `${spinner}${statusText}${scrollText}`;
+    const leftText = `${spinner}${statusText}${scrollText}`;
+    const modelText = this.model ? `  ${this.model}  ` : "";
     const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
-    const textWidth = Math.max(1, columns - horizontalPadding * 2);
-    const visible = takeRight(text, textWidth);
-    return renderBar(`${" ".repeat(horizontalPadding)}${visible}`, columns, 235, this.running ? 229 : 250);
+    const modelWidth = visibleLength(modelText);
+    const leftWidth = Math.max(1, columns - horizontalPadding * 2 - modelWidth);
+    const leftVisible = takeRight(leftText, leftWidth);
+    const leftPadded = `${" ".repeat(horizontalPadding)}${leftVisible}`;
+    const leftPaddedWidth = visibleLength(leftPadded);
+    const gapWidth = Math.max(0, columns - leftPaddedWidth - modelWidth);
+    const fgColor = this.running ? 229 : 250;
+    return (
+      `${bg(235)}${fg(fgColor)}${leftPadded}${" ".repeat(gapWidth)}` +
+      `${bg(238)}${fg(109)}${modelText}${RESET}`
+    );
   }
 
   private renderInputLine(columns: number, maxRows: number) {
