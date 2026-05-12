@@ -412,10 +412,14 @@ export class Tui {
   }
 
   private renderStatusLine(columns: number, maxScroll: number) {
-    const spinner = this.running ? SPINNER_FRAMES[this.spinnerFrame] : " ";
-    const scrollText = this.scrollOffset > 0 ? ` | scroll ${this.scrollOffset}/${maxScroll} | End latest` : "";
-    const text = `${spinner} ${this.status || "idle"}${scrollText}`;
-    return renderBar(text, columns, 235, this.running ? 229 : 250);
+    const spinner = this.running ? `${SPINNER_FRAMES[this.spinnerFrame]} ` : "";
+    const statusText = !this.running && (!this.status || this.status === "idle") ? "" : this.status || "idle";
+    const scrollText = this.scrollOffset > 0 ? `${statusText ? " | " : ""}scroll ${this.scrollOffset}/${maxScroll} | End latest` : "";
+    const text = `${spinner}${statusText}${scrollText}`;
+    const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
+    const textWidth = Math.max(1, columns - horizontalPadding * 2);
+    const visible = takeRight(text, textWidth);
+    return renderBar(`${" ".repeat(horizontalPadding)}${visible}`, columns, 235, this.running ? 229 : 250);
   }
 
   private renderInputLine(columns: number) {
