@@ -401,12 +401,12 @@ export class Tui {
     const statusLine = this.renderStatusLine(columns, maxScroll);
     const input = this.renderInputLine(columns);
 
-    const lines = [...messageLines, statusLine, ...input.lines];
+    const lines = [...messageLines, ...input.lines, statusLine];
     const output = [`${HIDE_CURSOR}`];
     for (let row = 0; row < rows; row += 1) {
       output.push(`\x1b[${row + 1};1H\x1b[2K${clipAnsi(lines[row] ?? "", columns)}`);
     }
-    output.push(`\x1b[${rows - 1};${input.cursorCol}H${SHOW_CURSOR}`);
+    output.push(`\x1b[${rows - STATUS_ROWS - Math.floor(INPUT_ROWS / 2)};${input.cursorCol}H${SHOW_CURSOR}`);
 
     process.stdout.write(output.join(""));
   }
