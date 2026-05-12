@@ -425,13 +425,15 @@ export class Tui {
         this.scrollBy(-1);
         return true;
 
-      // Alt+Left / Alt+Right — word movement
+      // Alt+Left / Alt+Right / Ctrl+Left / Ctrl+Right — word movement
       case "\x1b[1;3D":
+      case "\x1b[1;5D":
       case "\x1bb":
         this.clearSelection();
         this.moveCursorWordLeft();
         return true;
       case "\x1b[1;3C":
+      case "\x1b[1;5C":
       case "\x1bf":
         this.clearSelection();
         this.moveCursorWordRight();
