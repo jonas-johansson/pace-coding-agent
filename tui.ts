@@ -1029,6 +1029,13 @@ export class Tui {
 
       prevType = curType;
     }
+
+    // Ensure there's a margin line at the very top of the scroll area
+    if (renderedBlocks.length > 0) {
+      renderedBlocks.unshift(blackLine(columns));
+      blockLineMap.unshift(0);
+    }
+
     const lineDelta = renderedBlocks.length - this.lastRenderedLineCount;
     if (this.scrollOffset > 0 && this.lastRenderedLineCount > 0 && lineDelta !== 0) {
       this.scrollOffset += lineDelta;
