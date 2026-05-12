@@ -93,6 +93,16 @@ const DONE_GLYPH = { glyph: "✓", color: 151 };
 const ERROR_GLYPH = { glyph: "✗", color: 217 };
 const TOOL_ARROW = "→";
 
+/** Cache entry for a single block's rendered output. */
+type BlockRenderCacheEntry = {
+  content: string;
+  title: string | undefined;
+  state: BlockState | undefined;
+  collapsed: boolean | undefined;
+  columns: number;
+  lines: string[];
+};
+
 export class Tui {
   private blocks: RenderBlock[] = [];
   private input = "";
@@ -120,6 +130,20 @@ export class Tui {
   private contextInfo: ContextInfo | undefined;
   private cost = 0;
   private cwd = "";
+
+  // ── Performance: block-level render cache (P0) ──
+  private blockRenderCache = new Map<number, BlockRenderCacheEntry>();
+
+  // ── Performance: line-level screen diff (P1) ──
+  private previousFrameLines: string[] = [];
+  private previousRawLines: string[] = [];
+  private previousFrameColumns = 0;
+  private previousFrameRows = 0;
+
+  // ── Performance: lazy screenLines (only computed on mouse access) ──
+  private rawFrameLines: string[] = [];
+  private rawFrameRows = 0;
+  private screenLinesDirty = true;
 
   constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onEscape?: () => void; model?: string; cwd?: string } = {}) {
     this.model = options.model ?? "";
@@ -194,6 +218,9 @@ export class Tui {
     this.selection = undefined;
     this.selecting = false;
     this.selectionMoved = false;
+    this.blockRenderCache.clear();
+    this.previousFrameLines = [];
+    this.previousRawLines = [];
     this.requestRender();
   }
 
@@ -297,6 +324,11 @@ export class Tui {
 
     this.spinnerTimer = setInterval(() => {
       this.spinnerFrame = (this.spinnerFrame + 1) % SPINNER_FRAMES.length;
+      // Spinner ticks only need to update the status line and any running
+      // block indicators. The block render cache already skips "running"
+      // blocks, and the line-level diff (P1) ensures only the actually
+      // changed rows are written to stdout, so the regular render path
+      // handles this efficiently.
       this.requestRender();
     }, 50);
   }
@@ -311,6 +343,10 @@ export class Tui {
   }
 
   private handleResize = () => {
+    // Terminal dimensions changed — invalidate line diff cache so every
+    // row is rewritten on the next frame.
+    this.previousFrameLines = [];
+    this.previousRawLines = [];
     this.requestRender();
   };
 
@@ -801,8 +837,21 @@ export class Tui {
     return true;
   }
 
+  /** Lazily compute screenLines (plain text per row) for mouse/selection use. */
+  private ensureScreenLines() {
+    if (!this.screenLinesDirty) {
+      return;
+    }
+    this.screenLinesDirty = false;
+    const columns = this.screenColumns || process.stdout.columns || 80;
+    this.screenLines = this.rawFrameLines.slice(0, this.rawFrameRows).map(
+      (line) => stripAnsi(clipAnsi(line, columns)),
+    );
+  }
+
   private mousePosition(col: number, row: number): ScreenPosition {
     const columns = this.screenColumns || process.stdout.columns || 80;
+    this.ensureScreenLines();
     const rows = this.screenLines.length || process.stdout.rows || 24;
     return {
       row: Math.max(1, Math.min(rows, Math.trunc(row))),
@@ -861,6 +910,7 @@ export class Tui {
         continue;
       }
 
+      this.ensureScreenLines();
       const line = this.screenLines[row - 1] ?? "";
       lines.push(sliceByCells(line, bounds.start, bounds.end).replace(/[ \t]+$/g, ""));
     }
@@ -991,7 +1041,35 @@ export class Tui {
     for (let blockIdx = 0; blockIdx < this.blocks.length; blockIdx++) {
       const block = this.blocks[blockIdx];
       const curType = visualType(block);
-      const blockLines = renderBlock(block, columns, spinnerFrame);
+
+      // ── P0: Block-level render cache ──
+      // Blocks with state "running" contain a spinner that changes every
+      // frame, so they must always be re-rendered. All other blocks are
+      // cached by their content/title/state/collapsed/columns.
+      let blockLines: string[];
+      const isRunning = block.state === "running";
+      const cached = this.blockRenderCache.get(block.id);
+      if (
+        !isRunning &&
+        cached &&
+        cached.content === block.content &&
+        cached.title === block.title &&
+        cached.state === block.state &&
+        cached.collapsed === block.collapsed &&
+        cached.columns === columns
+      ) {
+        blockLines = cached.lines;
+      } else {
+        blockLines = renderBlock(block, columns, spinnerFrame);
+        this.blockRenderCache.set(block.id, {
+          content: block.content,
+          title: block.title,
+          state: block.state,
+          collapsed: block.collapsed,
+          columns,
+          lines: blockLines,
+        });
+      }
 
       // Skip empty blocks (e.g. assistant still streaming with no content yet)
       if (blockLines.length === 0) {
@@ -1064,6 +1142,16 @@ export class Tui {
       prevType = curType;
     }
 
+    // Purge stale cache entries for blocks that no longer exist
+    if (this.blockRenderCache.size > this.blocks.length + 10) {
+      const activeIds = new Set(this.blocks.map((b) => b.id));
+      for (const id of this.blockRenderCache.keys()) {
+        if (!activeIds.has(id)) {
+          this.blockRenderCache.delete(id);
+        }
+      }
+    }
+
     // Ensure there's a margin line at the very top of the scroll area
     if (renderedBlocks.length > 0) {
       renderedBlocks.unshift(blackLine(columns));
@@ -1088,13 +1176,16 @@ export class Tui {
     // handling can offset correctly.
     let emptyPrefixLines = 0;
     while (visibleMessages.length < messageRows) {
-      visibleMessages.unshift(plainLine("", columns));
+      visibleMessages.unshift(blackLine(columns));
       emptyPrefixLines += 1;
     }
 
+    // Block rendering functions (renderBlockRow, blackLine, etc.) already
+    // pad every line to exactly `columns` visible width, so we can use them
+    // directly without the expensive padAnsi pass.
     const messageLines = this.blocks.length === 0
       ? this.renderLogo(columns, messageRows)
-      : visibleMessages.map((line) => padAnsi(line, columns));
+      : visibleMessages;
     const statusLine = this.renderStatusLine(columns, maxScroll);
 
     const inputSection = input.lines;
@@ -1103,16 +1194,72 @@ export class Tui {
       ? [...messageLines, ...inputSection, statusLine]
       : [...messageLines, ...inputSection];
     this.screenColumns = columns;
-    this.screenLines = lines.slice(0, rows).map((line) => stripAnsi(clipAnsi(line, columns)));
+    // Defer screenLines computation — it runs clipAnsi + stripAnsi on
+    // every row and is only needed for mouse selection / copy.  Store
+    // the raw lines and invalidate the cached screenLines so they are
+    // rebuilt lazily on first access (see getScreenLines()).
+    this.rawFrameLines = lines;
+    this.rawFrameRows = rows;
+    this.screenLinesDirty = true;
     this.blockLineMap = blockLineMap;
     this.lastMessageStart = start;
     this.lastMessageRows = messageRows;
     this.emptyPrefixLines = emptyPrefixLines;
 
-    const output = [`${HIDE_CURSOR}`];
+    // ── P1: Line-level screen diffing ──
+    // Only emit escape sequences for rows that actually changed since the
+    // previous frame. We use a two-level diff:
+    //  1. Fast path: compare the raw (pre-clip) line reference. If the
+    //     line object is the same reference (common for cached logo lines,
+    //     cached block lines, etc.) AND there's no active selection, we
+    //     can skip the expensive clipAnsi entirely.
+    //  2. Slow path: compute the final clipped string and compare it to
+    //     the previously emitted string.
+    const fullRepaint = this.previousFrameRows !== rows || this.previousFrameColumns !== columns;
+    const hasSelection = !!(this.selection && this.selectionMoved);
+    const output: string[] = [];
+    let hidCursor = false;
+
     for (let row = 0; row < rows; row += 1) {
-      output.push(`\x1b[${row + 1};1H\x1b[2K${clipAnsi(this.renderSelectedLine(lines[row] ?? "", row + 1, columns), columns)}`);
+      const rawLine = lines[row] ?? "";
+
+      // Fast path: if no selection, no resize, and the raw source line
+      // is identical by reference to the previous frame, the output is
+      // guaranteed unchanged — skip clipAnsi entirely.
+      if (
+        !fullRepaint &&
+        !hasSelection &&
+        row < this.previousRawLines.length &&
+        this.previousRawLines[row] === rawLine &&
+        row < this.previousFrameLines.length
+      ) {
+        continue;
+      }
+
+      const rendered = clipAnsi(this.renderSelectedLine(rawLine, row + 1, columns), columns);
+      if (!fullRepaint && row < this.previousFrameLines.length && this.previousFrameLines[row] === rendered) {
+        this.previousRawLines[row] = rawLine;
+        continue;
+      }
+      if (!hidCursor) {
+        output.push(HIDE_CURSOR);
+        hidCursor = true;
+      }
+      output.push(`\x1b[${row + 1};1H\x1b[2K${rendered}`);
+      this.previousFrameLines[row] = rendered;
+      this.previousRawLines[row] = rawLine;
     }
+
+    // Trim caches if the terminal shrank
+    if (this.previousFrameLines.length > rows) {
+      this.previousFrameLines.length = rows;
+      this.previousRawLines.length = rows;
+    }
+
+    this.previousFrameRows = rows;
+    this.previousFrameColumns = columns;
+
+    // Always position cursor and show it
     output.push(`\x1b[${Math.min(rows, messageRows + input.cursorRow)};${input.cursorCol}H${SHOW_CURSOR}`);
 
     process.stdout.write(output.join(""));
@@ -1131,19 +1278,34 @@ export class Tui {
     return highlightAnsiRange(line, bounds.start, bounds.end);
   }
 
+  private cachedLogo: string[] = [];
+  private cachedLogoColumns = -1;
+  private cachedLogoRows = -1;
+
   private renderLogo(columns: number, messageRows: number): string[] {
+    if (columns === this.cachedLogoColumns && messageRows === this.cachedLogoRows) {
+      return this.cachedLogo;
+    }
+
     const logoWidth = Math.max(...ASCII_LOGO.map((line) => line.length));
     const logoHeight = ASCII_LOGO.length;
 
     if (messageRows < logoHeight || columns < logoWidth) {
-      return Array.from({ length: messageRows }, () => blackLine(columns));
+      const bl = blackLine(columns);
+      const result: string[] = [];
+      for (let i = 0; i < messageRows; i++) result.push(bl);
+      this.cachedLogo = result;
+      this.cachedLogoColumns = columns;
+      this.cachedLogoRows = messageRows;
+      return result;
     }
 
     const topPad = Math.floor((messageRows - logoHeight) / 2);
     const lines: string[] = [];
+    const bl = blackLine(columns);
 
     for (let i = 0; i < topPad; i++) {
-      lines.push(blackLine(columns));
+      lines.push(bl);
     }
 
     for (const logoLine of ASCII_LOGO) {
@@ -1156,9 +1318,12 @@ export class Tui {
     }
 
     while (lines.length < messageRows) {
-      lines.push(blackLine(columns));
+      lines.push(bl);
     }
 
+    this.cachedLogo = lines;
+    this.cachedLogoColumns = columns;
+    this.cachedLogoRows = messageRows;
     return lines;
   }
 
@@ -1172,11 +1337,12 @@ export class Tui {
     const modelText = this.model ? `  ${this.model}  ` : "";
     const cwdText = this.cwd ? `  ${this.cwd}  ` : "";
     const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
-    const rightWidth = visibleLength(cwdText) + visibleLength(costText) + visibleLength(contextText) + visibleLength(modelText);
+    // These strings are plain ASCII (no ANSI), so displayWidth === .length
+    const rightWidth = cwdText.length + costText.length + contextText.length + modelText.length;
     const leftWidth = Math.max(1, columns - horizontalPadding * 2 - rightWidth);
     const leftVisible = takeRight(leftText, leftWidth);
     const leftPadded = `${" ".repeat(horizontalPadding)}${leftVisible}`;
-    const leftPaddedWidth = visibleLength(leftPadded);
+    const leftPaddedWidth = leftPadded.length;
     const gapWidth = Math.max(0, columns - leftPaddedWidth - rightWidth);
     const fgColor = this.running ? 229 : 250;
     const contextFgColor = this.contextInfo && this.contextInfo.usedTokens / this.contextInfo.contextWindow >= 0.8 ? 217 : 245;
@@ -1195,8 +1361,11 @@ export class Tui {
     const textWidth = Math.max(1, columns - horizontalPadding * 2);
     const raw = sanitizeContent(`${prompt}${this.input}`);
 
-    // Clamp cursor to valid range
-    const inputLength = Array.from(this.input).length;
+    // Clamp cursor to valid range.
+    // Count characters without allocating an array: for...of iterates
+    // code points which matches Array.from(string).length.
+    let inputLength = 0;
+    for (const _ of this.input) inputLength++;
     if (this.inputCursor > inputLength) {
       this.inputCursor = inputLength;
     }
@@ -1227,11 +1396,11 @@ export class Tui {
     const isBashCommand = this.input.startsWith("!");
     const inputBg = isBashCommand ? 237 : 236;
     const inputFg = isBashCommand ? 179 : 252;
-    const renderedContent = visibleRows.map((line) => renderBar(`${" ".repeat(horizontalPadding)}${line}`, columns, inputBg, inputFg));
+    const renderedContent = visibleRows.map((line) => renderBar(`${" ".repeat(horizontalPadding)}${line}`, columns, inputBg, inputFg, true));
 
     return {
       lines: hasPadding
-        ? [renderBar("", columns, inputBg, inputFg), ...renderedContent, renderBar("", columns, inputBg, inputFg)]
+        ? [renderBar("", columns, inputBg, inputFg, true), ...renderedContent, renderBar("", columns, inputBg, inputFg, true)]
         : renderedContent,
       cursorRow: (hasPadding ? 1 : 0) + cursorRowInView + 1,
       cursorCol,
@@ -1293,7 +1462,7 @@ function sliceByCells(text: string, start: number, end: number) {
   let result = "";
   let cell = 0;
 
-  for (const char of Array.from(text)) {
+  for (const char of text) {
     const width = charWidth(char);
     const charStart = cell;
     const charEnd = cell + width;
@@ -1320,22 +1489,35 @@ function highlightAnsiRange(line: string, start: number, end: number) {
   let selected = false;
   let cell = 0;
   let index = 0;
+  const len = line.length;
 
-  while (index < line.length) {
-    const ansi = ANSI_AT_START.exec(line.slice(index));
-    if (ansi) {
-      const sequence = ansi[0];
-      result += sequence;
-      activeStyle = updateActiveStyle(activeStyle, sequence);
-      if (selected) {
-        result += INVERSE;
+  while (index < len) {
+    const code = line.charCodeAt(index);
+
+    // Fast path: check for ESC to detect ANSI sequences
+    if (code === 0x1b) {
+      const ansi = ANSI_AT_START.exec(line.substring(index));
+      if (ansi) {
+        const sequence = ansi[0];
+        result += sequence;
+        activeStyle = updateActiveStyle(activeStyle, sequence);
+        if (selected) {
+          result += INVERSE;
+        }
+
+        index += sequence.length;
+        continue;
       }
-
-      index += sequence.length;
-      continue;
     }
 
-    const char = Array.from(line.slice(index))[0];
+    // Extract the next character (handle surrogate pairs)
+    let char: string;
+    if (code >= 0xd800 && code <= 0xdbff && index + 1 < len) {
+      char = line.substring(index, index + 2);
+    } else {
+      char = line[index];
+    }
+
     const width = charWidth(char);
     const charStart = cell;
     const charEnd = cell + width;
@@ -1390,32 +1572,35 @@ function isInlineTool(block: RenderBlock): boolean {
 }
 
 function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) {
+  // Sanitize content once and pass it through to avoid repeated work (P3).
+  const sanitized = sanitizeContent(block.content);
+
   // ── User blocks: rendered as a boxed card (existing style) ──
   if (block.role === "user") {
-    return renderUserBlock(block, columns);
+    return renderUserBlock(block, columns, sanitized);
   }
 
   // ── Assistant blocks: inline text on black canvas ──
   if (block.role === "assistant") {
-    return renderAssistantBlock(block, columns);
+    return renderAssistantBlock(block, columns, sanitized);
   }
 
   // ── Tool blocks ──
   if (block.role === "tool") {
-    if (isInlineTool(block)) {
+    const trimmed = sanitized.replace(/^\n+/, "").replace(/\n+$/, "");
+    if (!trimmed) {
       return renderInlineToolBlock(block, columns, spinnerFrame);
     }
-    return renderPanelToolBlock(block, columns, spinnerFrame);
+    return renderPanelToolBlock(block, columns, spinnerFrame, sanitized);
   }
 
   // ── Error blocks: rendered as a panel with error theme ──
-  return renderErrorBlock(block, columns);
+  return renderErrorBlock(block, columns, sanitized);
 }
 
 /** Render a user message as a boxed card with padding (keeps existing look). */
-function renderUserBlock(block: RenderBlock, columns: number) {
+function renderUserBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
   const theme = themes.user;
-  const sanitizedContent = sanitizeContent(block.content);
   const innerWidth = Math.max(1, columns - 4);
   const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
   const rows: StyledSegment[][] = [[]]; // top padding
@@ -1437,9 +1622,8 @@ function renderUserBlock(block: RenderBlock, columns: number) {
 }
 
 /** Render assistant text inline on the black canvas — no box, no padding rows. */
-function renderAssistantBlock(block: RenderBlock, columns: number) {
+function renderAssistantBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
   const theme = themes.assistant;
-  const sanitizedContent = sanitizeContent(block.content);
   const innerWidth = Math.max(1, columns - 4);
   const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
   const result: string[] = [];
@@ -1480,12 +1664,13 @@ function renderInlineToolBlock(block: RenderBlock, columns: number, spinnerFrame
   const theme = inlineToolTheme;
   const title = block.title ?? block.role;
   const indicator = renderInlineStateIndicator(block.state, spinnerFrame);
-  const indicatorWidth = indicator ? visibleLength(indicator.text) + 1 : 0;
+  // Indicator text is always a single plain character (no ANSI).
+  const indicatorWidth = indicator ? displayWidth(indicator.text) + 1 : 0;
   const titleWidth = Math.max(1, columns - 4 - indicatorWidth);
   // Truncate title to fit
   const truncatedTitle = truncateToWidth(title, titleWidth);
   const titleVisible = displayWidth(truncatedTitle);
-  const totalContentWidth = titleVisible + (indicator ? 1 + visibleLength(indicator.text) : 0);
+  const totalContentWidth = titleVisible + (indicator ? 1 + displayWidth(indicator.text) : 0);
   const rightPad = Math.max(0, columns - 2 - totalContentWidth);
 
   const titleRendered = `${RESET}${bg(theme.bg)}${fg(theme.accent)}${truncatedTitle}`;
@@ -1496,12 +1681,12 @@ function renderInlineToolBlock(block: RenderBlock, columns: number, spinnerFrame
 }
 
 /** Render a tool block as a gray panel (has content to show). */
-function renderPanelToolBlock(block: RenderBlock, columns: number, spinnerFrame: string) {
+function renderPanelToolBlock(block: RenderBlock, columns: number, spinnerFrame: string, sanitizedContent: string) {
   const theme = themes.tool;
-  const sanitizedContent = sanitizeContent(block.content);
   const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
   const indicator = renderStateIndicator(block.state, content, spinnerFrame, theme);
-  const indicatorWidth = indicator ? visibleLength(indicator.text) : 0;
+  // Indicator text is a single plain character (no ANSI).
+  const indicatorWidth = indicator ? displayWidth(indicator.text) : 0;
   const titleInnerWidth = Math.max(1, columns - 4 - (indicatorWidth > 0 ? indicatorWidth + 1 : 0));
   const innerWidth = Math.max(1, columns - 4);
   const rows: StyledSegment[][] = [[]]; // top padding
@@ -1540,9 +1725,8 @@ function renderPanelToolBlock(block: RenderBlock, columns: number, spinnerFrame:
 }
 
 /** Render an error block as a panel with the error theme. */
-function renderErrorBlock(block: RenderBlock, columns: number) {
+function renderErrorBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
   const theme = themes.error;
-  const sanitizedContent = sanitizeContent(block.content);
   const innerWidth = Math.max(1, columns - 4);
   const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
   const rows: StyledSegment[][] = [[]]; // top padding
@@ -1565,14 +1749,15 @@ function renderErrorBlock(block: RenderBlock, columns: number) {
 
 /** Truncate text to fit within a given display width. */
 function truncateToWidth(text: string, maxWidth: number): string {
-  const chars = Array.from(text);
   let width = 0;
-  for (let i = 0; i < chars.length; i++) {
-    const w = charWidth(chars[i]);
+  let byteIndex = 0;
+  for (const char of text) {
+    const w = charWidth(char);
     if (width + w > maxWidth) {
-      return chars.slice(0, i).join("") + "…";
+      return text.substring(0, byteIndex) + "…";
     }
     width += w;
+    byteIndex += char.length;
   }
   return text;
 }
@@ -1648,8 +1833,9 @@ function renderBlockRowWithGutter(
   theme: BlockTheme,
   columns: number,
 ) {
-  const visible = segments.reduce((total, segment) => total + visibleLength(segment.text), 0);
-  const indicatorWidth = visibleLength(indicator.text);
+  // Segment text is always plain (no ANSI), so displayWidth is sufficient.
+  const visible = segments.reduce((total, segment) => total + displayWidth(segment.text), 0);
+  const indicatorWidth = displayWidth(indicator.text);
   const middlePadding = Math.max(1, columns - 2 - visible - indicatorWidth - 2);
   const base = `${bg(theme.bg)}${fg(theme.fg)}`;
   const content = segments.map((segment) => renderSegment(segment, theme)).join("");
@@ -1657,7 +1843,8 @@ function renderBlockRowWithGutter(
 }
 
 function renderBlockRow(segments: StyledSegment[], theme: BlockTheme, columns: number) {
-  const visible = segments.reduce((total, segment) => total + visibleLength(segment.text), 0);
+  // Segment text is always plain (no ANSI), so displayWidth is sufficient.
+  const visible = segments.reduce((total, segment) => total + displayWidth(segment.text), 0);
   const rightPadding = Math.max(0, columns - 2 - visible);
   const base = `${bg(theme.bg)}${fg(theme.fg)}`;
   const content = segments.map((segment) => renderSegment(segment, theme)).join("");
@@ -2041,18 +2228,27 @@ function coalesceSegments(chars: StyledSegment[]) {
   return segments;
 }
 
-function renderBar(text: string, columns: number, bgColor: number, fgColor: number) {
-  const clean = sanitizeSingleLine(text);
+function renderBar(text: string, columns: number, bgColor: number, fgColor: number, preSanitized = false) {
+  const clean = preSanitized ? text : sanitizeSingleLine(text);
   const clipped = takeRight(clean, columns);
-  return `${bg(bgColor)}${fg(fgColor)}${clipped}${" ".repeat(Math.max(0, columns - visibleLength(clipped)))}${RESET}`;
+  const pad = Math.max(0, columns - displayWidth(clipped));
+  return `${bg(bgColor)}${fg(fgColor)}${clipped}${" ".repeat(pad)}${RESET}`;
 }
 
+let cachedBlackLine = "";
+let cachedBlackLineColumns = -1;
+
 function blackLine(columns: number) {
-  return `${bg(CANVAS_BG)}${" ".repeat(columns)}${RESET}`;
+  if (columns !== cachedBlackLineColumns) {
+    cachedBlackLineColumns = columns;
+    cachedBlackLine = `${bg(CANVAS_BG)}${" ".repeat(columns)}${RESET}`;
+  }
+  return cachedBlackLine;
 }
 
 function plainLine(text: string, columns: number) {
-  const pad = Math.max(0, columns - visibleLength(text));
+  const textWidth = text.length > 0 ? visibleLength(text) : 0;
+  const pad = Math.max(0, columns - textWidth);
   return `${bg(CANVAS_BG)}${text}${" ".repeat(pad)}${RESET}`;
 }
 
@@ -2076,9 +2272,19 @@ function sanitizeSingleLine(text: string) {
 }
 
 function takeRight(text: string, width: number) {
+  // We need to iterate from the right, which requires knowing character
+  // boundaries. Use a single Array.from pass only when the text is long
+  // enough that it might exceed the width; short strings (common case)
+  // can skip the right-truncation entirely.
+  const textWidth = displayWidth(text);
+  if (textWidth <= width) {
+    return text;
+  }
+
+  // Need to truncate from the left — iterate characters from the right
+  const chars = Array.from(text);
   let result = "";
   let used = 0;
-  const chars = Array.from(text);
 
   for (let index = chars.length - 1; index >= 0; index -= 1) {
     const char = chars[index];
@@ -2106,16 +2312,30 @@ function clipAnsi(text: string, width: number) {
   let result = "";
   let used = 0;
   let index = 0;
+  const len = text.length;
 
-  while (index < text.length) {
-    const ansi = ANSI_AT_START.exec(text.slice(index));
-    if (ansi) {
-      result += ansi[0];
-      index += ansi[0].length;
-      continue;
+  while (index < len) {
+    const code = text.charCodeAt(index);
+
+    // Fast path: check for ESC (0x1b) to detect ANSI sequences
+    if (code === 0x1b) {
+      const ansi = ANSI_AT_START.exec(text.substring(index));
+      if (ansi) {
+        result += ansi[0];
+        index += ansi[0].length;
+        continue;
+      }
     }
 
-    const char = Array.from(text.slice(index))[0];
+    // Extract the next character (handle surrogate pairs)
+    let char: string;
+    if (code >= 0xd800 && code <= 0xdbff && index + 1 < len) {
+      // Surrogate pair
+      char = text.substring(index, index + 2);
+    } else {
+      char = text[index];
+    }
+
     const widthToAdd = charWidth(char);
     if (used + widthToAdd > width) {
       break;
@@ -2130,7 +2350,11 @@ function clipAnsi(text: string, width: number) {
 }
 
 function displayWidth(text: string) {
-  return Array.from(text).reduce((width, char) => width + charWidth(char), 0);
+  let width = 0;
+  for (const char of text) {
+    width += charWidth(char);
+  }
+  return width;
 }
 
 function charWidth(char: string) {
