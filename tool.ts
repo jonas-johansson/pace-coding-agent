@@ -7,8 +7,6 @@ import path from "path";
 import { parse } from "partial-json";
 
 const execAsync = promisify(exec);
-const DEFAULT_READ_OFFSET = 1;
-const DEFAULT_READ_LIMIT = 240;
 
 export type ToolOutput = {
   content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.SearchResultBlockParam | Anthropic.DocumentBlockParam | Anthropic.ToolReferenceBlockParam>;
@@ -112,28 +110,21 @@ function formatToolUse(summary: string, input: unknown) {
 
 const readTool = Tool({
   name: "read",
-  description: "Read content from a file. Defaults to the first 240 lines; use offset and limit to read additional ranges.",
+  description: "Read content from a file.",
   inputSchema: z.object({
     path: z.string().describe("Absolute or relative path."),
-    offset: z.number().int().positive().optional().describe("1-based line number to start reading from."),
-    limit: z.number().int().positive().optional().describe("Maximum number of lines to read."),
   }),
   stringify: formatReadSummary,
   execute: async (input): Promise<ToolOutput> => {
-    const fileData = await readFile(input.path, 'utf8');
-    const offset = input.offset ?? DEFAULT_READ_OFFSET;
-    const limit = input.limit ?? DEFAULT_READ_LIMIT;
-    const lines = fileData.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-    const start = Math.max(0, offset - 1);
-    const text = lines.slice(start, start + limit).join("\n");
+    const text = await readFile(input.path, 'utf8');
     return {
       content: [{ type: "text", text }]
     }
   }
 });
 
-function formatReadSummary(input: { path: string; offset?: number; limit?: number }) {
-  return `Read ${formatDisplayPath(input.path)} [offset=${input.offset ?? DEFAULT_READ_OFFSET}, limit=${input.limit ?? DEFAULT_READ_LIMIT}]`;
+function formatReadSummary(input: { path: string }) {
+  return `Read ${formatDisplayPath(input.path)}`;
 }
 
 function formatDisplayPath(filePath: string) {
