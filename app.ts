@@ -183,6 +183,34 @@ async function handleUserInput(userMessage: string) {
     return;
   }
 
+  if (userMessage.startsWith("!")) {
+    const command = userMessage.slice(1).trim();
+    if (!command) {
+      tui.addBlock({ role: "error", title: "Error", content: "No command provided after `!`." });
+      return;
+    }
+
+    const bashTool = tools.find((t) => t.name === "bash");
+    if (!bashTool) {
+      tui.addBlock({ role: "error", title: "Error", content: "bash tool not found." });
+      return;
+    }
+
+    tui.addBlock({ role: "user", content: userMessage });
+
+    const blockId = tui.addBlock({ role: "tool", title: `bash: ${command}`, content: "", state: "running" });
+
+    try {
+      const output = await bashTool.execute({ command }, undefined);
+      const content = output.content.map((p) => (p.type === "text" ? p.text : "")).join("\n").trimEnd();
+      tui.updateBlock(blockId, { content, state: output.is_error ? "error" : "done" });
+    } catch (error: unknown) {
+      tui.updateBlock(blockId, { content: formatError(error), state: "error" });
+    }
+
+    return;
+  }
+
   if (promptRunning) {
     tui.setStatus("Agent is still running");
     return;

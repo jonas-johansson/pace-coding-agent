@@ -473,10 +473,13 @@ export class Tui {
   }
 
   private insertCharAtCursor(char: string) {
+    // Convert tabs to spaces for display (tabs should not appear in input)
+    const charToInsert = char === "\t" ? "  " : char;
     const chars = Array.from(this.input);
-    chars.splice(this.inputCursor, 0, char);
+    const insertChars = Array.from(charToInsert);
+    chars.splice(this.inputCursor, 0, ...insertChars);
     this.input = chars.join("");
-    this.inputCursor += 1;
+    this.inputCursor += insertChars.length;
     this.requestRender();
   }
 
@@ -1053,11 +1056,14 @@ export class Tui {
     const visibleRows = wrapped.slice(this.inputScrollRow, this.inputScrollRow + contentRows);
     const cursorRowInView = cursorLine - this.inputScrollRow;
     const cursorCol = Math.max(1, Math.min(columns, horizontalPadding + layout.cursorCol + 1));
-    const renderedContent = visibleRows.map((line) => renderBar(`${" ".repeat(horizontalPadding)}${line}`, columns, 236, 252));
+    const isBashCommand = this.input.startsWith("!");
+    const inputBg = isBashCommand ? 237 : 236;
+    const inputFg = isBashCommand ? 179 : 252;
+    const renderedContent = visibleRows.map((line) => renderBar(`${" ".repeat(horizontalPadding)}${line}`, columns, inputBg, inputFg));
 
     return {
       lines: hasPadding
-        ? [renderBar("", columns, 236, 252), ...renderedContent, renderBar("", columns, 236, 252)]
+        ? [renderBar("", columns, inputBg, inputFg), ...renderedContent, renderBar("", columns, inputBg, inputFg)]
         : renderedContent,
       cursorRow: (hasPadding ? 1 : 0) + cursorRowInView + 1,
       cursorCol,
