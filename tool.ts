@@ -119,12 +119,6 @@ const readTool = Tool({
     limit: z.number().int().positive().optional().describe("Maximum number of lines to read."),
   }),
   stringify: formatReadSummary,
-  visualize: {
-    start: () => undefined,
-    partialInput: () => undefined,
-    input: (input) => ({ content: formatReadSummary(input) }),
-    result: () => undefined,
-  },
   execute: async (input): Promise<ToolOutput> => {
     const fileData = await readFile(input.path, 'utf8');
     const offset = input.offset ?? DEFAULT_READ_OFFSET;
