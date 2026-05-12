@@ -1634,11 +1634,13 @@ function wrapSegments(segments: StyledSegment[], width: number) {
   let index = 0;
 
   while (index < chars.length) {
-    while (chars[index]?.text === " ") {
-      index += 1;
-    }
-    if (index >= chars.length) {
-      break;
+    if (rows.length > 0) {
+      while (chars[index]?.text === " ") {
+        index += 1;
+      }
+      if (index >= chars.length) {
+        break;
+      }
     }
 
     let end = index;
@@ -1706,6 +1708,7 @@ function sanitizeContent(text: string) {
     .replace(ANSI_PATTERN, "")
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
+    .replace(/\t/g, "  ")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
 }
 
