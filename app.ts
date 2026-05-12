@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import assert from "assert";
 import { Tui } from "./tui";
-import { tools, toolsTransformedToAnthropicStyle, visualizeToolTitle, visualizeToolPartialTitle, formatToolResultBody } from "./tool";
+import { tools, toolsTransformedToAnthropicStyle, visualizeToolTitle, visualizeToolPartialTitle, formatToolResultBody, isAbortError } from "./tool";
 
 const AVAILABLE_MODELS = [
   "claude-haiku-4-5",
@@ -27,9 +27,15 @@ let currentModel: (typeof AVAILABLE_MODELS)[number] = DEFAULT_MODEL;
 
 const ant = new Anthropic();
 const messages: Anthropic.MessageParam[] = [];
-const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, model: DEFAULT_MODEL });
+function cancelPrompt() {
+  if (!promptRunning || !currentAbortController) return;
+  currentAbortController.abort();
+}
+
+const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, onEscape: cancelPrompt, model: DEFAULT_MODEL });
 
 let promptRunning = false;
+let currentAbortController: AbortController | null = null;
 let totalInputTokens = 0;
 let totalOutputTokens = 0;
 
@@ -87,7 +93,7 @@ function handleCommand(command: string): boolean {
       tui.addBlock({
         role: "assistant",
         title: "Agento",
-        content: "New conversation started. Press Enter to send, Ctrl+J or Shift+Enter for a newline. Press Tab to cycle models. Use /model to select a model. Press Ctrl+C to quit.",
+        content: "New conversation started. Press Enter to send, Ctrl+J for a newline. Press Tab to cycle models. Use /model to select a model. Press ESC to cancel. Press Ctrl+C to quit.",
       });
       return true;
     case "/model": {
@@ -171,192 +177,264 @@ async function prompt(userMessage: string) {
   tui.addBlock({ role: "user", content: userMessage });
   messages.push({ role: "user", content: [{ type: "text", text: userMessage }] });
 
-  while (true) {
-    tui.setStatus("Thinking");
+  const abortController = new AbortController();
+  currentAbortController = abortController;
+  const signal = abortController.signal;
 
-    const stream = await ant.messages.stream({
-      model: currentModel,
-      max_tokens: 16_000,
-      system: `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${process.cwd()}`,
-      messages,
-      tools: toolsTransformedToAnthropicStyle,
-    });
+  // Track whether we've pushed an assistant message yet (for cleanup on cancel)
+  let assistantMessagePushed = false;
+  // Track tool_use IDs from the current assistant response that need tool_results
+  let pendingToolUseIds: string[] = [];
+  // Track the current set of tool blocks for UI updates on cancel
+  let currentToolBlocks = new Map<string, number>();
 
-    let currentContentBlockIndex = -1;
-    let currentTextBlockId: number | undefined;
-    let currentToolUseId: string | undefined;
-    let currentToolName: string | undefined;
-    let accInputJson = "";
-    let accText = "";
-    const toolBlocks = new Map<string, number>();
+  try {
+    while (true) {
+      tui.setStatus("Thinking");
 
-    for await (const event of stream) {
-      switch (event.type) {
-        case "content_block_start": {
-          assert(currentContentBlockIndex === -1);
-          currentContentBlockIndex = event.index;
-          currentTextBlockId = undefined;
-          currentToolUseId = undefined;
-          currentToolName = undefined;
-          accInputJson = "";
-          accText = "";
+      const stream = await ant.messages.stream(
+        {
+          model: currentModel,
+          max_tokens: 16_000,
+          system: `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${process.cwd()}`,
+          messages,
+          tools: toolsTransformedToAnthropicStyle,
+        },
+        { signal },
+      );
 
-          const contentBlock = event.content_block;
-          if (contentBlock.type === "text") {
-            accText = contentBlock.text ?? "";
-            currentTextBlockId = tui.addBlock({
-              role: "assistant",
-              content: accText,
-            });
-            tui.setStatus("Streaming response");
-          } else if (contentBlock.type === "tool_use") {
-            currentToolUseId = contentBlock.id;
-            currentToolName = contentBlock.name;
-            ensureToolBlock(toolBlocks, contentBlock.id, contentBlock.name);
-            tui.setStatus(`Preparing tool: ${contentBlock.name}`);
+      let currentContentBlockIndex = -1;
+      let currentTextBlockId: number | undefined;
+      let currentToolUseId: string | undefined;
+      let currentToolName: string | undefined;
+      let accInputJson = "";
+      let accText = "";
+      const toolBlocks = new Map<string, number>();
+      currentToolBlocks = toolBlocks;
+
+      for await (const event of stream) {
+        switch (event.type) {
+          case "content_block_start": {
+            assert(currentContentBlockIndex === -1);
+            currentContentBlockIndex = event.index;
+            currentTextBlockId = undefined;
+            currentToolUseId = undefined;
+            currentToolName = undefined;
+            accInputJson = "";
+            accText = "";
+
+            const contentBlock = event.content_block;
+            if (contentBlock.type === "text") {
+              accText = contentBlock.text ?? "";
+              currentTextBlockId = tui.addBlock({
+                role: "assistant",
+                content: accText,
+              });
+              tui.setStatus("Streaming response");
+            } else if (contentBlock.type === "tool_use") {
+              currentToolUseId = contentBlock.id;
+              currentToolName = contentBlock.name;
+              ensureToolBlock(toolBlocks, contentBlock.id, contentBlock.name);
+              tui.setStatus(`Preparing tool: ${contentBlock.name}`);
+            }
+            break;
           }
-          break;
+
+          case "content_block_delta":
+            switch (event.delta.type) {
+              case "text_delta":
+                accText += event.delta.text;
+                if (currentTextBlockId === undefined) {
+                  currentTextBlockId = tui.addBlock({
+                    role: "assistant",
+                    content: accText,
+                  });
+                } else {
+                  tui.updateBlock(currentTextBlockId, accText);
+                }
+                tui.setStatus("Streaming response");
+                break;
+
+              case "input_json_delta": {
+                accInputJson += event.delta.partial_json;
+                if (currentToolUseId && currentToolName) {
+                  const id = ensureToolBlock(toolBlocks, currentToolUseId, currentToolName);
+                  tui.updateBlock(id, { title: visualizeToolPartialTitle(currentToolName, accInputJson) });
+                }
+                break;
+              }
+            }
+            break;
+
+          case "content_block_stop":
+            assert(event.index === currentContentBlockIndex);
+            currentContentBlockIndex = -1;
+            currentTextBlockId = undefined;
+            currentToolUseId = undefined;
+            currentToolName = undefined;
+            accInputJson = "";
+            accText = "";
+            break;
+        }
+      }
+
+      const response = await stream.finalMessage();
+      totalInputTokens += response.usage.input_tokens;
+      totalOutputTokens += response.usage.output_tokens;
+      if (response.usage.cache_creation_input_tokens) {
+        totalInputTokens += response.usage.cache_creation_input_tokens;
+      }
+      if (response.usage.cache_read_input_tokens) {
+        totalInputTokens += response.usage.cache_read_input_tokens;
+      }
+      updateContextInfo();
+      messages.push({ role: "assistant", content: response.content });
+      assistantMessagePushed = true;
+
+      // Collect all tool_use IDs from this response
+      const allToolUseIds = response.content
+        .filter((block): block is Anthropic.ToolUseBlock => block.type === "tool_use")
+        .map((block) => block.id);
+      pendingToolUseIds = [...allToolUseIds];
+
+      for (const contentBlock of response.content) {
+        if (contentBlock.type === "text") {
+          continue;
         }
 
-        case "content_block_delta":
-          switch (event.delta.type) {
-            case "text_delta":
-              accText += event.delta.text;
-              if (currentTextBlockId === undefined) {
-                currentTextBlockId = tui.addBlock({
-                  role: "assistant",
-                  content: accText,
-                });
-              } else {
-                tui.updateBlock(currentTextBlockId, accText);
-              }
-              tui.setStatus("Streaming response");
-              break;
+        if (contentBlock.type !== "tool_use") {
+          tui.addBlock({
+            role: "error",
+            title: "Unhandled content block",
+            content: JSON.stringify(contentBlock, null, 2),
+          });
+          continue;
+        }
 
-            case "input_json_delta": {
-              accInputJson += event.delta.partial_json;
-              if (currentToolUseId && currentToolName) {
-                const id = ensureToolBlock(toolBlocks, currentToolUseId, currentToolName);
-                tui.updateBlock(id, { title: visualizeToolPartialTitle(currentToolName, accInputJson) });
-              }
-              break;
-            }
-          }
-          break;
+        const toolToExecute = tools.find((tool) => tool.name === contentBlock.name);
+        if (!toolToExecute) {
+          throw new Error(`Couldn't find tool ${contentBlock.name}`);
+        }
 
-        case "content_block_stop":
-          assert(event.index === currentContentBlockIndex);
-          currentContentBlockIndex = -1;
-          currentTextBlockId = undefined;
-          currentToolUseId = undefined;
-          currentToolName = undefined;
-          accInputJson = "";
-          accText = "";
-          break;
+        const blockId = ensureToolBlock(toolBlocks, contentBlock.id, contentBlock.name);
+
+        const inputParseResult = toolToExecute.inputSchema.safeParse(contentBlock.input);
+        if (!inputParseResult.success) {
+          const errorText =
+            `Input did not match schema:\n${JSON.stringify(inputParseResult.error.issues, null, 2)}\n\n` +
+            `Received input:\n${JSON.stringify(contentBlock.input, null, 2)}`;
+
+          tui.updateBlock(blockId, {
+            title: visualizeToolTitle(contentBlock.name, contentBlock.input),
+            content: errorText,
+            state: "error",
+          });
+          messages.push({
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: contentBlock.id,
+                is_error: true,
+                content: [{ type: "text", text: `Input did not match schema: ${JSON.stringify(inputParseResult.error.issues)}` }],
+              },
+            ],
+          });
+          pendingToolUseIds = pendingToolUseIds.filter((id) => id !== contentBlock.id);
+          continue;
+        }
+
+        tui.updateBlock(blockId, { title: visualizeToolTitle(contentBlock.name, inputParseResult.data) });
+        tui.setStatus(`Using tool: ${contentBlock.name}`);
+
+        try {
+          const toolOutput = await toolToExecute.execute(inputParseResult.data, signal);
+          const showContent = toolToExecute.showContent !== false || toolOutput.is_error;
+          tui.updateBlock(blockId, {
+            content: showContent ? formatToolResultBody(toolOutput) : "",
+            state: toolOutput.is_error ? "error" : "done",
+          });
+          messages.push({
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: contentBlock.id,
+                content: toolOutput.content,
+                ...(toolOutput.is_error && { is_error: true }),
+              },
+            ],
+          });
+          pendingToolUseIds = pendingToolUseIds.filter((id) => id !== contentBlock.id);
+        } catch (error: unknown) {
+          if (isAbortError(error)) throw error;
+          const errorText = formatError(error);
+          tui.updateBlock(blockId, { content: errorText, state: "error" });
+          messages.push({
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: contentBlock.id,
+                is_error: true,
+                content: [{ type: "text", text: errorText }],
+              },
+            ],
+          });
+          pendingToolUseIds = pendingToolUseIds.filter((id) => id !== contentBlock.id);
+        }
       }
-    }
 
-    const response = await stream.finalMessage();
-    totalInputTokens += response.usage.input_tokens;
-    totalOutputTokens += response.usage.output_tokens;
-    if (response.usage.cache_creation_input_tokens) {
-      totalInputTokens += response.usage.cache_creation_input_tokens;
-    }
-    if (response.usage.cache_read_input_tokens) {
-      totalInputTokens += response.usage.cache_read_input_tokens;
-    }
-    updateContextInfo();
-    messages.push({ role: "assistant", content: response.content });
-
-    for (const contentBlock of response.content) {
-      if (contentBlock.type === "text") {
+      if (response.stop_reason === "tool_use") {
+        assistantMessagePushed = false;
+        pendingToolUseIds = [];
         continue;
       }
 
-      if (contentBlock.type !== "tool_use") {
-        tui.addBlock({
-          role: "error",
-          title: "Unhandled content block",
-          content: JSON.stringify(contentBlock, null, 2),
-        });
-        continue;
-      }
-
-      const toolToExecute = tools.find((tool) => tool.name === contentBlock.name);
-      if (!toolToExecute) {
-        throw new Error(`Couldn't find tool ${contentBlock.name}`);
-      }
-
-      const blockId = ensureToolBlock(toolBlocks, contentBlock.id, contentBlock.name);
-
-      const inputParseResult = toolToExecute.inputSchema.safeParse(contentBlock.input);
-      if (!inputParseResult.success) {
-        const errorText =
-          `Input did not match schema:\n${JSON.stringify(inputParseResult.error.issues, null, 2)}\n\n` +
-          `Received input:\n${JSON.stringify(contentBlock.input, null, 2)}`;
-
-        tui.updateBlock(blockId, {
-          title: visualizeToolTitle(contentBlock.name, contentBlock.input),
-          content: errorText,
-          state: "error",
-        });
-        messages.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: contentBlock.id,
-              is_error: true,
-              content: [{ type: "text", text: `Input did not match schema: ${JSON.stringify(inputParseResult.error.issues)}` }],
-            },
-          ],
-        });
-        continue;
-      }
-
-      tui.updateBlock(blockId, { title: visualizeToolTitle(contentBlock.name, inputParseResult.data) });
-      tui.setStatus(`Using tool: ${contentBlock.name}`);
-
-      try {
-        const toolOutput = await toolToExecute.execute(inputParseResult.data);
-        const showContent = toolToExecute.showContent !== false || toolOutput.is_error;
-        tui.updateBlock(blockId, {
-          content: showContent ? formatToolResultBody(toolOutput) : "",
-          state: toolOutput.is_error ? "error" : "done",
-        });
-        messages.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: contentBlock.id,
-              content: toolOutput.content,
-              ...(toolOutput.is_error && { is_error: true }),
-            },
-          ],
-        });
-      } catch (error: unknown) {
-        const errorText = formatError(error);
-        tui.updateBlock(blockId, { content: errorText, state: "error" });
-        messages.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: contentBlock.id,
-              is_error: true,
-              content: [{ type: "text", text: errorText }],
-            },
-          ],
-        });
-      }
+      break;
     }
+  } catch (error: unknown) {
+    if (isAbortError(error)) {
+      // Mark any in-progress tool blocks as cancelled
+      for (const [toolUseId, blockId] of currentToolBlocks) {
+        if (pendingToolUseIds.includes(toolUseId)) {
+          tui.updateBlock(blockId, { content: "Cancelled", state: "error" });
+        }
+      }
 
-    if (response.stop_reason === "tool_use") {
-      continue;
+      if (assistantMessagePushed && pendingToolUseIds.length > 0) {
+        // Push synthetic tool_results for any outstanding tool_use IDs
+        // to keep the messages array valid for the API
+        for (const toolUseId of pendingToolUseIds) {
+          messages.push({
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: toolUseId,
+                is_error: true,
+                content: [{ type: "text", text: "Cancelled by user" }],
+              },
+            ],
+          });
+        }
+      } else if (!assistantMessagePushed) {
+        // We were still streaming (no assistant message pushed yet).
+        // Remove the user message we pushed at the top of prompt() so
+        // the conversation stays clean.
+        messages.pop();
+      }
+
+      tui.addBlock({
+        role: "assistant",
+        title: "Cancelled",
+        content: "Prompt execution cancelled.",
+      });
+      return;
     }
-
-    break;
+    throw error;
+  } finally {
+    currentAbortController = null;
   }
 }
 
@@ -366,7 +444,7 @@ async function main() {
   tui.addBlock({
     role: "assistant",
     title: "Agento",
-    content: "Press Enter to send, Ctrl+J or Shift+Enter for a newline. Press Tab to cycle models. Use /model to select a model. Press Ctrl+C to quit.",
+    content: "Press Enter to send, Ctrl+J or Shift+Enter for a newline. Press Tab to cycle models. Use /model to select a model. Press ESC to cancel. Press Ctrl+C to quit.",
   });
 }
 

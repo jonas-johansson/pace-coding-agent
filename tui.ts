@@ -96,7 +96,7 @@ export class Tui {
   private lastMessageRows = 0;
   private contextInfo: ContextInfo | undefined;
 
-  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; model?: string } = {}) {
+  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onEscape?: () => void; model?: string } = {}) {
     this.model = options.model ?? "";
   }
 
@@ -359,6 +359,14 @@ export class Tui {
   };
 
   private handleEscape(data: string) {
+    // Bare ESC key (single \x1b byte) — cancel running prompt
+    if (data === "\x1b") {
+      if (this.running) {
+        this.options.onEscape?.();
+      }
+      return true;
+    }
+
     if (INSERT_NEWLINE_KEYS.has(data)) {
       this.clearSelection();
       this.insertInputNewline();
