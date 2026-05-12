@@ -174,11 +174,6 @@ function handleCommand(command: string): boolean {
       accumulatedCost = 0;
       tui.clearBlocks();
       updateContextInfo();
-      tui.addBlock({
-        role: "assistant",
-        title: "Agento",
-        content: welcomeMessageContent,
-      });
       return true;
     case "/model": {
       const requestedModel = args[0];
@@ -594,36 +589,36 @@ async function prompt(userMessage: string) {
 async function main() {
   tui.start();
   updateContextInfo();
-  tui.addBlock({
-    role: "assistant",
-    title: "Agento",
-    content: welcomeMessageContent,
-  });
-  tui.addBlock({
-    role: "user",
-    content: "This is some user message",
-  });
-  tui.addBlock({
-    role: "assistant",
-    content: "Let me check some files."
-  })
-  tui.addBlock({
-    role: "tool",
-    title: "bash: something something",
-    content: "apple\nbanana\norange"
-  })
-  tui.addBlock({
-    role: "tool",
-    title: "read: README.md",
-    state: "done",
-    content: "",
-  })
-  tui.addBlock({
-    role: "tool",
-    title: "read: AGENTS.md",
-    state: "done",
-    content: "",
-  })
+  // tui.addBlock({
+  //   role: "assistant",
+  //   title: "Agento",
+  //   content: welcomeMessageContent,
+  // });
+  // tui.addBlock({
+  //   role: "user",
+  //   content: "This is some user message",
+  // });
+  // tui.addBlock({
+  //   role: "assistant",
+  //   content: "Let me check some files."
+  // })
+  // tui.addBlock({
+  //   role: "tool",
+  //   title: "bash: something something",
+  //   content: "apple\nbanana\norange"
+  // })
+  // tui.addBlock({
+  //   role: "tool",
+  //   title: "read: README.md",
+  //   state: "done",
+  //   content: "",
+  // })
+  // tui.addBlock({
+  //   role: "tool",
+  //   title: "read: AGENTS.md",
+  //   state: "done",
+  //   content: "",
+  // })
 }
 
 process.on("uncaughtException", (error: unknown) => {

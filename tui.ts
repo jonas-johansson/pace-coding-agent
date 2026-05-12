@@ -58,6 +58,15 @@ const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 const ANSI_AT_START = /^\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/;
 const SGR_MOUSE_PATTERN = /\x1b\[<(\d+);(\d+);(\d+)([mM])/g;
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const ASCII_LOGO: string[] = [
+  "    _                    _        ",
+  "   / \\   __ _  ___ _ __ | |_ ___  ",
+  "  / _ \\ / _` |/ _ \\ '_ \\| __/ _ \\ ",
+  " / ___ \\ (_| |  __/ | | | || (_) |",
+  "/_/   \\_\\__, |\\___|_| |_|\\__\\___/ ",
+  "        |___/                     ",
+];
+
 const MOUSE_WHEEL_LINES = 3;
 const INPUT_HORIZONTAL_PADDING = 2;
 const INPUT_VERTICAL_PADDING = 2;
@@ -1083,7 +1092,9 @@ export class Tui {
       emptyPrefixLines += 1;
     }
 
-    const messageLines = visibleMessages.map((line) => padAnsi(line, columns));
+    const messageLines = this.blocks.length === 0
+      ? this.renderLogo(columns, messageRows)
+      : visibleMessages.map((line) => padAnsi(line, columns));
     const statusLine = this.renderStatusLine(columns, maxScroll);
 
     const inputSection = input.lines;
@@ -1118,6 +1129,37 @@ export class Tui {
     }
 
     return highlightAnsiRange(line, bounds.start, bounds.end);
+  }
+
+  private renderLogo(columns: number, messageRows: number): string[] {
+    const logoWidth = Math.max(...ASCII_LOGO.map((line) => line.length));
+    const logoHeight = ASCII_LOGO.length;
+
+    if (messageRows < logoHeight || columns < logoWidth) {
+      return Array.from({ length: messageRows }, () => blackLine(columns));
+    }
+
+    const topPad = Math.floor((messageRows - logoHeight) / 2);
+    const lines: string[] = [];
+
+    for (let i = 0; i < topPad; i++) {
+      lines.push(blackLine(columns));
+    }
+
+    for (const logoLine of ASCII_LOGO) {
+      const leftPad = Math.floor((columns - logoWidth) / 2);
+      const rightPad = Math.max(0, columns - leftPad - logoWidth);
+      const padded = logoLine + " ".repeat(Math.max(0, logoWidth - logoLine.length));
+      lines.push(
+        `${bg(CANVAS_BG)}${" ".repeat(leftPad)}${fg(221)}${padded}${RESET}${bg(CANVAS_BG)}${" ".repeat(rightPad)}${RESET}`,
+      );
+    }
+
+    while (lines.length < messageRows) {
+      lines.push(blackLine(columns));
+    }
+
+    return lines;
   }
 
   private renderStatusLine(columns: number, maxScroll: number) {
