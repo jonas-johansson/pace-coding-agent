@@ -1313,7 +1313,7 @@ export class Tui {
       const rightPad = Math.max(0, columns - leftPad - logoWidth);
       const padded = logoLine + " ".repeat(Math.max(0, logoWidth - logoLine.length));
       lines.push(
-        `${bg(CANVAS_BG)}${" ".repeat(leftPad)}${fg(221)}${padded}${RESET}${bg(CANVAS_BG)}${" ".repeat(rightPad)}${RESET}`,
+        `${bg(CANVAS_BG)}${" ".repeat(leftPad)}${fg(117)}${padded}${RESET}${bg(CANVAS_BG)}${" ".repeat(rightPad)}${RESET}`,
       );
     }
 
