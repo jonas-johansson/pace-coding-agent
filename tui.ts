@@ -10,6 +10,16 @@ export type RenderBlock = {
 type SubmitHandler = (input: string) => void | Promise<void>;
 type SegmentStyle = "normal" | "bold" | "code" | "heading" | "title";
 
+type ScreenPosition = {
+  row: number;
+  col: number;
+};
+
+type SelectionRange = {
+  anchor: ScreenPosition;
+  focus: ScreenPosition;
+};
+
 type StyledSegment = {
   text: string;
   style: SegmentStyle;
@@ -23,11 +33,12 @@ type BlockTheme = {
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
+const INVERSE = "\x1b[7m";
 const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
 const CLEAR_SCREEN = "\x1b[2J";
-const ENABLE_MOUSE = "\x1b[?1000h\x1b[?1006h";
-const DISABLE_MOUSE = "\x1b[?1000l\x1b[?1006l";
+const ENABLE_MOUSE = "\x1b[?1002h\x1b[?1006h";
+const DISABLE_MOUSE = "\x1b[?1000l\x1b[?1002l\x1b[?1006l";
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 const ANSI_AT_START = /^\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/;
 const SGR_MOUSE_PATTERN = /\x1b\[<(\d+);(\d+);(\d+)([mM])/g;
@@ -58,6 +69,11 @@ export class Tui {
   private open = false;
   private scrollOffset = 0;
   private lastRenderedLineCount = 0;
+  private screenLines: string[] = [];
+  private screenColumns = 0;
+  private selection: SelectionRange | undefined;
+  private selecting = false;
+  private selectionMoved = false;
 
   constructor(private readonly options: { onSubmit?: SubmitHandler } = {}) {}
 
@@ -116,6 +132,9 @@ export class Tui {
     this.blocks = [];
     this.scrollOffset = 0;
     this.lastRenderedLineCount = 0;
+    this.selection = undefined;
+    this.selecting = false;
+    this.selectionMoved = false;
     this.requestRender();
   }
 
@@ -147,6 +166,17 @@ export class Tui {
       this.spinnerFrame = 0;
     }
 
+    this.requestRender();
+  }
+
+  private clearSelection() {
+    if (!this.selection && !this.selecting && !this.selectionMoved) {
+      return;
+    }
+
+    this.selection = undefined;
+    this.selecting = false;
+    this.selectionMoved = false;
     this.requestRender();
   }
 
@@ -187,6 +217,8 @@ export class Tui {
     if (this.handleEscape(data)) {
       return;
     }
+
+    this.clearSelection();
 
     for (const char of Array.from(data)) {
       if (char === "\r" || char === "\n") {
@@ -261,7 +293,7 @@ export class Tui {
     let handled = false;
 
     for (const match of data.matchAll(SGR_MOUSE_PATTERN)) {
-      handled = this.handleMouseButton(Number(match[1]), match[4]) || handled;
+      handled = this.handleMouseEvent(Number(match[1]), Number(match[2]), Number(match[3]), match[4]) || handled;
     }
 
     let index = 0;
@@ -275,30 +307,137 @@ export class Tui {
         break;
       }
 
-      handled = this.handleMouseButton(data.charCodeAt(start + 3) - 32, "M") || handled;
+      handled = this.handleMouseEvent(
+        data.charCodeAt(start + 3) - 32,
+        data.charCodeAt(start + 4) - 32,
+        data.charCodeAt(start + 5) - 32,
+        "M",
+      ) || handled;
       index = start + 6;
     }
 
     return handled;
   }
 
-  private handleMouseButton(buttonCode: number, action: string) {
-    if (action !== "M" || (buttonCode & 64) === 0) {
+  private handleMouseEvent(buttonCode: number, col: number, row: number, action: string) {
+    if (action === "M" && (buttonCode & 64) !== 0) {
+      const wheelButton = buttonCode & 3;
+      if (wheelButton === 0) {
+        this.scrollBy(MOUSE_WHEEL_LINES);
+        return true;
+      }
+
+      if (wheelButton === 1) {
+        this.scrollBy(-MOUSE_WHEEL_LINES);
+        return true;
+      }
+
       return false;
     }
 
-    const wheelButton = buttonCode & 3;
-    if (wheelButton === 0) {
-      this.scrollBy(MOUSE_WHEEL_LINES);
+    const position = this.mousePosition(col, row);
+    const button = buttonCode & 3;
+    const isRelease = action === "m" || button === 3;
+    if (isRelease) {
+      if (!this.selecting) {
+        return false;
+      }
+
+      this.updateSelection(position);
+      this.finishSelection();
       return true;
     }
 
-    if (wheelButton === 1) {
-      this.scrollBy(-MOUSE_WHEEL_LINES);
+    if (button !== 0) {
+      return false;
+    }
+
+    const isMotion = (buttonCode & 32) !== 0;
+    if (isMotion) {
+      if (!this.selecting) {
+        return false;
+      }
+
+      this.updateSelection(position);
       return true;
     }
 
-    return false;
+    this.startSelection(position);
+    return true;
+  }
+
+  private mousePosition(col: number, row: number): ScreenPosition {
+    const columns = this.screenColumns || process.stdout.columns || 80;
+    const rows = this.screenLines.length || process.stdout.rows || 24;
+    return {
+      row: Math.max(1, Math.min(rows, Math.trunc(row))),
+      col: Math.max(1, Math.min(columns, Math.trunc(col))),
+    };
+  }
+
+  private startSelection(position: ScreenPosition) {
+    this.selection = { anchor: position, focus: position };
+    this.selecting = true;
+    this.selectionMoved = false;
+    this.requestRender();
+  }
+
+  private updateSelection(position: ScreenPosition) {
+    if (!this.selection) {
+      return;
+    }
+
+    this.selectionMoved = this.selectionMoved || !samePosition(this.selection.anchor, position);
+    this.selection.focus = position;
+    this.requestRender();
+  }
+
+  private finishSelection() {
+    this.selecting = false;
+    if (!this.selectionMoved) {
+      this.clearSelection();
+      return;
+    }
+
+    const text = cleanCopiedText(this.selectedText());
+    if (!text) {
+      this.clearSelection();
+      return;
+    }
+
+    copyToClipboard(text);
+    const lineCount = text.split("\n").length;
+    this.status = lineCount === 1 ? `copied ${visibleLength(text)} chars` : `copied ${lineCount} lines`;
+    this.clearSelection();
+  }
+
+  private selectedText() {
+    if (!this.selection) {
+      return "";
+    }
+
+    const { start, end } = normalizeSelection(this.selection);
+    const columns = this.screenColumns || process.stdout.columns || 80;
+    const lines: string[] = [];
+    for (let row = start.row; row <= end.row; row += 1) {
+      const bounds = selectionBoundsForRow(this.selection, row, columns);
+      if (!bounds) {
+        continue;
+      }
+
+      const line = this.screenLines[row - 1] ?? "";
+      lines.push(sliceByCells(line, bounds.start, bounds.end).replace(/[ \t]+$/g, ""));
+    }
+
+    while (lines[0]?.trim() === "") {
+      lines.shift();
+    }
+
+    while (lines[lines.length - 1]?.trim() === "") {
+      lines.pop();
+    }
+
+    return lines.join("\n");
   }
 
   private scrollPageUp() {
@@ -310,16 +449,19 @@ export class Tui {
   }
 
   private scrollBy(lines: number) {
+    this.clearSelection();
     this.scrollOffset = Math.max(0, this.scrollOffset + Math.trunc(lines));
     this.requestRender();
   }
 
   private scrollToTop() {
+    this.clearSelection();
     this.scrollOffset = Number.MAX_SAFE_INTEGER;
     this.requestRender();
   }
 
   private scrollToBottom() {
+    this.clearSelection();
     this.scrollOffset = 0;
     this.requestRender();
   }
@@ -344,6 +486,7 @@ export class Tui {
 
     this.input = "";
     this.scrollOffset = 0;
+    this.clearSelection();
     this.requestRender();
 
     Promise.resolve(this.options.onSubmit?.(submitted)).catch((error: unknown) => {
@@ -402,13 +545,29 @@ export class Tui {
     const input = this.renderInputLine(columns);
 
     const lines = [...messageLines, ...input.lines, statusLine];
+    this.screenColumns = columns;
+    this.screenLines = lines.slice(0, rows).map((line) => stripAnsi(clipAnsi(line, columns)));
+
     const output = [`${HIDE_CURSOR}`];
     for (let row = 0; row < rows; row += 1) {
-      output.push(`\x1b[${row + 1};1H\x1b[2K${clipAnsi(lines[row] ?? "", columns)}`);
+      output.push(`\x1b[${row + 1};1H\x1b[2K${clipAnsi(this.renderSelectedLine(lines[row] ?? "", row + 1, columns), columns)}`);
     }
     output.push(`\x1b[${rows - STATUS_ROWS - Math.floor(INPUT_ROWS / 2)};${input.cursorCol}H${SHOW_CURSOR}`);
 
     process.stdout.write(output.join(""));
+  }
+
+  private renderSelectedLine(line: string, row: number, columns: number) {
+    if (!this.selection || !this.selectionMoved) {
+      return line;
+    }
+
+    const bounds = selectionBoundsForRow(this.selection, row, columns);
+    if (!bounds) {
+      return line;
+    }
+
+    return highlightAnsiRange(line, bounds.start, bounds.end);
   }
 
   private renderStatusLine(columns: number, maxScroll: number) {
@@ -438,6 +597,142 @@ export class Tui {
       cursorCol,
     };
   }
+}
+
+function copyToClipboard(text: string) {
+  process.stdout.write(`\x1b]52;c;${Buffer.from(text, "utf8").toString("base64")}\x07`);
+}
+
+function cleanCopiedText(text: string) {
+  return text
+    .split("\n")
+    .map((line) => line.trimStart().replace(/[ \t]+$/g, ""))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function samePosition(a: ScreenPosition, b: ScreenPosition) {
+  return a.row === b.row && a.col === b.col;
+}
+
+function comparePositions(a: ScreenPosition, b: ScreenPosition) {
+  return a.row === b.row ? a.col - b.col : a.row - b.row;
+}
+
+function normalizeSelection(selection: SelectionRange) {
+  const { anchor, focus } = selection;
+  return comparePositions(anchor, focus) <= 0 ? { start: anchor, end: focus } : { start: focus, end: anchor };
+}
+
+function selectionBoundsForRow(selection: SelectionRange, row: number, columns: number) {
+  const maxColumn = Math.max(1, columns);
+  const { start, end } = normalizeSelection(selection);
+  if (row < start.row || row > end.row) {
+    return undefined;
+  }
+
+  if (start.row === end.row) {
+    const left = Math.max(0, Math.min(maxColumn, Math.min(start.col, end.col) - 1));
+    const right = Math.max(left, Math.min(maxColumn, Math.max(start.col, end.col)));
+    return right > left ? { start: left, end: right } : undefined;
+  }
+
+  if (row === start.row) {
+    return { start: Math.max(0, Math.min(maxColumn, start.col - 1)), end: maxColumn };
+  }
+
+  if (row === end.row) {
+    return { start: 0, end: Math.max(0, Math.min(maxColumn, end.col)) };
+  }
+
+  return { start: 0, end: maxColumn };
+}
+
+function sliceByCells(text: string, start: number, end: number) {
+  let result = "";
+  let cell = 0;
+
+  for (const char of Array.from(text)) {
+    const width = charWidth(char);
+    const charStart = cell;
+    const charEnd = cell + width;
+    if (charEnd > start && charStart < end) {
+      result += char;
+    }
+
+    cell = charEnd;
+    if (cell >= end) {
+      break;
+    }
+  }
+
+  return result;
+}
+
+function highlightAnsiRange(line: string, start: number, end: number) {
+  if (end <= start) {
+    return line;
+  }
+
+  let result = "";
+  let activeStyle = "";
+  let selected = false;
+  let cell = 0;
+  let index = 0;
+
+  while (index < line.length) {
+    const ansi = ANSI_AT_START.exec(line.slice(index));
+    if (ansi) {
+      const sequence = ansi[0];
+      result += sequence;
+      activeStyle = updateActiveStyle(activeStyle, sequence);
+      if (selected) {
+        result += INVERSE;
+      }
+
+      index += sequence.length;
+      continue;
+    }
+
+    const char = Array.from(line.slice(index))[0];
+    const width = charWidth(char);
+    const charStart = cell;
+    const charEnd = cell + width;
+    if (!selected && charEnd > start && charStart < end) {
+      result += INVERSE;
+      selected = true;
+    }
+
+    if (selected && charStart >= end) {
+      result += `${RESET}${activeStyle}`;
+      selected = false;
+    }
+
+    result += char;
+    cell = charEnd;
+    index += char.length;
+  }
+
+  if (selected) {
+    result += `${RESET}${activeStyle}`;
+  }
+
+  return result;
+}
+
+function updateActiveStyle(activeStyle: string, sequence: string) {
+  const sgr = /^\x1b\[([0-9;]*)m$/.exec(sequence);
+  if (!sgr) {
+    return activeStyle;
+  }
+
+  const params = sgr[1] ? sgr[1].split(";") : ["0"];
+  if (params.includes("0")) {
+    return "";
+  }
+
+  return activeStyle + sequence;
 }
 
 function renderBlock(block: RenderBlock, columns: number) {
@@ -645,7 +940,11 @@ function takeRight(text: string, width: number) {
 }
 
 function visibleLength(text: string) {
-  return displayWidth(text.replace(ANSI_PATTERN, ""));
+  return displayWidth(stripAnsi(text));
+}
+
+function stripAnsi(text: string) {
+  return text.replace(ANSI_PATTERN, "");
 }
 
 function clipAnsi(text: string, width: number) {
