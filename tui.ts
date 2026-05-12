@@ -33,6 +33,10 @@ const ANSI_AT_START = /^\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/;
 const SGR_MOUSE_PATTERN = /\x1b\[<(\d+);(\d+);(\d+)([mM])/g;
 const SPINNER_FRAMES = ["-", "\\", "|", "/"];
 const MOUSE_WHEEL_LINES = 3;
+const INPUT_HORIZONTAL_PADDING = 2;
+const INPUT_ROWS = 3;
+const STATUS_ROWS = 1;
+const RESERVED_ROWS = INPUT_ROWS + STATUS_ROWS;
 
 const themes: Record<BlockRole, BlockTheme> = {
   user: { fg: 231, bg: 24, accent: 117 },
@@ -321,7 +325,7 @@ export class Tui {
   }
 
   private messageRows() {
-    return Math.max(process.stdout.rows ?? 24, 3) - 2;
+    return Math.max(process.stdout.rows ?? 24, RESERVED_ROWS + 1) - RESERVED_ROWS;
   }
 
   private submitInput() {
@@ -370,8 +374,8 @@ export class Tui {
     }
 
     const columns = Math.max(process.stdout.columns ?? 80, 20);
-    const rows = Math.max(process.stdout.rows ?? 24, 3);
-    const messageRows = rows - 2;
+    const rows = Math.max(process.stdout.rows ?? 24, RESERVED_ROWS + 1);
+    const messageRows = rows - RESERVED_ROWS;
     const renderedBlocks = this.blocks.flatMap((block) => [
       ...renderBlock(block, columns),
       "",
@@ -397,12 +401,12 @@ export class Tui {
     const statusLine = this.renderStatusLine(columns, maxScroll);
     const input = this.renderInputLine(columns);
 
-    const lines = [...messageLines, statusLine, input.line];
+    const lines = [...messageLines, statusLine, ...input.lines];
     const output = [`${HIDE_CURSOR}`];
     for (let row = 0; row < rows; row += 1) {
       output.push(`\x1b[${row + 1};1H\x1b[2K${clipAnsi(lines[row] ?? "", columns)}`);
     }
-    output.push(`\x1b[${rows};${input.cursorCol}H${SHOW_CURSOR}`);
+    output.push(`\x1b[${rows - 1};${input.cursorCol}H${SHOW_CURSOR}`);
 
     process.stdout.write(output.join(""));
   }
@@ -415,12 +419,18 @@ export class Tui {
   }
 
   private renderInputLine(columns: number) {
-    const prompt = "> ";
+    const prompt = "";
+    const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
+    const textWidth = Math.max(1, columns - horizontalPadding * 2);
     const raw = `${prompt}${this.input}`;
-    const visible = takeRight(raw, columns);
-    const cursorCol = Math.max(1, Math.min(columns, visibleLength(visible) + 1));
+    const visible = takeRight(raw, textWidth);
+    const cursorCol = Math.max(1, Math.min(columns, horizontalPadding + visibleLength(visible) + 1));
     return {
-      line: renderBar(visible, columns, 236, 252),
+      lines: [
+        renderBar("", columns, 236, 252),
+        renderBar(`${" ".repeat(horizontalPadding)}${visible}`, columns, 236, 252),
+        renderBar("", columns, 236, 252),
+      ],
       cursorCol,
     };
   }
