@@ -8,7 +8,7 @@ export type RenderBlock = {
 };
 
 type SubmitHandler = (input: string) => void | Promise<void>;
-type SegmentStyle = "normal" | "bold" | "code" | "heading" | "title";
+type SegmentStyle = "normal" | "bold" | "italic" | "code" | "heading" | "title";
 
 type ScreenPosition = {
   row: number;
@@ -33,6 +33,7 @@ type BlockTheme = {
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
+const ITALIC = "\x1b[3m";
 const INVERSE = "\x1b[7m";
 const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
@@ -853,6 +854,8 @@ function renderSegment(segment: StyledSegment, theme: BlockTheme) {
       return `${RESET}${bg(theme.bg)}${fg(220)}${BOLD}${segment.text}`;
     case "bold":
       return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${BOLD}${segment.text}`;
+    case "italic":
+      return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${ITALIC}${segment.text}`;
     case "code":
       return `${RESET}${bg(230)}${fg(16)}${segment.text}`;
     default:
@@ -894,6 +897,16 @@ function parseMarkdownLine(line: string): StyledSegment[] {
         flushNormal();
         segments.push({ text: line.slice(index + 2, end), style: "bold" });
         index = end + 2;
+        continue;
+      }
+    }
+
+    if (line.startsWith("*", index)) {
+      const end = line.indexOf("*", index + 1);
+      if (end !== -1) {
+        flushNormal();
+        segments.push({ text: line.slice(index + 1, end), style: "italic" });
+        index = end + 1;
         continue;
       }
     }
