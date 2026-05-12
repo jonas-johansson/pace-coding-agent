@@ -29,6 +29,7 @@ type BlockTheme = {
   fg: number;
   bg: number;
   accent: number;
+  bold: number;
 };
 
 const RESET = "\x1b[0m";
@@ -52,11 +53,11 @@ const MIN_MESSAGE_ROWS = 1;
 const INSERT_NEWLINE_KEYS = new Set(["\x1b[13;2u", "\x1b[13;2~", "\x1b[27;2;13~"]);
 
 const themes: Record<BlockRole, BlockTheme> = {
-  user: { fg: 231, bg: 24, accent: 117 },
-  assistant: { fg: 255, bg: 236, accent: 221 },
-  tool_use: { fg: 230, bg: 58, accent: 229 },
-  tool_result: { fg: 254, bg: 238, accent: 151 },
-  error: { fg: 231, bg: 88, accent: 217 },
+  user: { fg: 231, bg: 24, accent: 117, bold: 230 },
+  assistant: { fg: 255, bg: 236, accent: 221, bold: 215 },
+  tool_use: { fg: 230, bg: 58, accent: 229, bold: 223 },
+  tool_result: { fg: 254, bg: 238, accent: 151, bold: 193 },
+  error: { fg: 231, bg: 88, accent: 217, bold: 223 },
 };
 
 export class Tui {
@@ -853,7 +854,7 @@ function renderSegment(segment: StyledSegment, theme: BlockTheme) {
     case "heading":
       return `${RESET}${bg(theme.bg)}${fg(220)}${BOLD}${segment.text}`;
     case "bold":
-      return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${BOLD}${segment.text}`;
+      return `${RESET}${bg(theme.bg)}${fg(theme.bold)}${BOLD}${segment.text}`;
     case "italic":
       return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${ITALIC}${segment.text}`;
     case "code":
