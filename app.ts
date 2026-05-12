@@ -206,7 +206,7 @@ async function prompt(userMessage: string) {
 
       try {
         const toolOutput = await toolToExecute.execute(inputParseResult.data);
-        const resultDisplay = toolToExecute.visualize.result(toolOutput, inputParseResult.data);
+        const resultDisplay = toolToExecute.visualize.result(toolOutput);
         if (resultDisplay) {
           tui.addBlock({ role: "tool_result", ...resultDisplay });
         }

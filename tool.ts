@@ -3,7 +3,6 @@ import { z } from "zod";
 import { readFile, writeFile } from "fs/promises"
 import { exec } from "child_process";
 import { promisify } from "util";
-import path from "path";
 import { parse } from "partial-json";
 
 const execAsync = promisify(exec);
@@ -23,21 +22,18 @@ type ToolVisualization<T extends ZodObjectSchema = ZodObjectSchema> = {
   start: () => ToolDisplayBlock | undefined;
   partialInput: (jsonString: string) => ToolDisplayBlock | undefined;
   input: (input: z.infer<T>) => ToolDisplayBlock;
-  result: (output: ToolOutput, input: z.infer<T>) => ToolDisplayBlock | undefined;
+  result: (output: ToolOutput) => ToolDisplayBlock | undefined;
 }
 
 type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
   name: string;
   description: string;
   inputSchema: T;
-  stringify: (input: z.infer<T>) => string;
   execute: (input: z.infer<T>) => Promise<ToolOutput>;
   visualize: ToolVisualization<T>;
 }
 
-type ToolDefinition<T extends ZodObjectSchema = ZodObjectSchema> = Omit<ToolDescriptor<T>, "visualize"> & {
-  visualize?: Partial<ToolVisualization<T>>;
-}
+type ToolDefinition<T extends ZodObjectSchema = ZodObjectSchema> = Omit<ToolDescriptor<T>, "visualize">;
 
 export const tools: ToolDescriptor[] = [];
 
@@ -46,13 +42,9 @@ function Tool<T extends ZodObjectSchema>(definition: ToolDefinition<T>) {
     throw new Error(`Duplicate tool name: "${definition.name}" is already registered`);
   }
 
-  const { visualize, ...base } = definition;
   const descriptor: ToolDescriptor<T> = {
-    ...base,
-    visualize: {
-      ...defaultToolVisualization(base),
-      ...visualize,
-    },
+    ...definition,
+    visualize: defaultToolVisualization(definition),
   };
 
   tools.push(descriptor as ToolDescriptor);
@@ -61,9 +53,9 @@ function Tool<T extends ZodObjectSchema>(definition: ToolDefinition<T>) {
 
 function defaultToolVisualization<T extends ZodObjectSchema>(tool: Omit<ToolDescriptor<T>, "visualize" | "execute" | "description" | "inputSchema">): ToolVisualization<T> {
   return {
-    start: () => ({ title: `Tool: ${tool.name}`, content: "Preparing input" }),
-    partialInput: (jsonString) => ({ title: `Tool: ${tool.name}`, content: `Input:\n${formatPartialJson(jsonString)}` }),
-    input: (input) => ({ title: `Tool: ${tool.name}`, content: formatToolUse(tool.stringify(input), input) }),
+    start: () => ({ title: `Tool use: ${tool.name}`, content: "Input:\n{}" }),
+    partialInput: (jsonString) => ({ title: `Tool use: ${tool.name}`, content: `Input:\n${formatPartialJson(jsonString)}` }),
+    input: (input) => ({ title: `Tool use: ${tool.name}`, content: `Input:\n${formatToolInput(input)}` }),
     result: (output) => ({ title: `Tool result: ${tool.name}`, content: formatToolOutput(output) }),
   };
 }
@@ -104,17 +96,12 @@ function formatToolInput(input: unknown) {
   return JSON.stringify(input, null, 2);
 }
 
-function formatToolUse(summary: string, input: unknown) {
-  return `${summary}\n\nInput:\n${formatToolInput(input)}`;
-}
-
 const readTool = Tool({
   name: "read",
   description: "Read content from a file.",
   inputSchema: z.object({
     path: z.string().describe("Absolute or relative path."),
   }),
-  stringify: formatReadSummary,
   execute: async (input): Promise<ToolOutput> => {
     const text = await readFile(input.path, 'utf8');
     return {
@@ -123,19 +110,6 @@ const readTool = Tool({
   }
 });
 
-function formatReadSummary(input: { path: string }) {
-  return `Read ${formatDisplayPath(input.path)}`;
-}
-
-function formatDisplayPath(filePath: string) {
-  const relativePath = path.relative(process.cwd(), filePath);
-  if (relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
-    return relativePath;
-  }
-
-  return filePath;
-}
-
 const writeTool = Tool({
   name: "write",
   description: "Write content to a file.",
@@ -143,7 +117,6 @@ const writeTool = Tool({
     path: z.string(),
     content: z.string()
   }),
-  stringify: (input) => `Write ${input.path}`,
   execute: async (input): Promise<ToolOutput> => {
     await writeFile(input.path, input.content);
     return {
@@ -160,7 +133,6 @@ const editTool = Tool({
     oldText: z.string().describe("Old text to find and replace (must match exactly)"),
     newText: z.string().describe("New text to replace the old with")
   }),
-  stringify: (input) => `Edit ${input.path}`,
   execute: async (input): Promise<ToolOutput> => {
     const oldFileData = await readFile(input.path, 'utf8');
     const newFileData = oldFileData.replaceAll(input.oldText, input.newText);
@@ -177,7 +149,6 @@ const bashTool = Tool({
   inputSchema: z.object({
     command: z.string(),
   }),
-  stringify: (input) => `Bash: ${input.command}`,
   execute: async (input): Promise<ToolOutput> => {
     try {
       const { stdout, stderr } = await execAsync(input.command, { maxBuffer: 10 * 1024 * 1024 });
