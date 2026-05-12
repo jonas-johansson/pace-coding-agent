@@ -190,7 +190,7 @@ const BASH_DEFAULT_TIMEOUT = 10_000;
 
 const bashTool = Tool({
   name: "bash",
-  description: "Execute a bash command.",
+  description: "Execute a bash command in the current working directory.",
   inputSchema: z.object({
     command: z.string(),
   }),
