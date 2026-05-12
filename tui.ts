@@ -1433,26 +1433,24 @@ function renderAssistantBlock(block: RenderBlock, columns: number) {
   return result;
 }
 
-/** Render a tool block as a single inline line: `→ title  ✓` */
+/** Render a tool block as a single inline line: `title  ✓` */
 function renderInlineToolBlock(block: RenderBlock, columns: number, spinnerFrame: string) {
   const theme = inlineToolTheme;
   const title = block.title ?? block.role;
   const indicator = renderInlineStateIndicator(block.state, spinnerFrame);
   const indicatorWidth = indicator ? visibleLength(indicator.text) + 1 : 0;
-  const arrowWidth = displayWidth(TOOL_ARROW) + 1; // arrow + space
-  const titleWidth = Math.max(1, columns - 4 - arrowWidth - indicatorWidth);
+  const titleWidth = Math.max(1, columns - 4 - indicatorWidth);
   // Truncate title to fit
   const truncatedTitle = truncateToWidth(title, titleWidth);
   const titleVisible = displayWidth(truncatedTitle);
-  const totalContentWidth = arrowWidth + titleVisible + (indicator ? 1 + visibleLength(indicator.text) : 0);
+  const totalContentWidth = titleVisible + (indicator ? 1 + visibleLength(indicator.text) : 0);
   const rightPad = Math.max(0, columns - 2 - totalContentWidth);
 
-  const arrowRendered = `${RESET}${bg(theme.bg)}${fg(245)}${TOOL_ARROW} `;
   const titleRendered = `${RESET}${bg(theme.bg)}${fg(theme.accent)}${truncatedTitle}`;
   const indicatorRendered = indicator ? ` ${indicator.rendered}` : "";
   const padRendered = `${RESET}${bg(theme.bg)}${" ".repeat(rightPad)}${RESET}`;
 
-  return [`${bg(theme.bg)}  ${arrowRendered}${titleRendered}${indicatorRendered}${padRendered}`];
+  return [`${bg(theme.bg)}  ${titleRendered}${indicatorRendered}${padRendered}`];
 }
 
 /** Render a tool block as a gray panel (has content to show). */
