@@ -2435,12 +2435,12 @@ function formatContextInfo(info: ContextInfo): string {
 function formatCost(cost: number): string {
   if (cost < 0.01) {
     // Show sub-cent costs with more precision
-    return `${cost.toFixed(4)}`;
+    return `$${cost.toFixed(4)}`;
   }
   if (cost < 1) {
-    return `${cost.toFixed(3)}`;
+    return `$${cost.toFixed(3)}`;
   }
-  return `${cost.toFixed(2)}`;
+  return `$${cost.toFixed(2)}`;
 }
 
 function fg(code: number) {
