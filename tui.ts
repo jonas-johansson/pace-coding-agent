@@ -1020,7 +1020,7 @@ export class Tui {
     const statusText = !this.running && (!this.status || this.status === "idle") ? "" : this.status || "idle";
     const scrollText = this.scrollOffset > 0 ? `${statusText ? " | " : ""}scroll ${this.scrollOffset}/${maxScroll} | End latest` : "";
     const leftText = `${spinner}${statusText}${scrollText}`;
-    const costText = this.cost > 0 ? `  $${formatCost(this.cost)}  ` : "";
+    const costText = this.cost > 0 ? `  ${formatCost(this.cost)}  ` : "";
     const contextText = this.contextInfo ? `  ${formatContextInfo(this.contextInfo)}  ` : "";
     const modelText = this.model ? `  ${this.model}  ` : "";
     const cwdText = this.cwd ? `  ${this.cwd}  ` : "";
@@ -1035,10 +1035,10 @@ export class Tui {
     const contextFgColor = this.contextInfo && this.contextInfo.usedTokens / this.contextInfo.contextWindow >= 0.8 ? 217 : 245;
     return (
       `${bg(235)}${fg(fgColor)}${leftPadded}${" ".repeat(gapWidth)}` +
-      `${bg(238)}${fg(246)}${cwdText}` +
-      `${bg(238)}${fg(187)}${costText}` +
-      `${bg(238)}${fg(contextFgColor)}${contextText}` +
-      `${bg(238)}${fg(109)}${modelText}${RESET}`
+      `${bg(235)}${fg(246)}${cwdText}` +
+      `${bg(235)}${fg(187)}${costText}` +
+      `${bg(235)}${fg(contextFgColor)}${contextText}` +
+      `${bg(235)}${fg(109)}${modelText}${RESET}`
     );
   }
 
