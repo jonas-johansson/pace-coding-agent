@@ -21,7 +21,7 @@ let currentModel: (typeof AVAILABLE_MODELS)[number] = DEFAULT_MODEL;
 
 const ant = new Anthropic();
 const messages: Anthropic.MessageParam[] = [];
-const tui = new Tui({ onSubmit: handleUserInput, model: DEFAULT_MODEL });
+const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, model: DEFAULT_MODEL });
 
 let promptRunning = false;
 
@@ -34,6 +34,13 @@ function resolveModel(input: string): (typeof AVAILABLE_MODELS)[number] | undefi
     return input as (typeof AVAILABLE_MODELS)[number];
   }
   return MODEL_ALIASES[input.toLowerCase()];
+}
+
+function cycleModel() {
+  const currentIndex = AVAILABLE_MODELS.indexOf(currentModel);
+  const nextIndex = (currentIndex + 1) % AVAILABLE_MODELS.length;
+  currentModel = AVAILABLE_MODELS[nextIndex];
+  tui.setModel(currentModel);
 }
 
 function formatModelList() {
@@ -62,7 +69,7 @@ function handleCommand(command: string): boolean {
       tui.addBlock({
         role: "assistant",
         title: "Agento",
-        content: "New conversation started. Press Enter to send, Ctrl+J or Shift+Enter for a newline. Use /model to select a model. Press Ctrl+C to quit.",
+        content: "New conversation started. Press Enter to send, Ctrl+J or Shift+Enter for a newline. Press Tab to cycle models. Use /model to select a model. Press Ctrl+C to quit.",
       });
       return true;
     case "/model": {
@@ -330,7 +337,7 @@ async function main() {
   tui.addBlock({
     role: "assistant",
     title: "Agento",
-    content: "Press Enter to send, Ctrl+J or Shift+Enter for a newline. Use /model to select a model. Press Ctrl+C to quit.",
+    content: "Press Enter to send, Ctrl+J or Shift+Enter for a newline. Press Tab to cycle models. Use /model to select a model. Press Ctrl+C to quit.",
   });
 }
 

@@ -90,7 +90,7 @@ export class Tui {
   private lastMessageStart = 0;
   private lastMessageRows = 0;
 
-  constructor(private readonly options: { onSubmit?: SubmitHandler; model?: string } = {}) {
+  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; model?: string } = {}) {
     this.model = options.model ?? "";
   }
 
@@ -315,6 +315,11 @@ export class Tui {
 
       if (char === "\b") {
         this.deleteWord();
+        continue;
+      }
+
+      if (char === "\t") {
+        this.options.onTab?.();
         continue;
       }
 

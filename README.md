@@ -14,6 +14,9 @@ Features:
 
 Run: `tsx app.ts`
 
+Shortcuts:
+- Press `Tab` to cycle to the next model
+
 Slash commands:
 - `/new` starts a new conversation
 - `/model` lists available models
