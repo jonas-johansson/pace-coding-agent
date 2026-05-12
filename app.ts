@@ -1,7 +1,23 @@
 import Anthropic from "@anthropic-ai/sdk";
 import assert from "assert";
+import { readFile } from "fs/promises";
+import { join } from "path";
 import { Tui } from "./tui";
 import { tools, toolsTransformedToAnthropicStyle, visualizeToolTitle, visualizeToolPartialTitle, formatToolResultBody, isAbortError } from "./tool";
+
+/**
+ * Attempts to read AGENTS.md from the current working directory.
+ * Returns the file contents as a string, or null if the file does not exist.
+ */
+async function loadAgentsFile(): Promise<string | null> {
+  try {
+    const filePath = join(process.cwd(), "AGENTS.md");
+    const contents = await readFile(filePath, "utf-8");
+    return contents;
+  } catch {
+    return null;
+  }
+}
 
 const AVAILABLE_MODELS = [
   "claude-haiku-4-5",
@@ -198,6 +214,16 @@ async function prompt(userMessage: string) {
   // Track the current set of tool blocks for UI updates on cancel
   let currentToolBlocks = new Map<string, number>();
 
+  // Load AGENTS.md once per prompt invocation so that changes to the file
+  // are picked up on the next user message without restarting the agent.
+  const agentsFileContents = await loadAgentsFile();
+
+  // Build the system prompt, optionally appending AGENTS.md instructions.
+  const baseSystem = `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${process.cwd()}`;
+  const systemPrompt = agentsFileContents
+    ? `${baseSystem}\n\n---\n\n# Project-specific instructions (from AGENTS.md)\n\n${agentsFileContents}`
+    : baseSystem;
+
   try {
     while (true) {
       tui.setStatus("Thinking");
@@ -206,7 +232,7 @@ async function prompt(userMessage: string) {
         {
           model: currentModel,
           max_tokens: 16_000,
-          system: `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${process.cwd()}`,
+          system: systemPrompt,
           messages,
           tools: toolsTransformedToAnthropicStyle,
         },
@@ -470,6 +496,16 @@ async function main() {
 
 Ready to help! Type a message or use a command to get started.`,
   });
+
+  // Notify the user if AGENTS.md was found in the working directory.
+  const agentsFile = await loadAgentsFile();
+  if (agentsFile) {
+    tui.addBlock({
+      role: "assistant",
+      title: "AGENTS.md loaded",
+      content: `Project-specific instructions from \`AGENTS.md\` have been appended to the system prompt.`,
+    });
+  }
 }
 
 process.on("uncaughtException", (error: unknown) => {
