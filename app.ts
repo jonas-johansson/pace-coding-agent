@@ -1,8 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import assert from "assert";
-import { parse } from "partial-json";
 import { Tui } from "./tui";
-import { ToolOutput, tools, toolsTransformedToAnthropicStyle } from "./tool";
+import { tools, toolsTransformedToAnthropicStyle } from "./tool";
 
 const ant = new Anthropic();
 const messages: Anthropic.MessageParam[] = [];
@@ -10,48 +9,8 @@ const tui = new Tui({ onSubmit: handleUserInput });
 
 let promptRunning = false;
 
-function parsePartialJson(jsonString: string): unknown {
-  if (jsonString.length === 0) {
-    return {};
-  }
-
-  return parse(jsonString);
-}
-
-function formatPartialJson(jsonString: string) {
-  if (!jsonString.trim()) {
-    return "{}";
-  }
-
-  try {
-    return JSON.stringify(parsePartialJson(jsonString), null, 2);
-  } catch {
-    return jsonString;
-  }
-}
-
 function formatError(error: unknown) {
   return error instanceof Error ? error.stack ?? error.message : String(error);
-}
-
-function formatToolOutput(toolOutput: ToolOutput) {
-  return toolOutput.content
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text;
-      }
-
-      return `[${part.type}] ${JSON.stringify(part, null, 2)}`;
-    })
-    .join("\n\n");
-}
-
-function formatToolInput(input: unknown) {
-  return JSON.stringify(input, null, 2);
-}
-
-function formatToolUse(summary: string, input: unknown) {
-  return `${summary}\n\nInput:\n${formatToolInput(input)}`;
 }
 
 function handleCommand(command: string): boolean {
@@ -69,6 +28,20 @@ function handleCommand(command: string): boolean {
       tui.addBlock({ role: "error", title: "Unknown command", content: `Unknown command: ${command}` });
       return true;
   }
+}
+
+function upsertToolUseBlock(toolUseBlocks: Map<string, number>, toolUseId: string, display: { title?: string; content: string } | undefined) {
+  if (!display) {
+    return;
+  }
+
+  const blockId = toolUseBlocks.get(toolUseId);
+  if (blockId !== undefined) {
+    tui.updateBlock(blockId, display.content);
+    return;
+  }
+
+  toolUseBlocks.set(toolUseId, tui.addBlock({ role: "tool_use", ...display }));
 }
 
 async function handleUserInput(userMessage: string) {
@@ -112,6 +85,7 @@ async function prompt(userMessage: string) {
     let currentContentBlockIndex = -1;
     let currentTextBlockId: number | undefined;
     let currentToolUseId: string | undefined;
+    let currentTool: typeof tools[number] | undefined;
     let accInputJson = "";
     let accText = "";
     const toolUseBlocks = new Map<string, number>();
@@ -123,6 +97,7 @@ async function prompt(userMessage: string) {
           currentContentBlockIndex = event.index;
           currentTextBlockId = undefined;
           currentToolUseId = undefined;
+          currentTool = undefined;
           accInputJson = "";
           accText = "";
 
@@ -137,12 +112,8 @@ async function prompt(userMessage: string) {
             tui.setStatus("streaming response");
           } else if (contentBlock.type === "tool_use") {
             currentToolUseId = contentBlock.id;
-            const blockId = tui.addBlock({
-              role: "tool_use",
-              title: `Tool: ${contentBlock.name}`,
-              content: "Preparing input",
-            });
-            toolUseBlocks.set(contentBlock.id, blockId);
+            currentTool = tools.find((tool) => tool.name === contentBlock.name);
+            upsertToolUseBlock(toolUseBlocks, contentBlock.id, currentTool?.visualize.start());
             tui.setStatus(`preparing tool: ${contentBlock.name}`);
           }
           break;
@@ -167,10 +138,7 @@ async function prompt(userMessage: string) {
             case "input_json_delta": {
               accInputJson += event.delta.partial_json;
               if (currentToolUseId) {
-                const blockId = toolUseBlocks.get(currentToolUseId);
-                if (blockId !== undefined) {
-                  tui.updateBlock(blockId, `Input:\n${formatPartialJson(accInputJson)}`);
-                }
+                upsertToolUseBlock(toolUseBlocks, currentToolUseId, currentTool?.visualize.partialInput(accInputJson));
               }
               break;
             }
@@ -182,6 +150,7 @@ async function prompt(userMessage: string) {
           currentContentBlockIndex = -1;
           currentTextBlockId = undefined;
           currentToolUseId = undefined;
+          currentTool = undefined;
           accInputJson = "";
           accText = "";
           break;
@@ -231,24 +200,16 @@ async function prompt(userMessage: string) {
         continue;
       }
 
-      const toolSummary = toolToExecute.stringify(inputParseResult.data);
-      const toolUseText = formatToolUse(toolSummary, contentBlock.input);
-      const streamedToolBlockId = toolUseBlocks.get(contentBlock.id);
-      if (streamedToolBlockId !== undefined) {
-        tui.updateBlock(streamedToolBlockId, toolUseText);
-      } else {
-        tui.addBlock({ role: "tool_use", title: `Tool: ${contentBlock.name}`, content: toolUseText });
-      }
+      upsertToolUseBlock(toolUseBlocks, contentBlock.id, toolToExecute.visualize.input(inputParseResult.data));
 
       tui.setStatus(`using tool: ${contentBlock.name}`);
 
       try {
-        const toolOutput = await toolToExecute.execute(inputParseResult.data) as ToolOutput;
-        tui.addBlock({
-          role: "tool_result",
-          title: `Tool result: ${contentBlock.name}`,
-          content: formatToolOutput(toolOutput),
-        });
+        const toolOutput = await toolToExecute.execute(inputParseResult.data);
+        const resultDisplay = toolToExecute.visualize.result(toolOutput, inputParseResult.data);
+        if (resultDisplay) {
+          tui.addBlock({ role: "tool_result", ...resultDisplay });
+        }
         messages.push({
           role: "user",
           content: [

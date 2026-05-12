@@ -3,14 +3,30 @@ import { z } from "zod";
 import { readFile, writeFile } from "fs/promises"
 import { exec } from "child_process";
 import { promisify } from "util";
+import path from "path";
+import { parse } from "partial-json";
 
 const execAsync = promisify(exec);
+const DEFAULT_READ_OFFSET = 1;
+const DEFAULT_READ_LIMIT = 240;
 
 export type ToolOutput = {
   content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.SearchResultBlockParam | Anthropic.DocumentBlockParam | Anthropic.ToolReferenceBlockParam>;
 }
 
+export type ToolDisplayBlock = {
+  title?: string;
+  content: string;
+}
+
 type ZodObjectSchema = z.ZodObject<z.core.$ZodShape>;
+
+type ToolVisualization<T extends ZodObjectSchema = ZodObjectSchema> = {
+  start: () => ToolDisplayBlock | undefined;
+  partialInput: (jsonString: string) => ToolDisplayBlock | undefined;
+  input: (input: z.infer<T>) => ToolDisplayBlock;
+  result: (output: ToolOutput, input: z.infer<T>) => ToolDisplayBlock | undefined;
+}
 
 type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
   name: string;
@@ -18,32 +34,122 @@ type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
   inputSchema: T;
   stringify: (input: z.infer<T>) => string;
   execute: (input: z.infer<T>) => Promise<ToolOutput>;
+  visualize: ToolVisualization<T>;
+}
+
+type ToolDefinition<T extends ZodObjectSchema = ZodObjectSchema> = Omit<ToolDescriptor<T>, "visualize"> & {
+  visualize?: Partial<ToolVisualization<T>>;
 }
 
 export const tools: ToolDescriptor[] = [];
 
-function Tool<T extends ZodObjectSchema>(descriptor: ToolDescriptor<T>) {
-  if (tools.some(tool => tool.name === descriptor.name)) {
-    throw new Error(`Duplicate tool name: "${descriptor.name}" is already registered`);
+function Tool<T extends ZodObjectSchema>(definition: ToolDefinition<T>) {
+  if (tools.some(tool => tool.name === definition.name)) {
+    throw new Error(`Duplicate tool name: "${definition.name}" is already registered`);
   }
+
+  const { visualize, ...base } = definition;
+  const descriptor: ToolDescriptor<T> = {
+    ...base,
+    visualize: {
+      ...defaultToolVisualization(base),
+      ...visualize,
+    },
+  };
+
   tools.push(descriptor as ToolDescriptor);
   return descriptor;
 }
 
+function defaultToolVisualization<T extends ZodObjectSchema>(tool: Omit<ToolDescriptor<T>, "visualize" | "execute" | "description" | "inputSchema">): ToolVisualization<T> {
+  return {
+    start: () => ({ title: `Tool: ${tool.name}`, content: "Preparing input" }),
+    partialInput: (jsonString) => ({ title: `Tool: ${tool.name}`, content: `Input:\n${formatPartialJson(jsonString)}` }),
+    input: (input) => ({ title: `Tool: ${tool.name}`, content: formatToolUse(tool.stringify(input), input) }),
+    result: (output) => ({ title: `Tool result: ${tool.name}`, content: formatToolOutput(output) }),
+  };
+}
+
+function parsePartialJson(jsonString: string): unknown {
+  if (jsonString.length === 0) {
+    return {};
+  }
+
+  return parse(jsonString);
+}
+
+function formatPartialJson(jsonString: string) {
+  if (!jsonString.trim()) {
+    return "{}";
+  }
+
+  try {
+    return JSON.stringify(parsePartialJson(jsonString), null, 2);
+  } catch {
+    return jsonString;
+  }
+}
+
+function formatToolOutput(toolOutput: ToolOutput) {
+  return toolOutput.content
+    .map((part) => {
+      if (part.type === "text") {
+        return part.text;
+      }
+
+      return `[${part.type}] ${JSON.stringify(part, null, 2)}`;
+    })
+    .join("\n\n");
+}
+
+function formatToolInput(input: unknown) {
+  return JSON.stringify(input, null, 2);
+}
+
+function formatToolUse(summary: string, input: unknown) {
+  return `${summary}\n\nInput:\n${formatToolInput(input)}`;
+}
+
 const readTool = Tool({
   name: "read",
-  description: "Read content from a file.",
+  description: "Read content from a file. Defaults to the first 240 lines; use offset and limit to read additional ranges.",
   inputSchema: z.object({
-    path: z.string().describe("Absolute or relative path.")
+    path: z.string().describe("Absolute or relative path."),
+    offset: z.number().int().positive().optional().describe("1-based line number to start reading from."),
+    limit: z.number().int().positive().optional().describe("Maximum number of lines to read."),
   }),
-  stringify: (input) => `Read ${input.path}`,
+  stringify: formatReadSummary,
+  visualize: {
+    start: () => undefined,
+    partialInput: () => undefined,
+    input: (input) => ({ content: formatReadSummary(input) }),
+    result: () => undefined,
+  },
   execute: async (input): Promise<ToolOutput> => {
     const fileData = await readFile(input.path, 'utf8');
+    const offset = input.offset ?? DEFAULT_READ_OFFSET;
+    const limit = input.limit ?? DEFAULT_READ_LIMIT;
+    const lines = fileData.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    const start = Math.max(0, offset - 1);
+    const text = lines.slice(start, start + limit).join("\n");
     return {
-      content: [{ type: "text", text: fileData }]
+      content: [{ type: "text", text }]
     }
   }
 });
+
+function formatReadSummary(input: { path: string; offset?: number; limit?: number }) {
+  return `Read ${formatDisplayPath(input.path)} [offset=${input.offset ?? DEFAULT_READ_OFFSET}, limit=${input.limit ?? DEFAULT_READ_LIMIT}]`;
+}
+
+function formatDisplayPath(filePath: string) {
+  const relativePath = path.relative(process.cwd(), filePath);
+  if (relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
+    return relativePath;
+  }
+
+  return filePath;
+}
 
 const writeTool = Tool({
   name: "write",
