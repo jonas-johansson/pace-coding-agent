@@ -97,9 +97,11 @@ export class Tui {
   private lastMessageStart = 0;
   private lastMessageRows = 0;
   private contextInfo: ContextInfo | undefined;
+  private cwd = "";
 
-  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onEscape?: () => void; model?: string } = {}) {
+  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onEscape?: () => void; model?: string; cwd?: string } = {}) {
     this.model = options.model ?? "";
+    this.cwd = options.cwd ?? "";
   }
 
   start() {
@@ -211,6 +213,11 @@ export class Tui {
 
   setContextInfo(info: ContextInfo) {
     this.contextInfo = info;
+    this.requestRender();
+  }
+
+  setCwd(cwd: string) {
+    this.cwd = cwd;
     this.requestRender();
   }
 
@@ -1005,8 +1012,9 @@ export class Tui {
     const leftText = `${spinner}${statusText}${scrollText}`;
     const contextText = this.contextInfo ? `  ${formatContextInfo(this.contextInfo)}  ` : "";
     const modelText = this.model ? `  ${this.model}  ` : "";
+    const cwdText = this.cwd ? `  ${this.cwd}  ` : "";
     const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
-    const rightWidth = visibleLength(contextText) + visibleLength(modelText);
+    const rightWidth = visibleLength(cwdText) + visibleLength(contextText) + visibleLength(modelText);
     const leftWidth = Math.max(1, columns - horizontalPadding * 2 - rightWidth);
     const leftVisible = takeRight(leftText, leftWidth);
     const leftPadded = `${" ".repeat(horizontalPadding)}${leftVisible}`;
@@ -1016,6 +1024,7 @@ export class Tui {
     const contextFgColor = this.contextInfo && this.contextInfo.usedTokens / this.contextInfo.contextWindow >= 0.8 ? 217 : 245;
     return (
       `${bg(235)}${fg(fgColor)}${leftPadded}${" ".repeat(gapWidth)}` +
+      `${bg(238)}${fg(246)}${cwdText}` +
       `${bg(238)}${fg(contextFgColor)}${contextText}` +
       `${bg(238)}${fg(109)}${modelText}${RESET}`
     );

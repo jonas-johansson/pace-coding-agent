@@ -48,7 +48,7 @@ function cancelPrompt() {
   currentAbortController.abort();
 }
 
-const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, onEscape: cancelPrompt, model: DEFAULT_MODEL });
+const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, onEscape: cancelPrompt, model: DEFAULT_MODEL, cwd: process.cwd() });
 
 let promptRunning = false;
 let currentAbortController: AbortController | null = null;
@@ -59,6 +59,10 @@ function updateContextInfo() {
   const contextWindow = MODEL_CONTEXT_WINDOW[currentModel];
   const usedTokens = totalInputTokens + totalOutputTokens;
   tui.setContextInfo({ usedTokens, contextWindow });
+}
+
+function refreshCwd() {
+  tui.setCwd(process.cwd());
 }
 
 function formatError(error: unknown) {
@@ -206,6 +210,8 @@ async function handleUserInput(userMessage: string) {
       tui.updateBlock(blockId, { content, state: output.is_error ? "error" : "done" });
     } catch (error: unknown) {
       tui.updateBlock(blockId, { content: formatError(error), state: "error" });
+    } finally {
+      refreshCwd();
     }
 
     return;
@@ -448,6 +454,8 @@ async function prompt(userMessage: string) {
             ],
           });
           pendingToolUseIds = pendingToolUseIds.filter((id) => id !== contentBlock.id);
+        } finally {
+          refreshCwd();
         }
       }
 
