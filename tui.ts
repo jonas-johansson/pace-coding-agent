@@ -226,9 +226,14 @@ export class Tui {
         continue;
       }
 
-      if (char === "\u007f" || char === "\b") {
+      if (char === "\u007f") {
         this.input = Array.from(this.input).slice(0, -1).join("");
         this.requestRender();
+        continue;
+      }
+
+      if (char === "\b") {
+        this.deleteWord();
         continue;
       }
 
@@ -284,9 +289,45 @@ export class Tui {
       case "\x1bOF":
         this.scrollToBottom();
         return true;
+      case "\x1b\u007f":
+      case "\x1b\b":
+        this.deleteWord();
+        return true;
       default:
         return data.startsWith("\x1b");
     }
+  }
+
+  private deleteWord() {
+    if (!this.input) {
+      return;
+    }
+
+    const chars = Array.from(this.input);
+    let index = chars.length - 1;
+
+    // If last char is a special character (not alphanumeric, not space), remove just it
+    const lastChar = chars[index];
+    if (lastChar && !/^[\p{L}\p{Nd}]$/u.test(lastChar) && lastChar !== " ") {
+      this.input = chars.slice(0, index).join("");
+      this.requestRender();
+      return;
+    }
+
+    // If last char is a space, remove trailing spaces then the preceding word
+    if (lastChar === " ") {
+      while (index >= 0 && chars[index] === " ") {
+        index -= 1;
+      }
+    }
+
+    // Remove consecutive alphanumeric characters
+    while (index >= 0 && /^[\p{L}\p{Nd}]$/u.test(chars[index])) {
+      index -= 1;
+    }
+
+    this.input = chars.slice(0, index + 1).join("");
+    this.requestRender();
   }
 
   private handleMouse(data: string) {
