@@ -158,7 +158,7 @@ async function prompt(userMessage: string) {
     const stream = await ant.messages.stream({
       model: currentModel,
       max_tokens: 16_000,
-      system: `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nWorking directory: ${process.cwd()}`,
+      system: `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${process.cwd()}`,
       messages,
       tools: toolsTransformedToAnthropicStyle,
     });
