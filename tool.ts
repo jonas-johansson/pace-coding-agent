@@ -145,10 +145,10 @@ const MAX_READ_BYTES_LABEL = `${MAX_READ_BYTES / 1024}KB`;
 
 const readTool = Tool({
   name: "read",
-  description: "Read content from a file.",
+  description: "Read content from a file at a specified path.",
   concurrency: "safe",
   inputSchema: z.object({
-    path: z.string().describe("Absolute or relative path."),
+    path: z.string().describe("Absolute or relative file path."),
     offset: z.number().int().min(1).optional().describe("Line number to start reading from (1-indexed). Defaults to 1."),
     limit: z.number().int().positive().optional().describe("Maximum number of lines to read. Defaults to 2000."),
   }),
