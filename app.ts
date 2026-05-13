@@ -1,11 +1,32 @@
-import Anthropic from "@anthropic-ai/sdk";
-import assert from "assert";
 import { readFile } from "fs/promises";
 import { join } from "path";
 import { Tui } from "./tui";
-import { tools, toolsTransformedToAnthropicStyle, visualizeToolTitle, visualizeToolPartialTitle, formatToolResultBody, isAbortError } from "./tool";
-
-const welcomeMessageContent = "How can I help?"
+import {
+  tools,
+  visualizeToolTitle,
+  visualizeToolPartialTitle,
+  formatToolResultBody,
+  isAbortError,
+  getProviderToolDefinitions,
+} from "./tool";
+import type {
+  Provider,
+  ProviderMessage,
+  ProviderStream,
+  ContentBlock,
+  UserMessage,
+  AssistantMessage,
+} from "./provider";
+import {
+  MODELS,
+  MODEL_ALIASES,
+  AVAILABLE_MODEL_IDS,
+  DEFAULT_MODEL_ID,
+  resolveModelId,
+  type ModelConfig,
+} from "./provider";
+import { AnthropicProvider } from "./providers/anthropic";
+import { OpenCodeZenProvider } from "./providers/opencode-zen";
 
 /**
  * Attempts to read AGENTS.md from the current working directory.
@@ -21,66 +42,36 @@ async function loadAgentsFile(): Promise<string | null> {
   }
 }
 
-const AVAILABLE_MODELS = [
-  "claude-haiku-4-5",
-  "claude-sonnet-4-6",
-  "claude-opus-4-6",
-] as const;
+// ── Provider instances (lazily created) ──────────────────────────────────────
 
-const MODEL_ALIASES: Record<string, (typeof AVAILABLE_MODELS)[number]> = {
-  "haiku": "claude-haiku-4-5",
-  "sonnet": "claude-sonnet-4-6",
-  "opus": "claude-opus-4-6",
-};
+let anthropicProvider: AnthropicProvider | undefined;
+let openCodeZenProvider: OpenCodeZenProvider | undefined;
 
-const MODEL_CONTEXT_WINDOW: Record<(typeof AVAILABLE_MODELS)[number], number> = {
-  "claude-haiku-4-5": 200_000,
-  "claude-sonnet-4-6": 1_000_000,
-  "claude-opus-4-6": 1_000_000,
-};
+function getProvider(config: ModelConfig): Provider {
+  switch (config.provider) {
+    case "anthropic":
+      if (!anthropicProvider) anthropicProvider = new AnthropicProvider();
+      return anthropicProvider;
+    case "opencode-zen":
+      if (!openCodeZenProvider) openCodeZenProvider = new OpenCodeZenProvider();
+      return openCodeZenProvider;
+  }
+}
 
-/**
- * Pricing per million tokens for each model.
- * Uses the 5-minute ephemeral cache write pricing.
- */
-const MODEL_PRICING: Record<(typeof AVAILABLE_MODELS)[number], {
-  inputPerMTok: number;
-  cacheWritePerMTok: number;
-  cacheReadPerMTok: number;
-  outputPerMTok: number;
-}> = {
-  "claude-haiku-4-5": {
-    inputPerMTok: 1,
-    cacheWritePerMTok: 1.25,
-    cacheReadPerMTok: 0.10,
-    outputPerMTok: 5,
-  },
-  "claude-sonnet-4-6": {
-    inputPerMTok: 3,
-    cacheWritePerMTok: 3.75,
-    cacheReadPerMTok: 0.30,
-    outputPerMTok: 15,
-  },
-  "claude-opus-4-6": {
-    inputPerMTok: 5,
-    cacheWritePerMTok: 6.25,
-    cacheReadPerMTok: 0.50,
-    outputPerMTok: 25,
-  },
-};
+// ── Model state ──────────────────────────────────────────────────────────────
 
-const DEFAULT_MODEL = "claude-haiku-4-5";
+let currentModelId: string = DEFAULT_MODEL_ID;
 
-let currentModel: (typeof AVAILABLE_MODELS)[number] = DEFAULT_MODEL;
+function currentModelConfig(): ModelConfig {
+  return MODELS[currentModelId];
+}
 
-const ant = new Anthropic();
-const messages: Anthropic.MessageParam[] = [];
 function cancelPrompt() {
   if (!promptRunning || !currentAbortController) return;
   currentAbortController.abort();
 }
 
-const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, onEscape: cancelPrompt, model: DEFAULT_MODEL, cwd: process.cwd() });
+const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, onEscape: cancelPrompt, model: DEFAULT_MODEL_ID, cwd: process.cwd() });
 
 let promptRunning = false;
 let currentAbortController: AbortController | null = null;
@@ -90,14 +81,18 @@ let lastCacheReadTokens = 0;
 let lastCacheCreationTokens = 0;
 let accumulatedCost = 0;
 
+// ── Conversation state (provider-agnostic) ───────────────────────────────────
+
+const messages: ProviderMessage[] = [];
+
 function computeCallCost(
-  model: (typeof AVAILABLE_MODELS)[number],
+  config: ModelConfig,
   inputTokens: number,
   cacheCreationTokens: number,
   cacheReadTokens: number,
   outputTokens: number,
 ): number {
-  const pricing = MODEL_PRICING[model];
+  const pricing = config.pricing;
   return (
     (inputTokens / 1_000_000) * pricing.inputPerMTok +
     (cacheCreationTokens / 1_000_000) * pricing.cacheWritePerMTok +
@@ -107,15 +102,11 @@ function computeCallCost(
 }
 
 function updateContextInfo() {
-  const contextWindow = MODEL_CONTEXT_WINDOW[currentModel];
-  // The used tokens represent the context size of the *last* API call.
-  // input_tokens from the API already includes the full conversation history
-  // (including cache_creation_input_tokens and cache_read_input_tokens),
-  // so adding output_tokens gives us the total context size.
+  const config = currentModelConfig();
   const usedTokens = lastInputTokens + lastOutputTokens;
   tui.setContextInfo({
     usedTokens,
-    contextWindow,
+    contextWindow: config.contextWindow,
     cacheReadTokens: lastCacheReadTokens,
     cacheCreationTokens: lastCacheCreationTokens,
   });
@@ -130,18 +121,12 @@ function formatError(error: unknown) {
   return error instanceof Error ? error.stack ?? error.message : String(error);
 }
 
-function resolveModel(input: string): (typeof AVAILABLE_MODELS)[number] | undefined {
-  if (AVAILABLE_MODELS.includes(input as (typeof AVAILABLE_MODELS)[number])) {
-    return input as (typeof AVAILABLE_MODELS)[number];
-  }
-  return MODEL_ALIASES[input.toLowerCase()];
-}
-
 function cycleModel() {
-  const currentIndex = AVAILABLE_MODELS.indexOf(currentModel);
-  const nextIndex = (currentIndex + 1) % AVAILABLE_MODELS.length;
-  currentModel = AVAILABLE_MODELS[nextIndex];
-  tui.setModel(currentModel);
+  const ids = AVAILABLE_MODEL_IDS;
+  const currentIndex = ids.indexOf(currentModelId);
+  const nextIndex = (currentIndex + 1) % ids.length;
+  currentModelId = ids[nextIndex];
+  tui.setModel(currentModelId);
   updateContextInfo();
 }
 
@@ -153,7 +138,7 @@ function formatModelList() {
     aliasLookup.set(modelId, existing);
   }
 
-  return AVAILABLE_MODELS
+  return AVAILABLE_MODEL_IDS
     .map((modelId) => {
       const aliases = aliasLookup.get(modelId);
       return aliases ? `${modelId} (${aliases.join(", ")})` : modelId;
@@ -181,12 +166,12 @@ function handleCommand(command: string): boolean {
         tui.addBlock({
           role: "assistant",
           title: "Model",
-          content: `Current model: ${currentModel}\n\nAvailable models:\n${formatModelList()}\n\nUsage: /model <model-id>`,
+          content: `Current model: ${currentModelId}\n\nAvailable models:\n${formatModelList()}\n\nUsage: /model <model-id>`,
         });
         return true;
       }
 
-      const resolved = resolveModel(requestedModel);
+      const resolved = resolveModelId(requestedModel);
       if (!resolved) {
         tui.addBlock({
           role: "error",
@@ -196,10 +181,10 @@ function handleCommand(command: string): boolean {
         return true;
       }
 
-      currentModel = resolved;
-      tui.setModel(currentModel);
+      currentModelId = resolved;
+      tui.setModel(currentModelId);
       updateContextInfo();
-      tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModel}.` });
+      tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModelId}.` });
       return true;
     }
     default:
@@ -284,58 +269,45 @@ async function handleUserInput(userMessage: string) {
 
 async function prompt(userMessage: string) {
   tui.addBlock({ role: "user", content: userMessage });
-  messages.push({ role: "user", content: [{ type: "text", text: userMessage }] });
+
+  const userMsg: UserMessage = {
+    role: "user",
+    content: [{ type: "text", text: userMessage }],
+  };
+  messages.push(userMsg);
 
   const abortController = new AbortController();
   currentAbortController = abortController;
   const signal = abortController.signal;
 
-  // Track whether we've pushed an assistant message yet (for cleanup on cancel)
   let assistantMessagePushed = false;
-  // Track tool_use IDs from the current assistant response that need tool_results
   let pendingToolUseIds: string[] = [];
-  // Track the current set of tool blocks for UI updates on cancel
   let currentToolBlocks = new Map<string, number>();
 
-  // Load AGENTS.md once per prompt invocation so that changes to the file
-  // are picked up on the next user message without restarting the agent.
   const agentsFileContents = await loadAgentsFile();
 
-  // Build the system prompt, optionally appending AGENTS.md instructions.
-  // We use an explicit cache_control breakpoint on the system prompt so it
-  // is always cached across turns. The top-level cache_control on the
-  // request body handles automatic caching of the growing conversation.
   const baseSystem = `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${process.cwd()}\n\nWhen listing files, use \`/bin/ls -1\` to show only filenames (one per line, no icons or extra info). Only add flags like \`-la\` if the user explicitly asks for more details.`;
   const systemText = agentsFileContents
     ? `${baseSystem}\n\n---\n\n# Project-specific instructions (from AGENTS.md)\n\n${agentsFileContents}`
     : baseSystem;
-  const systemPrompt: Anthropic.TextBlockParam[] = [
-    {
-      type: "text" as const,
-      text: systemText,
-      cache_control: { type: "ephemeral" as const },
-    },
-  ];
+
+  const modelConfig = currentModelConfig();
+  const provider = getProvider(modelConfig);
+  const toolDefs = getProviderToolDefinitions();
 
   try {
     while (true) {
       tui.setStatus("Thinking");
 
-      const stream = await ant.messages.stream(
-        {
-          model: currentModel,
-          max_tokens: 16_000,
-          system: systemPrompt,
-          messages,
-          tools: toolsTransformedToAnthropicStyle,
-          // Automatic caching: the API places a cache breakpoint on the last
-          // cacheable block so the growing conversation prefix is reused.
-          cache_control: { type: "ephemeral" },
-        },
-        { signal },
-      );
+      const stream: ProviderStream = await provider.stream({
+        model: modelConfig.id,
+        system: systemText,
+        messages,
+        tools: toolDefs,
+        maxTokens: modelConfig.maxOutputTokens,
+        signal,
+      });
 
-      let currentContentBlockIndex = -1;
       let currentTextBlockId: number | undefined;
       let currentToolUseId: string | undefined;
       let currentToolName: string | undefined;
@@ -346,116 +318,102 @@ async function prompt(userMessage: string) {
 
       for await (const event of stream) {
         switch (event.type) {
-          case "content_block_start": {
-            assert(currentContentBlockIndex === -1);
-            currentContentBlockIndex = event.index;
-            currentTextBlockId = undefined;
+          case "text_start": {
+            accText = event.text;
+            currentTextBlockId = tui.addBlock({
+              role: "assistant",
+              content: accText,
+            });
             currentToolUseId = undefined;
             currentToolName = undefined;
             accInputJson = "";
-            accText = "";
+            tui.setStatus("Streaming response");
+            break;
+          }
 
-            const contentBlock = event.content_block;
-            if (contentBlock.type === "text") {
-              accText = contentBlock.text ?? "";
+          case "text_delta": {
+            accText += event.text;
+            if (currentTextBlockId === undefined) {
               currentTextBlockId = tui.addBlock({
                 role: "assistant",
                 content: accText,
               });
-              tui.setStatus("Streaming response");
-            } else if (contentBlock.type === "tool_use") {
-              currentToolUseId = contentBlock.id;
-              currentToolName = contentBlock.name;
-              ensureToolBlock(toolBlocks, contentBlock.id, contentBlock.name);
-              tui.setStatus(`Preparing tool: ${contentBlock.name}`);
+            } else {
+              tui.updateBlock(currentTextBlockId, accText);
+            }
+            tui.setStatus("Streaming response");
+            break;
+          }
+
+          case "tool_use_start": {
+            currentToolUseId = event.id;
+            currentToolName = event.name;
+            accInputJson = "";
+            currentTextBlockId = undefined;
+            accText = "";
+            ensureToolBlock(toolBlocks, event.id, event.name);
+            tui.setStatus(`Preparing tool: ${event.name}`);
+            break;
+          }
+
+          case "tool_input_delta": {
+            accInputJson += event.partialJson;
+            if (currentToolUseId && currentToolName) {
+              const id = ensureToolBlock(toolBlocks, currentToolUseId, currentToolName);
+              tui.updateBlock(id, { title: visualizeToolPartialTitle(currentToolName, accInputJson) });
             }
             break;
           }
 
-          case "content_block_delta":
-            switch (event.delta.type) {
-              case "text_delta":
-                accText += event.delta.text;
-                if (currentTextBlockId === undefined) {
-                  currentTextBlockId = tui.addBlock({
-                    role: "assistant",
-                    content: accText,
-                  });
-                } else {
-                  tui.updateBlock(currentTextBlockId, accText);
-                }
-                tui.setStatus("Streaming response");
-                break;
-
-              case "input_json_delta": {
-                accInputJson += event.delta.partial_json;
-                if (currentToolUseId && currentToolName) {
-                  const id = ensureToolBlock(toolBlocks, currentToolUseId, currentToolName);
-                  tui.updateBlock(id, { title: visualizeToolPartialTitle(currentToolName, accInputJson) });
-                }
-                break;
-              }
-            }
-            break;
-
-          case "content_block_stop":
-            assert(event.index === currentContentBlockIndex);
-            currentContentBlockIndex = -1;
+          case "block_stop": {
             currentTextBlockId = undefined;
             currentToolUseId = undefined;
             currentToolName = undefined;
             accInputJson = "";
             accText = "";
             break;
+          }
         }
       }
 
       const response = await stream.finalMessage();
-      // The API's input_tokens, cache_creation_input_tokens, and
-      // cache_read_input_tokens together represent the total input tokens
-      // for the *current* request (the full conversation context).
-      // We store the latest values (not cumulative) so the context gauge
-      // reflects the actual current context window usage.
-      lastCacheReadTokens = response.usage.cache_read_input_tokens ?? 0;
-      lastCacheCreationTokens = response.usage.cache_creation_input_tokens ?? 0;
-      lastInputTokens =
-        response.usage.input_tokens +
-        lastCacheCreationTokens +
-        lastCacheReadTokens;
-      lastOutputTokens = response.usage.output_tokens;
 
-      // Accumulate cost for this API call
+      // Update usage tracking
+      lastCacheReadTokens = response.usage.cacheReadTokens;
+      lastCacheCreationTokens = response.usage.cacheCreationTokens;
+      lastInputTokens = response.usage.inputTokens;
+      lastOutputTokens = response.usage.outputTokens;
+
       accumulatedCost += computeCallCost(
-        currentModel,
-        response.usage.input_tokens,
-        lastCacheCreationTokens,
-        lastCacheReadTokens,
-        lastOutputTokens,
+        modelConfig,
+        // For cost: use inputTokens minus cache tokens for the base input cost
+        response.usage.inputTokens - response.usage.cacheCreationTokens - response.usage.cacheReadTokens,
+        response.usage.cacheCreationTokens,
+        response.usage.cacheReadTokens,
+        response.usage.outputTokens,
       );
 
       updateContextInfo();
-      messages.push({ role: "assistant", content: response.content });
+
+      // Push assistant message to conversation
+      const assistantMsg: AssistantMessage = {
+        role: "assistant",
+        content: response.content,
+      };
+      messages.push(assistantMsg);
       assistantMessagePushed = true;
 
-      // Collect all tool_use IDs from this response
+      // Collect tool_use IDs
       const allToolUseIds = response.content
-        .filter((block): block is Anthropic.ToolUseBlock => block.type === "tool_use")
+        .filter((block): block is ContentBlock & { type: "tool_use" } => block.type === "tool_use")
         .map((block) => block.id);
       pendingToolUseIds = [...allToolUseIds];
 
+      // Execute tools
       for (const contentBlock of response.content) {
-        if (contentBlock.type === "text") {
-          continue;
-        }
+        if (contentBlock.type === "text") continue;
 
-        if (contentBlock.type !== "tool_use") {
-          tui.addBlock({
-            role: "error",
-            title: "Unhandled content block",
-            content: JSON.stringify(contentBlock, null, 2),
-          });
-          continue;
-        }
+        if (contentBlock.type !== "tool_use") continue;
 
         const toolToExecute = tools.find((tool) => tool.name === contentBlock.name);
         if (!toolToExecute) {
@@ -475,17 +433,17 @@ async function prompt(userMessage: string) {
             content: errorText,
             state: "error",
           });
-          messages.push({
+
+          const toolResultMsg: UserMessage = {
             role: "user",
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: contentBlock.id,
-                is_error: true,
-                content: [{ type: "text", text: `Input did not match schema: ${JSON.stringify(inputParseResult.error.issues)}` }],
-              },
-            ],
-          });
+            content: [{
+              type: "tool_result",
+              tool_use_id: contentBlock.id,
+              is_error: true,
+              content: [{ type: "text", text: `Input did not match schema: ${JSON.stringify(inputParseResult.error.issues)}` }],
+            }],
+          };
+          messages.push(toolResultMsg);
           pendingToolUseIds = pendingToolUseIds.filter((id) => id !== contentBlock.id);
           continue;
         }
@@ -500,40 +458,42 @@ async function prompt(userMessage: string) {
             content: showContent ? formatToolResultBody(toolOutput) : "",
             state: toolOutput.is_error ? "error" : "done",
           });
-          messages.push({
+
+          const toolResultMsg: UserMessage = {
             role: "user",
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: contentBlock.id,
-                content: toolOutput.content,
-                ...(toolOutput.is_error && { is_error: true }),
-              },
-            ],
-          });
+            content: [{
+              type: "tool_result",
+              tool_use_id: contentBlock.id,
+              content: toolOutput.content
+                .filter((p): p is { type: "text"; text: string } => p.type === "text")
+                .map((p) => ({ type: "text" as const, text: p.text })),
+              ...(toolOutput.is_error && { is_error: true }),
+            }],
+          };
+          messages.push(toolResultMsg);
           pendingToolUseIds = pendingToolUseIds.filter((id) => id !== contentBlock.id);
         } catch (error: unknown) {
           if (isAbortError(error)) throw error;
           const errorText = formatError(error);
           tui.updateBlock(blockId, { content: errorText, state: "error" });
-          messages.push({
+
+          const toolResultMsg: UserMessage = {
             role: "user",
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: contentBlock.id,
-                is_error: true,
-                content: [{ type: "text", text: errorText }],
-              },
-            ],
-          });
+            content: [{
+              type: "tool_result",
+              tool_use_id: contentBlock.id,
+              is_error: true,
+              content: [{ type: "text", text: errorText }],
+            }],
+          };
+          messages.push(toolResultMsg);
           pendingToolUseIds = pendingToolUseIds.filter((id) => id !== contentBlock.id);
         } finally {
           refreshCwd();
         }
       }
 
-      if (response.stop_reason === "tool_use") {
+      if (response.stopReason === "tool_use") {
         assistantMessagePushed = false;
         pendingToolUseIds = [];
         continue;
@@ -551,25 +511,19 @@ async function prompt(userMessage: string) {
       }
 
       if (assistantMessagePushed && pendingToolUseIds.length > 0) {
-        // Push synthetic tool_results for any outstanding tool_use IDs
-        // to keep the messages array valid for the API
         for (const toolUseId of pendingToolUseIds) {
-          messages.push({
+          const toolResultMsg: UserMessage = {
             role: "user",
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: toolUseId,
-                is_error: true,
-                content: [{ type: "text", text: "Cancelled by user" }],
-              },
-            ],
-          });
+            content: [{
+              type: "tool_result",
+              tool_use_id: toolUseId,
+              is_error: true,
+              content: [{ type: "text", text: "Cancelled by user" }],
+            }],
+          };
+          messages.push(toolResultMsg);
         }
       } else if (!assistantMessagePushed) {
-        // We were still streaming (no assistant message pushed yet).
-        // Remove the user message we pushed at the top of prompt() so
-        // the conversation stays clean.
         messages.pop();
       }
 
@@ -589,36 +543,6 @@ async function prompt(userMessage: string) {
 async function main() {
   tui.start();
   updateContextInfo();
-  // tui.addBlock({
-  //   role: "assistant",
-  //   title: "Agento",
-  //   content: welcomeMessageContent,
-  // });
-  // tui.addBlock({
-  //   role: "user",
-  //   content: "This is some user message",
-  // });
-  // tui.addBlock({
-  //   role: "assistant",
-  //   content: "Let me check some files."
-  // })
-  // tui.addBlock({
-  //   role: "tool",
-  //   title: "bash: something something",
-  //   content: "apple\nbanana\norange"
-  // })
-  // tui.addBlock({
-  //   role: "tool",
-  //   title: "read: README.md",
-  //   state: "done",
-  //   content: "",
-  // })
-  // tui.addBlock({
-  //   role: "tool",
-  //   title: "read: AGENTS.md",
-  //   state: "done",
-  //   content: "",
-  // })
 }
 
 process.on("uncaughtException", (error: unknown) => {

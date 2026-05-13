@@ -14,6 +14,9 @@
     "app.ts",
     "tool.ts",
     "tui.ts",
-    "input.ts"
+    "input.ts",
+    "provider.ts",
+    "providers/anthropic.ts",
+    "providers/opencode-zen.ts"
   ]
 }

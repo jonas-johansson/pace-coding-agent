@@ -633,3 +633,17 @@ function makeAnthropicToolsFromCustomTools() {
 }
 
 export const toolsTransformedToAnthropicStyle: Anthropic.Tool[] = makeAnthropicToolsFromCustomTools();
+
+import type { ToolDefinition } from "./provider";
+
+/**
+ * Provider-agnostic tool definitions. Used by the provider abstraction layer
+ * so each provider can serialise tools into its own API format.
+ */
+export function getProviderToolDefinitions(): ToolDefinition[] {
+  return tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: z.toJSONSchema(t.inputSchema) as Record<string, unknown>,
+  }));
+}
