@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { z } from "zod";
 import { readFile, writeFile, mkdir } from "fs/promises"
+import { homedir } from "os";
 import { spawn } from "child_process";
 import { parse } from "partial-json";
 import { resolve, relative, dirname } from "path";
@@ -125,12 +126,23 @@ function formatToolOutput(toolOutput: ToolOutput) {
 }
 
 /**
- * Normalize a file path for display: resolve it against cwd, then make it
- * relative so that both `./tool.ts` and `/home/user/project/tool.ts` are
- * displayed as `tool.ts`.
+ * Expand leading `~` in paths the same way users expect from shells.
+ * Node's fs APIs do not do this automatically, so without this helper a path
+ * like `~/Downloads/file.md` would create a local `~` directory under cwd.
+ */
+function expandHomePath(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));
+  return path;
+}
+
+/**
+ * Normalize a file path for display: expand `~`, resolve it against cwd, then
+ * make it relative so that both `./tool.ts` and `/home/user/project/tool.ts`
+ * are displayed as `tool.ts`.
  */
 function normalizePath(path: string): string {
-  return relative(process.cwd(), resolve(path)) || ".";
+  return relative(process.cwd(), resolve(expandHomePath(path))) || ".";
 }
 
 /** Maximum number of lines returned per read call when no explicit limit is provided. */
@@ -165,7 +177,8 @@ const readTool = Tool({
   showContent: false,
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
-    const fullText = await readFile(input.path, 'utf8');
+    const filePath = expandHomePath(input.path);
+    const fullText = await readFile(filePath, 'utf8');
     const allLines = fullText.split("\n");
     const totalLines = allLines.length;
 
@@ -231,8 +244,9 @@ const writeTool = Tool({
   showContent: false,
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
-    await mkdir(dirname(input.path), { recursive: true });
-    await writeFile(input.path, input.content);
+    const filePath = expandHomePath(input.path);
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, input.content);
     return {
       content: [{ type: "text", text: `Wrote file` }]
     }
@@ -252,9 +266,10 @@ const editTool = Tool({
   showContent: false,
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
-    const oldFileData = await readFile(input.path, 'utf8');
+    const filePath = expandHomePath(input.path);
+    const oldFileData = await readFile(filePath, 'utf8');
     const newFileData = oldFileData.replaceAll(input.oldText, input.newText);
-    await writeFile(input.path, newFileData);
+    await writeFile(filePath, newFileData);
     return {
       content: [{ type: "text", text: `Edited file` }]
     }
