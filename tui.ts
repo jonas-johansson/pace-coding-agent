@@ -314,6 +314,11 @@ export class Tui {
     this.selection = undefined;
     this.selecting = false;
     this.selectionMoved = false;
+    // The last rendered frame may contain highlighted selection spans while
+    // the underlying raw line references are unchanged. Invalidate the raw
+    // diff cache so the next render compares/repaints those rows without the
+    // selection highlight instead of taking the no-selection fast path.
+    this.previousRawLines = [];
     this.requestRender();
   }
 
