@@ -1,9 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { z } from "zod";
-import { readFile, writeFile } from "fs/promises"
+import { readFile, writeFile, mkdir } from "fs/promises"
 import { spawn } from "child_process";
 import { parse } from "partial-json";
-import { resolve, relative } from "path";
+import { resolve, relative, dirname } from "path";
 import TurndownService from "turndown";
 
 function throwIfAborted(signal?: AbortSignal) {
@@ -226,6 +226,7 @@ const writeTool = Tool({
   showContent: false,
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
+    await mkdir(dirname(input.path), { recursive: true });
     await writeFile(input.path, input.content);
     return {
       content: [{ type: "text", text: `Wrote file` }]
