@@ -13,6 +13,13 @@ export type TextBlock = {
   text: string;
 };
 
+export type ImageBlock = {
+  type: "image";
+  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+  /** Base64-encoded image data. */
+  data: string;
+};
+
 export type ToolUseBlock = {
   type: "tool_use";
   id: string;
@@ -40,7 +47,7 @@ export type ToolResultContent = {
 
 export type UserMessage = {
   role: "user";
-  content: (TextBlock | ToolResultContent)[];
+  content: (TextBlock | ImageBlock | ToolResultContent)[];
 };
 
 export type AssistantMessage = {
@@ -142,6 +149,7 @@ export type ModelConfig = {
   provider: "anthropic" | "opencode-zen" | "openai";
   contextWindow: number;
   maxOutputTokens: number;
+  supportsImages: boolean;
   pricing: {
     inputPerMTok: number;
     cacheWritePerMTok: number;
@@ -156,6 +164,7 @@ export const MODELS: Record<string, ModelConfig> = {
     provider: "anthropic",
     contextWindow: 200_000,
     maxOutputTokens: 16_000,
+    supportsImages: true,
     pricing: {
       inputPerMTok: 1,
       cacheWritePerMTok: 1.25,
@@ -168,6 +177,7 @@ export const MODELS: Record<string, ModelConfig> = {
     provider: "anthropic",
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
+    supportsImages: true,
     pricing: {
       inputPerMTok: 3,
       cacheWritePerMTok: 3.75,
@@ -180,6 +190,7 @@ export const MODELS: Record<string, ModelConfig> = {
     provider: "anthropic",
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
+    supportsImages: true,
     pricing: {
       inputPerMTok: 5,
       cacheWritePerMTok: 6.25,
@@ -192,6 +203,7 @@ export const MODELS: Record<string, ModelConfig> = {
     provider: "opencode-zen",
     contextWindow: 262_144,
     maxOutputTokens: 32_000,
+    supportsImages: true,
     pricing: {
       inputPerMTok: 0.95,
       cacheWritePerMTok: 0,
@@ -204,6 +216,7 @@ export const MODELS: Record<string, ModelConfig> = {
     provider: "openai",
     contextWindow: 1_050_000,
     maxOutputTokens: 128_000,
+    supportsImages: true,
     pricing: {
       inputPerMTok: 5.00,
       cacheWritePerMTok: 0,

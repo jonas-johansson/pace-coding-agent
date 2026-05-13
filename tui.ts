@@ -149,7 +149,9 @@ export class Tui {
   private rawFrameRows = 0;
   private screenLinesDirty = true;
 
-  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onEscape?: () => void; model?: string; cwd?: string } = {}) {
+  private imageCount = 0;
+
+  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; model?: string; cwd?: string } = {}) {
     this.model = options.model ?? "";
     this.cwd = options.cwd ?? "";
   }
@@ -276,6 +278,11 @@ export class Tui {
 
   setCwd(cwd: string) {
     this.cwd = cwd;
+    this.requestRender();
+  }
+
+  setImageCount(count: number) {
+    this.imageCount = count;
     this.requestRender();
   }
 
@@ -474,6 +481,13 @@ export class Tui {
 
       if (char === "\t") {
         this.options.onTab?.();
+        continue;
+      }
+
+      if (char === "\x16") {
+        void Promise.resolve(this.options.onPasteImage?.()).catch(() => {
+          // Swallow here; app-level handler is responsible for user-visible status.
+        });
         continue;
       }
 
@@ -1399,8 +1413,9 @@ export class Tui {
   private renderStatusLine(columns: number, maxScroll: number) {
     const spinner = this.running ? `${SPINNER_FRAMES[this.spinnerFrame]} ` : "";
     const statusText = !this.running && (!this.status || this.status === "idle") ? "" : this.status || "idle";
-    const scrollText = this.scrollOffset > 0 ? `${statusText ? " | " : ""}scroll ${this.scrollOffset}/${maxScroll} | End latest` : "";
-    const leftText = `${spinner}${statusText}${scrollText}`;
+    const imageText = this.imageCount > 0 ? `${statusText ? " | " : ""}📎 ${this.imageCount} image${this.imageCount === 1 ? "" : "s"}` : "";
+    const scrollText = this.scrollOffset > 0 ? `${statusText || imageText ? " | " : ""}scroll ${this.scrollOffset}/${maxScroll} | End latest` : "";
+    const leftText = `${spinner}${statusText}${imageText}${scrollText}`;
     const costText = this.cost > 0 ? `  ${formatCost(this.cost)}  ` : "";
     const contextText = this.contextInfo ? `  ${formatContextInfo(this.contextInfo)}  ` : "";
     const modelText = this.model ? `  ${this.model}  ` : "";

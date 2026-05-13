@@ -1,6 +1,7 @@
-import { readFile } from "fs/promises";
+import { readFile, stat } from "fs/promises";
+import { existsSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { join, resolve, extname } from "path";
 import { Tui } from "./tui";
 import {
   tools,
@@ -19,6 +20,7 @@ import type {
   ToolResultContent,
   UserMessage,
   AssistantMessage,
+  ImageBlock,
 } from "./provider";
 import {
   MODELS,
@@ -31,6 +33,7 @@ import {
 import { AnthropicProvider } from "./providers/anthropic";
 import { OpenCodeZenProvider } from "./providers/opencode-zen";
 import { OpenAIProvider } from "./providers/openai";
+import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
 
 /**
  * Attempts to read AGENTS.md from the current working directory.
@@ -84,7 +87,7 @@ function cancelPrompt() {
   currentAbortController.abort();
 }
 
-const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, onEscape: cancelPrompt, model: DEFAULT_MODEL_ID, cwd: process.cwd() });
+const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, onEscape: cancelPrompt, onPasteImage: handlePasteImage, model: DEFAULT_MODEL_ID, cwd: process.cwd() });
 
 let promptRunning = false;
 let currentAbortController: AbortController | null = null;
@@ -97,6 +100,80 @@ let accumulatedCost = 0;
 // ── Conversation state (provider-agnostic) ───────────────────────────────────
 
 const messages: ProviderMessage[] = [];
+
+// ── Image attachment state ───────────────────────────────────────────────────
+
+type ImageAttachment = {
+  mediaType: SupportedImageMediaType;
+  data: string; // base64
+  rawSize: number; // raw bytes before base64
+  label: string; // e.g. "clipboard-1", "screenshot.png"
+};
+
+let pendingImages: ImageAttachment[] = [];
+let clipboardCounter = 0;
+let pasteInFlight = false;
+
+/** Maximum raw bytes per image (Anthropic binding constraint). */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** Anthropic total request limit in bytes. */
+const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
+
+/** Image file extensions we recognize. */
+const IMAGE_EXTENSIONS: Record<string, SupportedImageMediaType> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+/** Pattern matching @image(<path>) references in user input. */
+const IMAGE_REF_PATTERN = /@image\(([^)]+)\)/g;
+
+/** Pattern matching bare image file paths at word boundaries. */
+const BARE_IMAGE_PATH_PATTERN = /(?:^|\s)((?:\.{0,2}\/|~\/)[^\s]+\.(?:jpg|jpeg|png|gif|webp))(?=\s|$)/gi;
+
+function estimateBase64Size(rawBytes: number): number {
+  return Math.ceil(rawBytes / 3) * 4;
+}
+
+function expandHomePath(p: string): string {
+  if (p.startsWith("~/") || p === "~") {
+    return join(homedir(), p.slice(1));
+  }
+  return p;
+}
+
+/** Estimate total base64 image payload already present in the conversation. */
+function estimateExistingImagePayload(): number {
+  let total = 0;
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      for (const block of msg.content) {
+        if (block.type === "image") {
+          total += block.data.length;
+        }
+      }
+    }
+  }
+  return total;
+}
+
+/** Estimate total pending + new image payload in base64 bytes. */
+function estimatePendingImagePayload(): number {
+  let total = 0;
+  for (const img of pendingImages) {
+    total += estimateBase64Size(img.rawSize);
+  }
+  return total;
+}
+
+function mimeFromExtension(filePath: string): SupportedImageMediaType | null {
+  const ext = extname(filePath).toLowerCase();
+  return IMAGE_EXTENSIONS[ext] ?? null;
+}
 
 function computeCallCost(
   config: ModelConfig,
@@ -170,6 +247,9 @@ function handleCommand(command: string): boolean {
       lastCacheReadTokens = 0;
       lastCacheCreationTokens = 0;
       accumulatedCost = 0;
+      pendingImages = [];
+      clipboardCounter = 0;
+      tui.setImageCount(0);
       tui.clearBlocks();
       updateContextInfo();
       return true;
@@ -204,6 +284,163 @@ function handleCommand(command: string): boolean {
       tui.addBlock({ role: "error", title: "Unknown command", content: `Unknown command: ${name}` });
       return true;
   }
+}
+
+async function handlePasteImage(): Promise<void> {
+  if (pasteInFlight) return;
+  pasteInFlight = true;
+
+  try {
+    const clipboardImage = await readClipboardImage();
+    if (!clipboardImage) {
+      // No image on clipboard — do nothing silently
+      return;
+    }
+
+    if (clipboardImage.data.length > MAX_IMAGE_BYTES) {
+      tui.setStatus("Image too large (max 5 MB)");
+      return;
+    }
+
+    const base64Data = clipboardImage.data.toString("base64");
+    const encodedSize = base64Data.length;
+    const existingPayload = estimateExistingImagePayload();
+    const pendingPayload = estimatePendingImagePayload();
+
+    if (existingPayload + pendingPayload + encodedSize > MAX_REQUEST_BYTES) {
+      tui.setStatus("Total image payload too large — consider /new");
+      return;
+    }
+
+    clipboardCounter += 1;
+    const attachment: ImageAttachment = {
+      mediaType: clipboardImage.mediaType,
+      data: base64Data,
+      rawSize: clipboardImage.data.length,
+      label: `clipboard-${clipboardCounter}`,
+    };
+
+    pendingImages.push(attachment);
+    tui.setImageCount(pendingImages.length);
+  } catch {
+    // Clipboard subprocess failure — swallow silently
+  } finally {
+    pasteInFlight = false;
+  }
+}
+
+type ParsedUserInput = {
+  displayText: string;
+  contentBlocks: (ImageBlock | { type: "text"; text: string })[];
+  error?: string;
+};
+
+async function parseUserInput(raw: string): Promise<ParsedUserInput> {
+  const images: ImageAttachment[] = [...pendingImages];
+  let displayText = raw;
+  let modelText = raw;
+
+  // Process @image(...) references
+  const imageRefMatches = Array.from(raw.matchAll(IMAGE_REF_PATTERN));
+  for (const match of imageRefMatches) {
+    const rawPath = match[1].trim();
+    const filePath = resolve(expandHomePath(rawPath));
+    const mime = mimeFromExtension(filePath);
+
+    if (!mime) {
+      return { displayText: raw, contentBlocks: [], error: `Unsupported image format: ${rawPath}` };
+    }
+
+    if (!existsSync(filePath)) {
+      return { displayText: raw, contentBlocks: [], error: `Image not found: ${rawPath}` };
+    }
+
+    try {
+      const fileStat = await stat(filePath);
+      if (fileStat.size > MAX_IMAGE_BYTES) {
+        return { displayText: raw, contentBlocks: [], error: `Image too large: ${rawPath} (max 5 MB)` };
+      }
+
+      const data = await readFile(filePath);
+      const label = rawPath.split("/").pop() ?? rawPath;
+      images.push({
+        mediaType: mime,
+        data: data.toString("base64"),
+        rawSize: data.length,
+        label,
+      });
+
+      // Remove @image(...) from model text, replace with label in display
+      modelText = modelText.replace(match[0], "");
+      displayText = displayText.replace(match[0], `[Image: ${label}]`);
+    } catch {
+      return { displayText: raw, contentBlocks: [], error: `Failed to read image: ${rawPath}` };
+    }
+  }
+
+  // Process bare image file paths
+  const bareMatches = Array.from(modelText.matchAll(BARE_IMAGE_PATH_PATTERN));
+  for (const match of bareMatches) {
+    const rawPath = match[1].trim();
+    const filePath = resolve(expandHomePath(rawPath));
+    const mime = mimeFromExtension(filePath);
+
+    if (!mime || !existsSync(filePath)) {
+      continue; // Not a valid image path — leave as text
+    }
+
+    try {
+      const fileStat = await stat(filePath);
+      if (fileStat.size > MAX_IMAGE_BYTES) {
+        return { displayText: raw, contentBlocks: [], error: `Image too large: ${rawPath} (max 5 MB)` };
+      }
+
+      const data = await readFile(filePath);
+      const label = rawPath.split("/").pop() ?? rawPath;
+      images.push({
+        mediaType: mime,
+        data: data.toString("base64"),
+        rawSize: data.length,
+        label,
+      });
+      // Bare paths are left in model text — just attach the image in addition
+    } catch {
+      // Silently skip unreadable bare paths
+    }
+  }
+
+  // Check aggregate size
+  const existingPayload = estimateExistingImagePayload();
+  let newPayload = 0;
+  for (const img of images) {
+    newPayload += estimateBase64Size(img.rawSize);
+  }
+  if (existingPayload + newPayload > MAX_REQUEST_BYTES) {
+    return { displayText: raw, contentBlocks: [], error: "Total image payload too large. Start /new or remove images." };
+  }
+
+  // Build content blocks — images before text (Anthropic recommendation)
+  const contentBlocks: (ImageBlock | { type: "text"; text: string })[] = [];
+
+  for (const img of images) {
+    contentBlocks.push({
+      type: "image" as const,
+      mediaType: img.mediaType,
+      data: img.data,
+    });
+  }
+
+  // Add display labels for clipboard images
+  for (const img of pendingImages) {
+    displayText = `[Image: ${img.label}] ${displayText}`;
+  }
+
+  const cleanedModelText = modelText.replace(/\s+/g, " ").trim();
+  if (cleanedModelText) {
+    contentBlocks.push({ type: "text" as const, text: cleanedModelText });
+  }
+
+  return { displayText: displayText.trim(), contentBlocks };
 }
 
 function ensureToolBlock(
@@ -377,7 +614,52 @@ async function handleUserInput(userMessage: string) {
   tui.setRunning(true, "thinking");
 
   try {
-    await prompt(userMessage);
+    // Parse user input for images
+    const parsed = await parseUserInput(userMessage);
+
+    if (parsed.error) {
+      tui.addBlock({ role: "error", title: "Error", content: parsed.error });
+      // Keep pending images so the user can fix text or change model
+      promptRunning = false;
+      tui.setRunning(false, "idle");
+      return;
+    }
+
+    const hasImages = parsed.contentBlocks.some((b) => b.type === "image");
+
+    // Check model vision capability
+    if (hasImages && !currentModelConfig().supportsImages) {
+      tui.addBlock({
+        role: "error",
+        title: "Error",
+        content: `Current model does not support image input: ${currentModelId}`,
+      });
+      // Keep pending images so the user can switch model
+      promptRunning = false;
+      tui.setRunning(false, "idle");
+      return;
+    }
+
+    // Check existing image payload in conversation history
+    if (hasImages) {
+      const existingPayload = estimateExistingImagePayload();
+      if (existingPayload > MAX_REQUEST_BYTES * 0.8) {
+        tui.addBlock({
+          role: "error",
+          title: "Error",
+          content: "Conversation image payload is too large. Start /new or use fewer images.",
+        });
+        promptRunning = false;
+        tui.setRunning(false, "idle");
+        return;
+      }
+    }
+
+    // Clear pending images on successful parse
+    pendingImages = [];
+    tui.setImageCount(0);
+
+    await prompt(parsed.displayText, parsed.contentBlocks);
   } catch (error: unknown) {
     tui.addBlock({ role: "error", title: "Error", content: formatError(error) });
   } finally {
@@ -386,12 +668,17 @@ async function handleUserInput(userMessage: string) {
   }
 }
 
-async function prompt(userMessage: string) {
-  tui.addBlock({ role: "user", content: userMessage });
+async function prompt(
+  displayText: string,
+  contentBlocks?: (ImageBlock | { type: "text"; text: string })[],
+) {
+  tui.addBlock({ role: "user", content: displayText });
 
   const userMsg: UserMessage = {
     role: "user",
-    content: [{ type: "text", text: userMessage }],
+    content: contentBlocks && contentBlocks.length > 0
+      ? contentBlocks
+      : [{ type: "text", text: displayText }],
   };
   messages.push(userMsg);
 

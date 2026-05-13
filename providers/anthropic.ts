@@ -24,6 +24,16 @@ function toAnthropicMessages(messages: ProviderMessage[]): Anthropic.MessagePara
         if (block.type === "text") {
           return { type: "text" as const, text: block.text };
         }
+        if (block.type === "image") {
+          return {
+            type: "image" as const,
+            source: {
+              type: "base64" as const,
+              media_type: block.mediaType,
+              data: block.data,
+            },
+          };
+        }
         // tool_result
         return {
           type: "tool_result" as const,

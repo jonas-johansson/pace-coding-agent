@@ -20,9 +20,13 @@ const DEFAULT_BASE_URL = "https://opencode.ai/zen/v1";
 
 // ── OpenAI-compatible types (minimal) ────────────────────────────────────────
 
+type OaiContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: string } };
+
 type OaiMessage =
   | { role: "system"; content: string }
-  | { role: "user"; content: string }
+  | { role: "user"; content: string | OaiContentPart[] }
   | { role: "assistant"; content?: string | null; tool_calls?: OaiToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
@@ -79,14 +83,25 @@ function toOaiMessages(system: string, messages: ProviderMessage[]): OaiMessage[
 
   for (const msg of messages) {
     if (msg.role === "user") {
-      // Flatten user content. Text blocks become a single string.
-      // Tool results become separate role:"tool" messages.
-      const textParts: string[] = [];
+      // Flatten user content. Text blocks become a single string (or
+      // multi-part content when images are present). Tool results become
+      // separate role:"tool" messages.
+      const contentParts: OaiContentPart[] = [];
       const toolResults: { tool_call_id: string; content: string; is_error?: boolean }[] = [];
+      let hasImages = false;
 
       for (const block of msg.content) {
         if (block.type === "text") {
-          textParts.push(block.text);
+          contentParts.push({ type: "text", text: block.text });
+        } else if (block.type === "image") {
+          hasImages = true;
+          contentParts.push({
+            type: "image_url",
+            image_url: {
+              url: `data:${block.mediaType};base64,${block.data}`,
+              detail: "auto",
+            },
+          });
         } else {
           // tool_result
           const text = block.content.map((p) => p.text).join("\n");
@@ -97,8 +112,18 @@ function toOaiMessages(system: string, messages: ProviderMessage[]): OaiMessage[
         }
       }
 
-      if (textParts.length > 0) {
-        result.push({ role: "user", content: textParts.join("\n") });
+      if (contentParts.length > 0) {
+        if (hasImages) {
+          // Multi-part content when images are present
+          result.push({ role: "user", content: contentParts });
+        } else {
+          // Plain string for backward compatibility when no images
+          const textContent = contentParts
+            .filter((p): p is { type: "text"; text: string } => p.type === "text")
+            .map((p) => p.text)
+            .join("\n");
+          result.push({ role: "user", content: textContent });
+        }
       }
 
       for (const tr of toolResults) {

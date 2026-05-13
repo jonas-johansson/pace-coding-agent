@@ -16,6 +16,7 @@
     "tui.ts",
     "input.ts",
     "provider.ts",
+    "clipboard.ts",
     "providers/anthropic.ts",
     "providers/opencode-zen.ts",
     "providers/openai.ts"

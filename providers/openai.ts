@@ -63,14 +63,34 @@ function toResponsesInput(messages: ProviderMessage[]): ResponseInputItem[] {
 
   for (const msg of messages) {
     if (msg.role === "user") {
+      // Build a single multi-part user message for text/image blocks,
+      // then emit separate function_call_output items for tool results.
+      const parts: Array<
+        | { type: "input_text"; text: string }
+        | { type: "input_image"; image_url: string; detail: "auto" }
+      > = [];
+
       for (const block of msg.content) {
         if (block.type === "text") {
-          items.push({
-            role: "user",
-            content: block.text,
+          parts.push({ type: "input_text", text: block.text });
+        } else if (block.type === "image") {
+          parts.push({
+            type: "input_image",
+            image_url: `data:${block.mediaType};base64,${block.data}`,
+            detail: "auto",
           });
         } else {
-          // tool_result → function_call_output
+          // tool_result → flush any accumulated parts, then emit function_call_output
+          if (parts.length > 0) {
+            items.push({
+              role: "user",
+              content: parts.length === 1 && parts[0].type === "input_text"
+                ? parts[0].text
+                : parts as unknown as string,
+            } as ResponseInputItem);
+            parts.length = 0;
+          }
+
           const text = block.content.map((p) => p.text).join("\n");
           items.push({
             type: "function_call_output",
@@ -78,6 +98,16 @@ function toResponsesInput(messages: ProviderMessage[]): ResponseInputItem[] {
             output: block.is_error ? `Error: ${text}` : text,
           });
         }
+      }
+
+      // Flush remaining parts
+      if (parts.length > 0) {
+        items.push({
+          role: "user",
+          content: parts.length === 1 && parts[0].type === "input_text"
+            ? parts[0].text
+            : parts as unknown as string,
+        } as ResponseInputItem);
       }
     } else {
       // Assistant message — prefer raw output items if available
