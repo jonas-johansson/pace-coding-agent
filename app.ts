@@ -1,4 +1,5 @@
 import { readFile } from "fs/promises";
+import { homedir } from "os";
 import { join } from "path";
 import { Tui } from "./tui";
 import {
@@ -43,6 +44,11 @@ async function loadAgentsFile(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+function formatCwd(cwd: string): string {
+  const home = homedir();
+  return cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd;
 }
 
 // ── Provider instances (lazily created) ──────────────────────────────────────
@@ -400,7 +406,7 @@ async function prompt(userMessage: string) {
 
   const agentsFileContents = await loadAgentsFile();
 
-  const baseSystem = `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${process.cwd()}\n\nCurrent date (YYYY-MM-DD): ${new Date().toISOString().split("T")[0]}\n\nWhen operating on files or directories in the current working directory, use relative paths rather than absolute paths.\n\nWhen listing files, use \`/bin/ls -1\` to show only filenames (one per line, no icons or extra info). Only add flags like \`-la\` if the user explicitly asks for more details.`;
+  const baseSystem = `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${formatCwd(process.cwd())}\n\nCurrent date (YYYY-MM-DD): ${new Date().toISOString().split("T")[0]}\n\nWhen operating on files or directories in the current working directory, use relative paths rather than absolute paths.\n\nWhen listing files, use \`/bin/ls -1\` to show only filenames (one per line, no icons or extra info). Only add flags like \`-la\` if the user explicitly asks for more details.`;
   const systemText = agentsFileContents
     ? `${baseSystem}\n\n---\n\n# Project-specific instructions (from AGENTS.md)\n\n${agentsFileContents}`
     : baseSystem;

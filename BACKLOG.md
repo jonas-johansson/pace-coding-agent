@@ -1,7 +1,3 @@
-Add parallel tool call support
-
-Add date to system prompt
-
 CTRL+T to change thinking level/reasoning effort or whatever it's called: xhigh, max, and all that stuff.
 
 Up/down to bring back previously sent user messages. Down on the last one goes to cleared. If the user moves the cursor left or right or modifies the text then the text is "applied" and the up/down user message history is deactivated.
