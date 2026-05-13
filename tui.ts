@@ -110,6 +110,8 @@ export class Tui {
   private input = "";
   private inputCursor = 0;
   private inputScrollRow = 0;
+  private inputHistory: string[] = [];
+  private historyIndex: number | undefined;
   private nextBlockId = 1;
   private running = false;
   private status = "idle";
@@ -324,6 +326,62 @@ export class Tui {
     this.requestRender();
   }
 
+  private deactivateHistory() {
+    this.historyIndex = undefined;
+  }
+
+  private applyHistoryInput() {
+    this.deactivateHistory();
+  }
+
+  private clearInput() {
+    this.input = "";
+    this.inputCursor = 0;
+    this.inputScrollRow = 0;
+    this.deactivateHistory();
+  }
+
+  private recallHistory(index: number) {
+    this.historyIndex = index;
+    this.input = this.inputHistory[index] ?? "";
+    this.inputCursor = Array.from(this.input).length;
+    this.inputScrollRow = 0;
+    this.requestRender();
+  }
+
+  private navigateHistoryUp() {
+    if (!this.inputHistory.length) {
+      return false;
+    }
+
+    if (this.historyIndex === undefined) {
+      if (this.input.length !== 0) {
+        return false;
+      }
+
+      this.recallHistory(this.inputHistory.length - 1);
+      return true;
+    }
+
+    this.recallHistory(Math.max(0, this.historyIndex - 1));
+    return true;
+  }
+
+  private navigateHistoryDown() {
+    if (this.historyIndex === undefined) {
+      return false;
+    }
+
+    if (this.historyIndex >= this.inputHistory.length - 1) {
+      this.clearInput();
+      this.requestRender();
+      return true;
+    }
+
+    this.recallHistory(this.historyIndex + 1);
+    return true;
+  }
+
   private startSpinner() {
     if (this.spinnerTimer) {
       return;
@@ -364,9 +422,7 @@ export class Tui {
   private handleData = (data: string) => {
     if (data === "\u0003") {
       if (this.input) {
-        this.input = "";
-        this.inputCursor = 0;
-        this.inputScrollRow = 0;
+        this.clearInput();
         this.requestRender();
         return;
       }
@@ -463,13 +519,16 @@ export class Tui {
     }
 
     switch (data) {
-      // Arrow keys — cursor movement in the input field
+      // Up/Down navigate input history while a recalled history entry is active.
+      // Left/Right only move the cursor and keep history navigation active.
       case "\x1b[A":
         this.clearSelection();
+        if (this.navigateHistoryUp()) return true;
         this.moveCursorUp();
         return true;
       case "\x1b[B":
         this.clearSelection();
+        if (this.navigateHistoryDown()) return true;
         this.moveCursorDown();
         return true;
       case "\x1b[C":
@@ -542,6 +601,7 @@ export class Tui {
       // Alt+Backspace — delete word
       case "\x1b\u007f":
       case "\x1b\b":
+        this.clearSelection();
         this.deleteWord();
         return true;
       default:
@@ -554,6 +614,7 @@ export class Tui {
   }
 
   private insertCharAtCursor(char: string) {
+    this.applyHistoryInput();
     // Convert tabs to spaces for display (tabs should not appear in input)
     const charToInsert = char === "\t" ? "  " : char;
     const chars = Array.from(this.input);
@@ -569,6 +630,7 @@ export class Tui {
       return;
     }
 
+    this.applyHistoryInput();
     const chars = Array.from(this.input);
     chars.splice(this.inputCursor - 1, 1);
     this.input = chars.join("");
@@ -582,12 +644,14 @@ export class Tui {
       return;
     }
 
+    this.applyHistoryInput();
     chars.splice(this.inputCursor, 1);
     this.input = chars.join("");
     this.requestRender();
   }
 
   private clearInputBeforeCursor() {
+    this.applyHistoryInput();
     const chars = Array.from(this.input);
     this.input = chars.slice(this.inputCursor).join("");
     this.inputCursor = 0;
@@ -599,6 +663,7 @@ export class Tui {
       return;
     }
 
+    this.applyHistoryInput();
     const chars = Array.from(this.input);
     let index = this.inputCursor - 1;
 
@@ -978,9 +1043,7 @@ export class Tui {
   private submitInput() {
     const submitted = this.input.trimEnd();
     if (!submitted.trim()) {
-      this.input = "";
-      this.inputCursor = 0;
-      this.inputScrollRow = 0;
+      this.clearInput();
       this.requestRender();
       return;
     }
@@ -991,9 +1054,8 @@ export class Tui {
       return;
     }
 
-    this.input = "";
-    this.inputCursor = 0;
-    this.inputScrollRow = 0;
+    this.inputHistory.push(submitted);
+    this.clearInput();
     this.scrollOffset = 0;
     this.clearSelection();
     this.requestRender();
