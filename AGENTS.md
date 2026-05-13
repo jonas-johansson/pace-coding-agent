@@ -1,3 +1,4 @@
 - Run `npm run lint` after making changes to TypeScript files. This runs `tsc --noEmit` and should produce no errors.
 - No test suite is currently set up.
 - Use US English spelling.
+- Git commit messages should use plain imperative sentences (e.g. "Add image paste support"). Do not use Conventional Commits prefixes like `feat:`, `fix:`, `chore:`, etc.
