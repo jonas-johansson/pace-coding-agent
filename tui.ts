@@ -20,6 +20,8 @@ export type ContextInfo = {
   cacheCreationTokens?: number;
 };
 
+import { homedir } from "os";
+
 type SubmitHandler = (input: string) => void | Promise<void>;
 type SegmentStyle = "normal" | "bold" | "italic" | "code" | "heading" | "title";
 
@@ -1340,7 +1342,9 @@ export class Tui {
     const costText = this.cost > 0 ? `  ${formatCost(this.cost)}  ` : "";
     const contextText = this.contextInfo ? `  ${formatContextInfo(this.contextInfo)}  ` : "";
     const modelText = this.model ? `  ${this.model}  ` : "";
-    const cwdText = this.cwd ? `  ${this.cwd}  ` : "";
+    const home = homedir();
+    const displayCwd = this.cwd && this.cwd.startsWith(home) ? "~" + this.cwd.slice(home.length) : this.cwd;
+    const cwdText = displayCwd ? `  ${displayCwd}  ` : "";
     const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
     // These strings are plain ASCII (no ANSI), so displayWidth === .length
     const rightWidth = cwdText.length + costText.length + contextText.length + modelText.length;
