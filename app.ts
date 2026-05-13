@@ -34,6 +34,7 @@ import { AnthropicProvider } from "./providers/anthropic";
 import { OpenCodeZenProvider } from "./providers/opencode-zen";
 import { OpenAIProvider } from "./providers/openai";
 import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
+import { sendDesktopNotification } from "./notify";
 
 /**
  * Attempts to read AGENTS.md from the current working directory.
@@ -613,6 +614,8 @@ async function handleUserInput(userMessage: string) {
   promptRunning = true;
   tui.setRunning(true, "thinking");
 
+  const startTime = Date.now();
+
   try {
     // Parse user input for images
     const parsed = await parseUserInput(userMessage);
@@ -665,6 +668,10 @@ async function handleUserInput(userMessage: string) {
   } finally {
     promptRunning = false;
     tui.setRunning(false, "idle");
+    if (!tui.isFocused) {
+      const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+      sendDesktopNotification("Agento", `Agent finished in ${elapsedSec}s.`);
+    }
   }
 }
 

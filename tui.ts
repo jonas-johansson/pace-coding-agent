@@ -56,6 +56,8 @@ const SHOW_CURSOR = "\x1b[?25h";
 const CLEAR_SCREEN = "\x1b[2J";
 const ENABLE_MOUSE = "\x1b[?1002h\x1b[?1006h";
 const DISABLE_MOUSE = "\x1b[?1000l\x1b[?1002l\x1b[?1006l";
+const ENABLE_FOCUS = "\x1b[?1004h";
+const DISABLE_FOCUS = "\x1b[?1004l";
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 const ANSI_AT_START = /^\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/;
 const SGR_MOUSE_PATTERN = /\x1b\[<(\d+);(\d+);(\d+)([mM])/g;
@@ -150,6 +152,7 @@ export class Tui {
   private screenLinesDirty = true;
 
   private imageCount = 0;
+  private focused = true;
 
   constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; model?: string; cwd?: string } = {}) {
     this.model = options.model ?? "";
@@ -170,7 +173,7 @@ export class Tui {
     process.stdin.on("data", this.handleData);
     process.stdout.on("resize", this.handleResize);
     process.once("exit", this.handleExit);
-    process.stdout.write(`${CLEAR_SCREEN}${HIDE_CURSOR}${ENABLE_MOUSE}`);
+    process.stdout.write(`${CLEAR_SCREEN}${HIDE_CURSOR}${ENABLE_MOUSE}${ENABLE_FOCUS}`);
     this.render();
   }
 
@@ -187,7 +190,7 @@ export class Tui {
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }
-    process.stdout.write(`${RESET}${DISABLE_MOUSE}${SHOW_CURSOR}\n`);
+    process.stdout.write(`${RESET}${DISABLE_MOUSE}${DISABLE_FOCUS}${SHOW_CURSOR}\n`);
   }
 
   addBlock(block: Omit<RenderBlock, "id">) {
@@ -284,6 +287,10 @@ export class Tui {
   setImageCount(count: number) {
     this.imageCount = count;
     this.requestRender();
+  }
+
+  get isFocused(): boolean {
+    return this.focused;
   }
 
   toggleBlockCollapse(id: number) {
@@ -423,7 +430,7 @@ export class Tui {
   };
 
   private handleExit = () => {
-    process.stdout.write(`${RESET}${DISABLE_MOUSE}${SHOW_CURSOR}`);
+    process.stdout.write(`${RESET}${DISABLE_MOUSE}${DISABLE_FOCUS}${SHOW_CURSOR}`);
   };
 
   private handleData = (data: string) => {
@@ -618,6 +625,15 @@ export class Tui {
         this.clearSelection();
         this.deleteWord();
         return true;
+
+      // Focus reporting (?1004h)
+      case "\x1b[I":
+        this.focused = true;
+        return true;
+      case "\x1b[O":
+        this.focused = false;
+        return true;
+
       default:
         return data.startsWith("\x1b");
     }
