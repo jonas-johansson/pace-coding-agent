@@ -17,6 +17,7 @@
     "input.ts",
     "provider.ts",
     "providers/anthropic.ts",
-    "providers/opencode-zen.ts"
+    "providers/opencode-zen.ts",
+    "providers/openai.ts"
   ]
 }

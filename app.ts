@@ -27,6 +27,7 @@ import {
 } from "./provider";
 import { AnthropicProvider } from "./providers/anthropic";
 import { OpenCodeZenProvider } from "./providers/opencode-zen";
+import { OpenAIProvider } from "./providers/openai";
 
 /**
  * Attempts to read AGENTS.md from the current working directory.
@@ -46,6 +47,7 @@ async function loadAgentsFile(): Promise<string | null> {
 
 let anthropicProvider: AnthropicProvider | undefined;
 let openCodeZenProvider: OpenCodeZenProvider | undefined;
+let openAIProvider: OpenAIProvider | undefined;
 
 function getProvider(config: ModelConfig): Provider {
   switch (config.provider) {
@@ -55,6 +57,9 @@ function getProvider(config: ModelConfig): Provider {
     case "opencode-zen":
       if (!openCodeZenProvider) openCodeZenProvider = new OpenCodeZenProvider();
       return openCodeZenProvider;
+    case "openai":
+      if (!openAIProvider) openAIProvider = new OpenAIProvider();
+      return openAIProvider;
   }
 }
 
@@ -399,6 +404,9 @@ async function prompt(userMessage: string) {
       const assistantMsg: AssistantMessage = {
         role: "assistant",
         content: response.content,
+        ...(response.providerMetadata !== undefined && {
+          providerMetadata: response.providerMetadata,
+        }),
       };
       messages.push(assistantMsg);
       assistantMessagePushed = true;

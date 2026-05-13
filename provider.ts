@@ -46,6 +46,8 @@ export type UserMessage = {
 export type AssistantMessage = {
   role: "assistant";
   content: ContentBlock[];
+  /** Opaque provider-specific data, serialized as-is for session persistence. */
+  providerMetadata?: unknown;
 };
 
 export type ProviderMessage = UserMessage | AssistantMessage;
@@ -99,6 +101,8 @@ export type ProviderResponse = {
   content: ContentBlock[];
   stopReason: "end_turn" | "tool_use";
   usage: UsageInfo;
+  /** Opaque provider-specific data to carry on the AssistantMessage. */
+  providerMetadata?: unknown;
 };
 
 // ── Stream handle ────────────────────────────────────────────────────────────
@@ -133,7 +137,7 @@ export interface Provider {
 
 export type ModelConfig = {
   id: string;
-  provider: "anthropic" | "opencode-zen";
+  provider: "anthropic" | "opencode-zen" | "openai";
   contextWindow: number;
   maxOutputTokens: number;
   pricing: {
@@ -193,6 +197,18 @@ export const MODELS: Record<string, ModelConfig> = {
       outputPerMTok: 4.00,
     },
   },
+  "gpt-5.5": {
+    id: "gpt-5.5",
+    provider: "openai",
+    contextWindow: 1_050_000,
+    maxOutputTokens: 128_000,
+    pricing: {
+      inputPerMTok: 5.00,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.50,
+      outputPerMTok: 30.00,
+    },
+  },
 };
 
 export const MODEL_ALIASES: Record<string, string> = {
@@ -201,6 +217,8 @@ export const MODEL_ALIASES: Record<string, string> = {
   opus: "claude-opus-4-6",
   kimi: "kimi-k2.6",
   "k2.6": "kimi-k2.6",
+  "gpt5.5": "gpt-5.5",
+  "5.5": "gpt-5.5",
 };
 
 export const AVAILABLE_MODEL_IDS = Object.keys(MODELS);
