@@ -14,6 +14,8 @@ import type {
   ProviderMessage,
   ProviderStream,
   ContentBlock,
+  ToolUseBlock,
+  ToolResultContent,
   UserMessage,
   AssistantMessage,
 } from "./provider";
@@ -218,6 +220,112 @@ function ensureToolBlock(
   return id;
 }
 
+function isToolUseBlock(block: ContentBlock): block is ToolUseBlock {
+  return block.type === "tool_use";
+}
+
+function makeToolErrorResult(toolUseId: string, text: string): ToolResultContent {
+  return {
+    type: "tool_result",
+    tool_use_id: toolUseId,
+    is_error: true,
+    content: [{ type: "text", text }],
+  };
+}
+
+async function executeToolUseBlock(
+  contentBlock: ToolUseBlock,
+  toolBlocks: Map<string, number>,
+  signal: AbortSignal,
+): Promise<ToolResultContent> {
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+  const toolToExecute = tools.find((tool) => tool.name === contentBlock.name);
+  const blockId = ensureToolBlock(toolBlocks, contentBlock.id, contentBlock.name);
+
+  if (!toolToExecute) {
+    const errorText = `Couldn't find tool ${contentBlock.name}`;
+    tui.updateBlock(blockId, { content: errorText, state: "error" });
+    return makeToolErrorResult(contentBlock.id, errorText);
+  }
+
+  const inputParseResult = toolToExecute.inputSchema.safeParse(contentBlock.input);
+  if (!inputParseResult.success) {
+    const errorText =
+      `Input did not match schema:\n${JSON.stringify(inputParseResult.error.issues, null, 2)}\n\n` +
+      `Received input:\n${JSON.stringify(contentBlock.input, null, 2)}`;
+
+    tui.updateBlock(blockId, {
+      title: visualizeToolTitle(contentBlock.name, contentBlock.input),
+      content: errorText,
+      state: "error",
+    });
+
+    return makeToolErrorResult(
+      contentBlock.id,
+      `Input did not match schema: ${JSON.stringify(inputParseResult.error.issues)}`,
+    );
+  }
+
+  tui.updateBlock(blockId, { title: visualizeToolTitle(contentBlock.name, inputParseResult.data) });
+  tui.setStatus(`Using tool: ${contentBlock.name}`);
+
+  try {
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    const toolOutput = await toolToExecute.execute(inputParseResult.data, signal);
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    const showContent = toolToExecute.showContent !== false || toolOutput.is_error;
+    tui.updateBlock(blockId, {
+      content: showContent ? formatToolResultBody(toolOutput) : "",
+      state: toolOutput.is_error ? "error" : "done",
+    });
+
+    return {
+      type: "tool_result",
+      tool_use_id: contentBlock.id,
+      content: toolOutput.content
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => ({ type: "text" as const, text: p.text })),
+      ...(toolOutput.is_error && { is_error: true }),
+    };
+  } catch (error: unknown) {
+    if (isAbortError(error)) throw error;
+    const errorText = formatError(error);
+    tui.updateBlock(blockId, { content: errorText, state: "error" });
+    return makeToolErrorResult(contentBlock.id, errorText);
+  } finally {
+    refreshCwd();
+  }
+}
+
+async function executeToolUseBatch(
+  toolUseBlocks: ToolUseBlock[],
+  toolBlocks: Map<string, number>,
+  signal: AbortSignal,
+  onComplete: (toolUseId: string) => void,
+): Promise<ToolResultContent[]> {
+  const hasExclusiveTool = toolUseBlocks.some((contentBlock) => {
+    const toolToExecute = tools.find((tool) => tool.name === contentBlock.name);
+    return toolToExecute?.concurrency !== "safe";
+  });
+
+  const runOne = async (contentBlock: ToolUseBlock): Promise<ToolResultContent> => {
+    const result = await executeToolUseBlock(contentBlock, toolBlocks, signal);
+    onComplete(contentBlock.id);
+    return result;
+  };
+
+  if (hasExclusiveTool) {
+    const results: ToolResultContent[] = [];
+    for (const contentBlock of toolUseBlocks) {
+      results.push(await runOne(contentBlock));
+    }
+    return results;
+  }
+
+  return Promise.all(toolUseBlocks.map((contentBlock) => runOne(contentBlock)));
+}
+
 async function handleUserInput(userMessage: string) {
   if (userMessage.startsWith("/")) {
     handleCommand(userMessage.trim());
@@ -286,6 +394,7 @@ async function prompt(userMessage: string) {
   const signal = abortController.signal;
 
   let assistantMessagePushed = false;
+  let anyAssistantMessagePushed = false;
   let pendingToolUseIds: string[] = [];
   let currentToolBlocks = new Map<string, number>();
 
@@ -314,10 +423,8 @@ async function prompt(userMessage: string) {
       });
 
       let currentTextBlockId: number | undefined;
-      let currentToolUseId: string | undefined;
-      let currentToolName: string | undefined;
-      let accInputJson = "";
       let accText = "";
+      const streamingTools = new Map<string, { name: string; inputJson: string }>();
       const toolBlocks = new Map<string, number>();
       currentToolBlocks = toolBlocks;
 
@@ -329,9 +436,6 @@ async function prompt(userMessage: string) {
               role: "assistant",
               content: accText,
             });
-            currentToolUseId = undefined;
-            currentToolName = undefined;
-            accInputJson = "";
             tui.setStatus("Streaming response");
             break;
           }
@@ -351,9 +455,7 @@ async function prompt(userMessage: string) {
           }
 
           case "tool_use_start": {
-            currentToolUseId = event.id;
-            currentToolName = event.name;
-            accInputJson = "";
+            streamingTools.set(event.id, { name: event.name, inputJson: "" });
             currentTextBlockId = undefined;
             accText = "";
             ensureToolBlock(toolBlocks, event.id, event.name);
@@ -362,20 +464,22 @@ async function prompt(userMessage: string) {
           }
 
           case "tool_input_delta": {
-            accInputJson += event.partialJson;
-            if (currentToolUseId && currentToolName) {
-              const id = ensureToolBlock(toolBlocks, currentToolUseId, currentToolName);
-              tui.updateBlock(id, { title: visualizeToolPartialTitle(currentToolName, accInputJson) });
+            const state = streamingTools.get(event.id);
+            if (state) {
+              state.inputJson += event.partialJson;
+              const id = ensureToolBlock(toolBlocks, event.id, state.name);
+              tui.updateBlock(id, { title: visualizeToolPartialTitle(state.name, state.inputJson) });
             }
             break;
           }
 
           case "block_stop": {
-            currentTextBlockId = undefined;
-            currentToolUseId = undefined;
-            currentToolName = undefined;
-            accInputJson = "";
-            accText = "";
+            if (event.id) {
+              streamingTools.delete(event.id);
+            } else {
+              currentTextBlockId = undefined;
+              accText = "";
+            }
             break;
           }
         }
@@ -410,95 +514,29 @@ async function prompt(userMessage: string) {
       };
       messages.push(assistantMsg);
       assistantMessagePushed = true;
+      anyAssistantMessagePushed = true;
 
-      // Collect tool_use IDs
-      const allToolUseIds = response.content
-        .filter((block): block is ContentBlock & { type: "tool_use" } => block.type === "tool_use")
-        .map((block) => block.id);
-      pendingToolUseIds = [...allToolUseIds];
+      // Collect and execute tool calls. Results are returned as one grouped
+      // user message so every tool_use in this assistant turn is answered
+      // together, even when execution happens in parallel.
+      const toolUseBlocks = response.content.filter(isToolUseBlock);
+      pendingToolUseIds = toolUseBlocks.map((block) => block.id);
 
-      // Execute tools
-      for (const contentBlock of response.content) {
-        if (contentBlock.type === "text") continue;
+      if (toolUseBlocks.length > 0) {
+        const toolResults = await executeToolUseBatch(
+          toolUseBlocks,
+          toolBlocks,
+          signal,
+          (toolUseId) => {
+            pendingToolUseIds = pendingToolUseIds.filter((id) => id !== toolUseId);
+          },
+        );
 
-        if (contentBlock.type !== "tool_use") continue;
-
-        const toolToExecute = tools.find((tool) => tool.name === contentBlock.name);
-        if (!toolToExecute) {
-          throw new Error(`Couldn't find tool ${contentBlock.name}`);
-        }
-
-        const blockId = ensureToolBlock(toolBlocks, contentBlock.id, contentBlock.name);
-
-        const inputParseResult = toolToExecute.inputSchema.safeParse(contentBlock.input);
-        if (!inputParseResult.success) {
-          const errorText =
-            `Input did not match schema:\n${JSON.stringify(inputParseResult.error.issues, null, 2)}\n\n` +
-            `Received input:\n${JSON.stringify(contentBlock.input, null, 2)}`;
-
-          tui.updateBlock(blockId, {
-            title: visualizeToolTitle(contentBlock.name, contentBlock.input),
-            content: errorText,
-            state: "error",
-          });
-
-          const toolResultMsg: UserMessage = {
-            role: "user",
-            content: [{
-              type: "tool_result",
-              tool_use_id: contentBlock.id,
-              is_error: true,
-              content: [{ type: "text", text: `Input did not match schema: ${JSON.stringify(inputParseResult.error.issues)}` }],
-            }],
-          };
-          messages.push(toolResultMsg);
-          pendingToolUseIds = pendingToolUseIds.filter((id) => id !== contentBlock.id);
-          continue;
-        }
-
-        tui.updateBlock(blockId, { title: visualizeToolTitle(contentBlock.name, inputParseResult.data) });
-        tui.setStatus(`Using tool: ${contentBlock.name}`);
-
-        try {
-          const toolOutput = await toolToExecute.execute(inputParseResult.data, signal);
-          const showContent = toolToExecute.showContent !== false || toolOutput.is_error;
-          tui.updateBlock(blockId, {
-            content: showContent ? formatToolResultBody(toolOutput) : "",
-            state: toolOutput.is_error ? "error" : "done",
-          });
-
-          const toolResultMsg: UserMessage = {
-            role: "user",
-            content: [{
-              type: "tool_result",
-              tool_use_id: contentBlock.id,
-              content: toolOutput.content
-                .filter((p): p is { type: "text"; text: string } => p.type === "text")
-                .map((p) => ({ type: "text" as const, text: p.text })),
-              ...(toolOutput.is_error && { is_error: true }),
-            }],
-          };
-          messages.push(toolResultMsg);
-          pendingToolUseIds = pendingToolUseIds.filter((id) => id !== contentBlock.id);
-        } catch (error: unknown) {
-          if (isAbortError(error)) throw error;
-          const errorText = formatError(error);
-          tui.updateBlock(blockId, { content: errorText, state: "error" });
-
-          const toolResultMsg: UserMessage = {
-            role: "user",
-            content: [{
-              type: "tool_result",
-              tool_use_id: contentBlock.id,
-              is_error: true,
-              content: [{ type: "text", text: errorText }],
-            }],
-          };
-          messages.push(toolResultMsg);
-          pendingToolUseIds = pendingToolUseIds.filter((id) => id !== contentBlock.id);
-        } finally {
-          refreshCwd();
-        }
+        const toolResultMsg: UserMessage = {
+          role: "user",
+          content: toolResults,
+        };
+        messages.push(toolResultMsg);
       }
 
       if (response.stopReason === "tool_use") {
@@ -519,19 +557,12 @@ async function prompt(userMessage: string) {
       }
 
       if (assistantMessagePushed && pendingToolUseIds.length > 0) {
-        for (const toolUseId of pendingToolUseIds) {
-          const toolResultMsg: UserMessage = {
-            role: "user",
-            content: [{
-              type: "tool_result",
-              tool_use_id: toolUseId,
-              is_error: true,
-              content: [{ type: "text", text: "Cancelled by user" }],
-            }],
-          };
-          messages.push(toolResultMsg);
-        }
-      } else if (!assistantMessagePushed) {
+        const toolResultMsg: UserMessage = {
+          role: "user",
+          content: pendingToolUseIds.map((toolUseId) => makeToolErrorResult(toolUseId, "Cancelled by user")),
+        };
+        messages.push(toolResultMsg);
+      } else if (!anyAssistantMessagePushed) {
         messages.pop();
       }
 

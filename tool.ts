@@ -28,11 +28,14 @@ export type ToolDisplayBlock = {
 
 type ZodObjectSchema = z.ZodObject<z.core.$ZodShape>;
 
+export type ToolConcurrency = "safe" | "exclusive";
+
 type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
   name: string;
   description: string;
   inputSchema: T;
   execute: (input: z.infer<T>, signal?: AbortSignal) => Promise<ToolOutput>;
+  concurrency?: ToolConcurrency;
   titleFormatter?: (input: Partial<z.infer<T>>) => string;
   /**
    * When false, the tool's result body is hidden in the TUI; the block shows
@@ -143,6 +146,7 @@ const MAX_READ_BYTES_LABEL = `${MAX_READ_BYTES / 1024}KB`;
 const readTool = Tool({
   name: "read",
   description: "Read content from a file.",
+  concurrency: "safe",
   inputSchema: z.object({
     path: z.string().describe("Absolute or relative path."),
     offset: z.number().int().min(1).optional().describe("Line number to start reading from (1-indexed). Defaults to 1."),
@@ -218,6 +222,7 @@ const readTool = Tool({
 const writeTool = Tool({
   name: "write",
   description: "Write content to a file.",
+  concurrency: "exclusive",
   inputSchema: z.object({
     path: z.string(),
     content: z.string()
@@ -237,6 +242,7 @@ const writeTool = Tool({
 const editTool = Tool({
   name: "edit",
   description: "Edit a file by replacing exact text.",
+  concurrency: "exclusive",
   inputSchema: z.object({
     path: z.string(),
     oldText: z.string().describe("Old text to find and replace (must match exactly)"),
@@ -260,6 +266,7 @@ const BASH_DEFAULT_TIMEOUT = 10_000;
 const bashTool = Tool({
   name: "bash",
   description: "Execute a bash command in the current working directory.",
+  concurrency: "exclusive",
   inputSchema: z.object({
     command: z.string(),
   }),
@@ -415,6 +422,7 @@ function htmlToText(html: string): string {
 
 const webFetchTool = Tool({
   name: "web_fetch",
+  concurrency: "safe",
   description:
     "Fetch the content of a URL and return it as text, markdown, or raw HTML. " +
     "Use this when the user asks you to read, summarize, or extract information from a specific URL. " +
@@ -560,6 +568,7 @@ function parseSsePayload(text: string): unknown {
 
 const webSearchTool = Tool({
   name: "web_search",
+  concurrency: "exclusive", // Theoretically safe but we don't want to get rate limited
   description:
     "Search the web for current information, news, facts, or any topic.",
   inputSchema: z.object({

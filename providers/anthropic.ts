@@ -118,6 +118,7 @@ export class AnthropicProvider implements Provider {
 
 class AnthropicStream implements ProviderStream {
   private innerStream: ReturnType<Anthropic["messages"]["stream"]>;
+  private currentToolUseId: string | undefined;
 
   constructor(inner: ReturnType<Anthropic["messages"]["stream"]>) {
     this.innerStream = inner;
@@ -135,9 +136,11 @@ class AnthropicStream implements ProviderStream {
       case "content_block_start": {
         const block = event.content_block;
         if (block.type === "text") {
+          this.currentToolUseId = undefined;
           return { type: "text_start", text: block.text ?? "" };
         }
         if (block.type === "tool_use") {
+          this.currentToolUseId = block.id;
           return { type: "tool_use_start", id: block.id, name: block.name };
         }
         return null;
@@ -149,13 +152,17 @@ class AnthropicStream implements ProviderStream {
           return { type: "text_delta", text: delta.text };
         }
         if (delta.type === "input_json_delta") {
-          return { type: "tool_input_delta", partialJson: delta.partial_json };
+          if (!this.currentToolUseId) return null;
+          return { type: "tool_input_delta", id: this.currentToolUseId, partialJson: delta.partial_json };
         }
         return null;
       }
 
-      case "content_block_stop":
-        return { type: "block_stop" };
+      case "content_block_stop": {
+        const id = this.currentToolUseId;
+        this.currentToolUseId = undefined;
+        return id ? { type: "block_stop", id } : { type: "block_stop" };
+      }
 
       default:
         return null;

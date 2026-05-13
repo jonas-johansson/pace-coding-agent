@@ -81,11 +81,13 @@ export type StreamToolUseStart = {
 
 export type StreamToolInputDelta = {
   type: "tool_input_delta";
+  id: string;
   partialJson: string;
 };
 
 export type StreamBlockStop = {
   type: "block_stop";
+  id?: string;
 };
 
 export type StreamEvent =

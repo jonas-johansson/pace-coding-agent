@@ -251,6 +251,7 @@ export class OpenCodeZenProvider implements Provider {
  */
 type PendingToolCall = {
   id: string;
+  streamId: string;
   name: string;
   arguments: string;
 };
@@ -276,8 +277,8 @@ class OpenCodeZenStream implements ProviderStream {
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
-    // Track which tool call indices have already emitted a "tool_use_start".
-    const startedTools = new Set<number>();
+    // Track which tool call stream IDs have already emitted a "tool_use_start".
+    const startedTools = new Set<string>();
     // Track if we're in a text block to emit block_stop when transitioning.
     let inTextBlock = false;
 
@@ -332,22 +333,28 @@ class OpenCodeZenStream implements ProviderStream {
           let pending = this.pendingToolCalls.get(idx);
 
           if (!pending) {
-            pending = { id: tc.id ?? "", name: tc.function?.name ?? "", arguments: "" };
+            pending = {
+              id: tc.id ?? "",
+              streamId: tc.id ?? `tool_call_${idx}`,
+              name: tc.function?.name ?? "",
+              arguments: "",
+            };
             this.pendingToolCalls.set(idx, pending);
           }
 
-          // Update fields if present
+          // Update fields if present. Keep streamId stable because it may
+          // already be used by the TUI and final tool result IDs.
           if (tc.id) pending.id = tc.id;
           if (tc.function?.name) pending.name = tc.function.name;
           if (tc.function?.arguments) pending.arguments += tc.function.arguments;
 
-          if (!startedTools.has(idx) && pending.name) {
-            startedTools.add(idx);
-            yield { type: "tool_use_start", id: pending.id, name: pending.name };
+          if (!startedTools.has(pending.streamId) && pending.name) {
+            startedTools.add(pending.streamId);
+            yield { type: "tool_use_start", id: pending.streamId, name: pending.name };
           }
 
           if (tc.function?.arguments) {
-            yield { type: "tool_input_delta", partialJson: tc.function.arguments };
+            yield { type: "tool_input_delta", id: pending.streamId, partialJson: tc.function.arguments };
           }
         }
       }
@@ -359,8 +366,8 @@ class OpenCodeZenStream implements ProviderStream {
     }
 
     // Close any open tool call blocks
-    for (const _idx of startedTools) {
-      yield { type: "block_stop" };
+    for (const id of startedTools) {
+      yield { type: "block_stop", id };
     }
 
     // Move pending tool calls to completed
@@ -395,7 +402,7 @@ class OpenCodeZenStream implements ProviderStream {
       }
       content.push({
         type: "tool_use",
-        id: tc.id,
+        id: tc.streamId,
         name: tc.name,
         input,
       });

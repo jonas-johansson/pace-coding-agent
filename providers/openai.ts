@@ -199,10 +199,7 @@ export class OpenAIProvider implements Provider {
         input: toResponsesInput(params.messages),
         tools: toResponsesTools(params.tools),
         max_output_tokens: params.maxTokens,
-        // The app's stream event model associates tool-input deltas with the
-        // currently active tool call, so disable parallel tool calls until the
-        // abstraction carries per-delta tool IDs.
-        parallel_tool_calls: false,
+        parallel_tool_calls: true,
         store: false,
         include: ["reasoning.encrypted_content"],
       },
@@ -300,8 +297,8 @@ class OpenAIStream implements ProviderStream {
             this.pendingToolCallsByOutputIndex.get(event.output_index);
           if (pending) {
             pending.arguments += event.delta;
+            yield { type: "tool_input_delta", id: pending.callId, partialJson: event.delta };
           }
-          yield { type: "tool_input_delta", partialJson: event.delta };
           break;
         }
 
@@ -322,7 +319,7 @@ class OpenAIStream implements ProviderStream {
             this.pendingToolCallsByItemId.delete(pending.itemId);
             this.pendingToolCallsByCallId.delete(pending.callId);
             this.pendingToolCallsByOutputIndex.delete(event.output_index);
-            yield { type: "block_stop" };
+            yield { type: "block_stop", id: pending.callId };
           }
           break;
         }
