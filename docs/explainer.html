@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agento — How It Works</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface2: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+      --purple: #bc8cff;
+      --orange: #f0883e;
+      --teal: #39d353;
+      --radius: 10px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+      padding: 40px 20px 80px;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .page { max-width: 900px; margin: 0 auto; }
+
+    /* ── Hero ── */
+    .hero {
+      text-align: center;
+      margin-bottom: 60px;
+    }
+
+    .hero pre.logo {
+      display: inline-block;
+      color: var(--accent);
+      font-size: 13px;
+      line-height: 1.35;
+      letter-spacing: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px 32px;
+      margin-bottom: 24px;
+    }
+
+    .hero h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .hero p {
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 560px;
+      margin: 0 auto;
+    }
+
+    /* ── Section headings ── */
+    h2 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    h2 .icon {
+      font-size: 1.4rem;
+      line-height: 1;
+    }
+
+    h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+
+    /* ── Cards / surfaces ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px 28px;
+      margin-bottom: 24px;
+    }
+
+    .card p + p { margin-top: 10px; }
+
+    /* ── Section spacing ── */
+    .section { margin-bottom: 52px; }
+
+    /* ── Architecture diagram ── */
+    .arch {
+      display: grid;
+      grid-template-columns: 1fr 40px 1fr 40px 1fr;
+      align-items: center;
+      gap: 0;
+      margin: 8px 0 16px;
+    }
+
+    .arch-box {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      text-align: center;
+    }
+
+    .arch-box .label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .arch-box .name {
+      font-weight: 700;
+      font-size: 1rem;
+    }
+
+    .arch-box .file {
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-family: monospace;
+      margin-top: 3px;
+    }
+
+    .arch-arrow {
+      text-align: center;
+      font-size: 1.4rem;
+      color: var(--muted);
+    }
+
+    /* ── Flow steps ── */
+    .flow {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      position: relative;
+    }
+
+    .flow-step {
+      display: flex;
+      gap: 16px;
+      padding: 16px 0;
+      position: relative;
+    }
+
+    .flow-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      left: 18px;
+      top: 52px;
+      bottom: -4px;
+      width: 2px;
+      background: var(--border);
+    }
+
+    .flow-num {
+      flex-shrink: 0;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.9rem;
+      z-index: 1;
+    }
+
+    .flow-body { flex: 1; }
+    .flow-body strong { display: block; margin-bottom: 4px; font-size: 1rem; }
+    .flow-body p { color: var(--muted); font-size: 0.92rem; margin: 0; }
+    .flow-body p + p { margin-top: 6px; }
+
+    /* ── Tool grid ── */
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .tool-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+    }
+
+    .tool-card h3 { margin-bottom: 4px; font-family: monospace; font-size: 0.95rem; }
+    .tool-card p { color: var(--muted); font-size: 0.88rem; margin: 0; }
+
+    .tool-card .tag {
+      display: inline-block;
+      margin-top: 8px;
+      font-size: 0.72rem;
+      padding: 2px 7px;
+      border-radius: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    /* ── TUI layout mock ── */
+    .tui-mock {
+      background: #0a0a0a;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
+      font-size: 13px;
+      overflow: hidden;
+    }
+
+    .tui-messages {
+      padding: 12px 0 4px;
+      min-height: 200px;
+    }
+
+    .tui-block {
+      margin: 4px 0;
+      padding: 0 6px;
+    }
+
+    .tui-block.user-block {
+      background: #1a3a5c;
+      color: #e0f0ff;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin: 8px 6px;
+    }
+
+    .tui-block.assistant-block {
+      color: #ddd;
+      padding: 4px 12px;
+    }
+
+    .tui-block.tool-block-inline {
+      color: #5c9a5c;
+      padding: 2px 12px;
+    }
+
+    .tui-block.tool-block-panel {
+      background: #1a1a1a;
+      border-left: 2px solid #3a6a3a;
+      color: #aaa;
+      padding: 6px 12px;
+      margin: 4px 6px;
+    }
+
+    .tui-block.error-block {
+      background: #3a1010;
+      color: #f88;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin: 6px 6px;
+    }
+
+    .tui-indicator { color: #5ca85c; margin-right: 6px; }
+    .tui-indicator.spin { color: #d4a017; }
+    .tui-indicator.err { color: #f85149; }
+
+    .tui-input {
+      background: #1a1a1a;
+      border-top: 1px solid #2a2a2a;
+      padding: 10px 14px;
+      color: #ccc;
+    }
+
+    .tui-input .cursor {
+      display: inline-block;
+      width: 8px;
+      height: 14px;
+      background: #ccc;
+      vertical-align: middle;
+      animation: blink 1.1s step-end infinite;
+    }
+
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .tui-status {
+      background: #1c1c1c;
+      border-top: 1px solid #2a2a2a;
+      padding: 4px 14px;
+      color: #666;
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .tui-status .right { color: #4a7a9b; }
+
+    /* ── Model table ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    code {
+      font-family: "Fira Code", monospace;
+      font-size: 0.85em;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+
+    /* ── Key list ── */
+    .key-list {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 8px 16px;
+      align-items: baseline;
+    }
+
+    .key-list kbd {
+      font-family: monospace;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-bottom-width: 2px;
+      border-radius: 5px;
+      padding: 2px 8px;
+      font-size: 0.82rem;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .key-list .desc { color: var(--muted); font-size: 0.9rem; }
+
+    /* ── Performance badges ── */
+    .perf-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 14px;
+    }
+
+    .perf-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+    }
+
+    .perf-card h3 { color: var(--yellow); font-size: 0.85rem; margin-bottom: 6px; }
+    .perf-card p  { color: var(--muted); font-size: 0.83rem; }
+
+    /* ── Tag pills ── */
+    .pill {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .pill-blue   { background: #0d2a4a; color: var(--accent); border: 1px solid #1a4a7a; }
+    .pill-green  { background: #0d2a1a; color: var(--green);  border: 1px solid #1a4a2a; }
+    .pill-yellow { background: #2a1a00; color: var(--yellow); border: 1px solid #4a3000; }
+
+    /* ── Footer ── */
+    .footer {
+      margin-top: 60px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+      border-top: 1px solid var(--border);
+      padding-top: 24px;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── Hero ── -->
+  <div class="hero">
+    <pre class="logo">    _                    _
+   / \   __ _  ___ _ __ | |_ ___
+  / _ \ / _` |/ _ \ '_ \| __/ _ \
+ / ___ \ (_| |  __/ | | | || (_) |
+/_/   \_\__, |\___|_| |_|\__\___/
+        |___/</pre>
+    <h1>How Agento Works</h1>
+    <p>A walkthrough of the architecture, data flow, and key design decisions of this barebones terminal-based AI coding agent.</p>
+  </div>
+
+  <!-- ── High-Level Architecture ── -->
+  <div class="section">
+    <h2><span class="icon">🏗️</span> High-Level Architecture</h2>
+    <div class="card">
+      <p>Agento is a TypeScript Node.js application structured into three focused modules that collaborate to produce a fully interactive terminal agent:</p>
+
+      <div class="arch" style="margin-top: 20px;">
+        <div class="arch-box">
+          <div class="label">Orchestrator</div>
+          <div class="name">app.ts</div>
+          <div class="file">~635 lines</div>
+        </div>
+        <div class="arch-arrow">⟷</div>
+        <div class="arch-box">
+          <div class="label">Terminal UI</div>
+          <div class="name">tui.ts</div>
+          <div class="file">~2 453 lines</div>
+        </div>
+        <div class="arch-arrow">⟷</div>
+        <div class="arch-box">
+          <div class="label">Tool Registry</div>
+          <div class="name">tool.ts</div>
+          <div class="file">~636 lines</div>
+        </div>
+      </div>
+
+      <ul style="margin-top: 16px; padding-left: 20px; color: var(--muted); font-size: 0.92rem; display: flex; flex-direction: column; gap: 6px;">
+        <li><strong style="color: var(--text);">app.ts</strong> — the brain. Manages the conversation loop, model selection, cost tracking, and wires together the TUI and tool execution.</li>
+        <li><strong style="color: var(--text);">tui.ts</strong> — the face. A from-scratch terminal renderer with ANSI escape codes, mouse support, scrolling, block-level caching, and line-level diffing.</li>
+        <li><strong style="color: var(--text);">tool.ts</strong> — the hands. Defines and registers every capability the AI can invoke: reading files, writing files, editing files, running bash commands, fetching web pages, and searching the web.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── Startup & Entry Point ── -->
+  <div class="section">
+    <h2><span class="icon">🚀</span> Startup Sequence</h2>
+    <div class="card">
+      <div class="flow">
+        <div class="flow-step">
+          <div class="flow-num">1</div>
+          <div class="flow-body">
+            <strong>Terminal UI initialised</strong>
+            <p>A <code>Tui</code> instance is created, wired to three callbacks: <code>onSubmit</code> (user sends a message), <code>onTab</code> (cycle models), and <code>onEscape</code> (cancel running prompt). Raw-mode stdin is enabled, the cursor is hidden, mouse reporting is switched on, and the ASCII logo is drawn.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">2</div>
+          <div class="flow-body">
+            <strong>Context gauge zeroed</strong>
+            <p><code>updateContextInfo()</code> populates the status bar with the initial <code>0 / 200k (0%)</code> token counter for the default model.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">3</div>
+          <div class="flow-body">
+            <strong>User types and presses Enter</strong>
+            <p>The TUI fires <code>handleUserInput(message)</code>. If the message starts with <code>/</code> it is a slash command; if it starts with <code>!</code> it is a direct shell command; otherwise it is sent straight to the AI.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Conversation Loop ── -->
+  <div class="section">
+    <h2><span class="icon">🔄</span> The Agent Loop</h2>
+    <div class="card">
+      <p>When a user message reaches <code>prompt()</code> in <strong>app.ts</strong>, the following loop runs until the model signals it is finished:</p>
+      <div class="flow" style="margin-top: 16px;">
+        <div class="flow-step">
+          <div class="flow-num">1</div>
+          <div class="flow-body">
+            <strong>Build system prompt</strong>
+            <p>The base instruction (<em>"You are Agento…"</em>) is assembled. If an <code>AGENTS.md</code> file exists in the current directory it is appended, giving per-project customisation. A <code>cache_control: ephemeral</code> breakpoint is placed on the system prompt so Anthropic's API can cache it cheaply across turns.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">2</div>
+          <div class="flow-body">
+            <strong>Stream the model's response</strong>
+            <p>The SDK's <code>ant.messages.stream()</code> is called with the full conversation history, the registered tools (converted to Anthropic's JSON-schema format), and <code>max_tokens: 16 000</code>. As events arrive they are classified:</p>
+            <ul style="margin-top:8px; padding-left:18px; color:var(--muted); font-size:0.88rem; display:flex; flex-direction:column; gap:4px;">
+              <li><code>content_block_start</code> — creates a new TUI block (text or tool)</li>
+              <li><code>text_delta</code> — appends streamed text to the assistant block live</li>
+              <li><code>input_json_delta</code> — updates the tool block's title as JSON input builds up (using <code>partial-json</code> to parse incomplete JSON)</li>
+              <li><code>content_block_stop</code> — finalises the block</li>
+            </ul>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">3</div>
+          <div class="flow-body">
+            <strong>Execute tool calls</strong>
+            <p>After the stream ends, any <code>tool_use</code> blocks in the response are executed sequentially. Each tool's input is validated through a <strong>Zod schema</strong>. If validation passes, the tool's <code>execute()</code> function runs with an <code>AbortSignal</code> so it can be cancelled mid-flight. Results (or errors) are pushed back into the message history as <code>tool_result</code> blocks.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">4</div>
+          <div class="flow-body">
+            <strong>Continue or stop</strong>
+            <p>If <code>stop_reason === "tool_use"</code> the loop iterates — the model receives all the tool results and generates another response. Any other stop reason (typically <code>"end_turn"</code>) exits the loop and hands control back to the user.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">5</div>
+          <div class="flow-body">
+            <strong>Token accounting &amp; cost tracking</strong>
+            <p>After each API call, <code>response.usage</code> is inspected to update the context gauge and accumulate the session cost using per-model pricing constants (input, cache-write, cache-read, and output tokens are all priced separately).</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Cancellation ── -->
+  <div class="section">
+    <h2><span class="icon">⛔</span> Cancellation (Esc)</h2>
+    <div class="card">
+      <p>Pressing <kbd>Esc</kbd> while the agent is running calls <code>AbortController.abort()</code>. All async paths — the streaming HTTP request, tool execution, and bash child processes — honour the same signal. The cleanup logic is careful to keep the message history valid:</p>
+      <ul style="margin-top:10px; padding-left:20px; color:var(--muted); font-size:0.9rem; display:flex; flex-direction:column; gap:6px;">
+        <li>If the model was still <em>streaming</em> (no assistant message committed yet), the pending user message is popped off the history.</li>
+        <li>If the model <em>had</em> committed an assistant message but tools weren't run yet, synthetic <code>tool_result</code> entries are injected for each outstanding <code>tool_use</code> so the API never sees an orphaned tool call.</li>
+        <li>The bash tool kills the <strong>entire process group</strong> (<code>process.kill(-pid, SIGTERM)</code>) so backgrounded children don't linger.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── Tools ── -->
+  <div class="section">
+    <h2><span class="icon">🔧</span> Available Tools</h2>
+    <div class="card" style="margin-bottom: 16px;">
+      <p>Tools are registered with the <code>Tool()</code> helper in <strong>tool.ts</strong>. Each tool carries a Zod schema (used both for runtime validation and for generating the JSON Schema sent to Anthropic), an <code>execute()</code> function, and an optional <code>titleFormatter</code> that produces a human-readable one-liner for the TUI.</p>
+    </div>
+    <div class="tool-grid">
+      <div class="tool-card">
+        <h3>read</h3>
+        <p>Reads a file, emitting numbered lines. Supports <code>offset</code> and <code>limit</code> for pagination. Long lines are truncated at 2 000 chars; total output is capped at 50 KB.</p>
+        <span class="tag">showContent: false</span>
+      </div>
+      <div class="tool-card">
+        <h3>write</h3>
+        <p>Overwrites a file with the supplied content. Simple — calls <code>fs/promises writeFile</code> directly.</p>
+        <span class="tag">showContent: false</span>
+      </div>
+      <div class="tool-card">
+        <h3>edit</h3>
+        <p>Performs an exact-text find-and-replace inside a file using <code>String.replaceAll()</code>. The old text must match exactly (case-sensitive, whitespace-sensitive).</p>
+        <span class="tag">showContent: false</span>
+      </div>
+      <div class="tool-card">
+        <h3>bash</h3>
+        <p>Runs any shell command via <code>spawn("/bin/sh", ["-c", command])</code> with a 10-second timeout. Uses <code>detached: true</code> so the full process group can be killed on abort or timeout.</p>
+        <span class="tag">showContent: true</span>
+      </div>
+      <div class="tool-card">
+        <h3>web_fetch</h3>
+        <p>Fetches a URL and returns it as <code>markdown</code>, <code>text</code>, or <code>html</code>. HTML is converted to Markdown via <strong>Turndown</strong>. Cloudflare challenge pages trigger a plain-UA retry.</p>
+        <span class="tag">showContent: true</span>
+      </div>
+      <div class="tool-card">
+        <h3>web_search</h3>
+        <p>Searches the web via the <strong>Exa MCP</strong> API (Server-Sent Events protocol). Returns a configurable number of results (default 5).</p>
+        <span class="tag">showContent: true</span>
+      </div>
+    </div>
+    <div class="card" style="margin-top: 16px;">
+      <p>Tools tagged <span style="font-family:monospace; font-size:0.85em; background:var(--surface2); border:1px solid var(--border); border-radius:4px; padding:1px 5px;">showContent: false</span> hide their result body in the TUI (only the one-line title and a ✓ glyph are shown). Errors are always shown regardless of this flag.</p>
+    </div>
+  </div>
+
+  <!-- ── Prompt input ── -->
+  <div class="section">
+    <h2><span class="icon">⌨️</span> Input Handling</h2>
+    <div class="card" style="margin-bottom:16px;">
+      <p>There are three special input prefixes that bypass the AI entirely:</p>
+      <table style="margin-top:12px;">
+        <thead>
+          <tr>
+            <th>Prefix</th>
+            <th>Behaviour</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>/new</code></td>
+            <td>Clears the message history and resets cost/token counters — starts a fresh conversation.</td>
+          </tr>
+          <tr>
+            <td><code>/model [id|alias]</code></td>
+            <td>Without argument: lists available models. With argument: switches the active model immediately.</td>
+          </tr>
+          <tr>
+            <td><code>!&lt;command&gt;</code></td>
+            <td>Runs a shell command directly using the bash tool, bypassing the AI entirely. Useful for quick one-off commands.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Keyboard shortcuts</h3>
+      <div class="key-list" style="margin-top: 8px;">
+        <kbd>Tab</kbd>        <span class="desc">Cycle to the next model (Haiku → Sonnet → Opus → …)</span>
+        <kbd>Esc</kbd>        <span class="desc">Cancel the running agent prompt</span>
+        <kbd>Ctrl+C</kbd>     <span class="desc">If input is non-empty, clear it; otherwise exit the app</span>
+        <kbd>↑ / ↓</kbd>      <span class="desc">Move cursor up/down within multi-line input</span>
+        <kbd>Alt+↑ / Alt+↓</kbd> <span class="desc">Scroll the message history up/down one line</span>
+        <kbd>Page Up / Down</kbd> <span class="desc">Scroll the message history by half a screen</span>
+        <kbd>Ctrl+Home / End</kbd> <span class="desc">Jump to the very top or bottom of the conversation</span>
+        <kbd>Shift+Enter</kbd> <span class="desc">Insert a newline in the input (multi-line messages)</span>
+        <kbd>Alt+Backspace</kbd> <span class="desc">Delete the previous word</span>
+        <kbd>Ctrl+U</kbd>     <span class="desc">Clear input before cursor (or scroll page up if empty)</span>
+        <kbd>Click</kbd>      <span class="desc">Toggle collapse/expand on a tool panel block</span>
+        <kbd>Click+Drag</kbd> <span class="desc">Select text — auto-copied to clipboard via OSC 52</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Models & Pricing ── -->
+  <div class="section">
+    <h2><span class="icon">🤖</span> Models &amp; Pricing</h2>
+    <div class="card">
+      <p>Three Anthropic models are available, selectable by full ID or short alias:</p>
+      <table style="margin-top: 12px;">
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Alias</th>
+            <th>Context Window</th>
+            <th>Input</th>
+            <th>Cache Write</th>
+            <th>Cache Read</th>
+            <th>Output</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>claude-haiku-4-5</code></td>
+            <td><code>haiku</code></td>
+            <td>200k tokens</td>
+            <td>$1/MTok</td>
+            <td>$1.25/MTok</td>
+            <td>$0.10/MTok</td>
+            <td>$5/MTok</td>
+          </tr>
+          <tr>
+            <td><code>claude-sonnet-4-6</code></td>
+            <td><code>sonnet</code></td>
+            <td>1M tokens</td>
+            <td>$3/MTok</td>
+            <td>$3.75/MTok</td>
+            <td>$0.30/MTok</td>
+            <td>$15/MTok</td>
+          </tr>
+          <tr>
+            <td><code>claude-opus-4-6</code></td>
+            <td><code>opus</code></td>
+            <td>1M tokens</td>
+            <td>$5/MTok</td>
+            <td>$6.25/MTok</td>
+            <td>$0.50/MTok</td>
+            <td>$25/MTok</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin-top: 12px; color: var(--muted); font-size: 0.88rem;">The default model is <strong>Haiku</strong>. The status bar always shows the current session accumulated cost and context usage. If context exceeds 80% of the window the gauge turns orange as a warning.</p>
+    </div>
+  </div>
+
+  <!-- ── Prompt Caching ── -->
+  <div class="section">
+    <h2><span class="icon">💾</span> Prompt Caching</h2>
+    <div class="card">
+      <p>Agento uses Anthropic's <strong>ephemeral prompt caching</strong> to reduce cost on long conversations:</p>
+      <ul style="margin-top: 10px; padding-left: 20px; color: var(--muted); font-size: 0.92rem; display: flex; flex-direction: column; gap: 8px;">
+        <li>The system prompt always carries a <code>cache_control: { type: "ephemeral" }</code> breakpoint, so it is written to cache on the first call and read cheaply on every subsequent turn.</li>
+        <li>A top-level <code>cache_control</code> on the API request body causes Anthropic to automatically place a breakpoint on the <em>last cacheable block</em> in the growing conversation, keeping the ever-expanding history prefix in cache.</li>
+        <li>Cache statistics (<em>cache read tokens</em> and <em>cache creation tokens</em>) are surfaced in the status bar so you can see how effective the cache is in real time. A cache hit rate is shown as a percentage.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── TUI Architecture ── -->
+  <div class="section">
+    <h2><span class="icon">🖥️</span> The Terminal UI</h2>
+    <div class="card" style="margin-bottom:16px;">
+      <p>The TUI is built from scratch using raw ANSI escape sequences — no curses library. The screen is divided into three zones, stacked vertically:</p>
+      <div style="margin-top:16px;">
+        <div class="tui-mock">
+          <div class="tui-messages">
+            <div class="tui-block assistant-block">Let me check the project structure for you.</div>
+            <div class="tui-block tool-block-inline"><span class="tui-indicator">✓</span> bash: /bin/ls -1</div>
+            <div class="tui-block assistant-block" style="color:#aaa;">The project has these main files: <span style="color:#6db33f;">app.ts</span>, <span style="color:#6db33f;">tui.ts</span>, <span style="color:#6db33f;">tool.ts</span>…</div>
+            <div class="tui-block user-block">Can you read the README?</div>
+            <div class="tui-block tool-block-inline"><span class="tui-indicator spin">⠹</span> read: README.md</div>
+          </div>
+          <div class="tui-input">› Type a message…<span class="cursor"></span></div>
+          <div class="tui-status">
+            <span>⠋ Streaming response</span>
+            <span class="right">/home/user/project &nbsp;|&nbsp; $0.0023 &nbsp;|&nbsp; 4.2k/200k (2%) &nbsp;|&nbsp; claude-haiku-4-5</span>
+          </div>
+        </div>
+      </div>
+      <ul style="margin-top: 14px; padding-left: 20px; color: var(--muted); font-size: 0.88rem; display: flex; flex-direction: column; gap: 6px;">
+        <li><strong style="color:var(--text);">Message area</strong> — scrollable list of blocks, fills all rows not taken by the input and status.</li>
+        <li><strong style="color:var(--text);">Input box</strong> — dark background, supports multi-line editing, word-wrap, paste detection.</li>
+        <li><strong style="color:var(--text);">Status bar</strong> — spinner + status text on the left; cwd, cost, context gauge, model on the right.</li>
+      </ul>
+    </div>
+
+    <h3 style="color:var(--text); font-size:1rem; margin-bottom:12px;">Block types</h3>
+    <div class="tool-grid">
+      <div class="tool-card">
+        <h3 style="color:var(--accent);">User block</h3>
+        <p>Blue boxed card with padding. Shows the raw message text with light Markdown parsing (bold, italic, inline code, headings).</p>
+      </div>
+      <div class="tool-card">
+        <h3 style="color:var(--accent);">Assistant block</h3>
+        <p>Plain text on the dark canvas (no box). Rendered inline, with Markdown parsing. Streams live as tokens arrive.</p>
+      </div>
+      <div class="tool-card">
+        <h3 style="color:var(--accent);">Inline tool block</h3>
+        <p>A single line on the canvas showing the tool name + arguments + a state glyph (spinner / ✓ / ✗). Used when the tool produces no visible output.</p>
+      </div>
+      <div class="tool-card">
+        <h3 style="color:var(--accent);">Panel tool block</h3>
+        <p>A gray-background panel with content (e.g. bash output). Can be collapsed to 15 lines — click to expand. Shows a "Click to expand" hint when truncated.</p>
+      </div>
+      <div class="tool-card">
+        <h3 style="color:var(--red);">Error block</h3>
+        <p>Red panel for API errors, unknown commands, input schema failures, or uncaught exceptions. Always shows full content even if <code>showContent</code> is false.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Performance ── -->
+  <div class="section">
+    <h2><span class="icon">⚡</span> Rendering Performance</h2>
+    <div class="card" style="margin-bottom:16px;">
+      <p>The TUI is re-rendered on every state change (input keypress, incoming token, spinner tick). Several layered optimisations keep this fast even during rapid streaming:</p>
+    </div>
+    <div class="perf-grid">
+      <div class="perf-card">
+        <h3>P0 — Block-level cache</h3>
+        <p>Each block's rendered lines are cached by <code>(content, title, state, collapsed, columns)</code>. Only blocks that actually changed are re-rendered. Blocks in state <em>"running"</em> bypass the cache because the spinner changes every frame.</p>
+      </div>
+      <div class="perf-card">
+        <h3>P1 — Line-level diff</h3>
+        <p>The rendered frame is compared line-by-line to the previous frame. Only changed rows are written to stdout using absolute cursor positioning (<code>\x1b[row;1H\x1b[2K…</code>). Unchanged rows are skipped entirely.</p>
+      </div>
+      <div class="perf-card">
+        <h3>P2 — Lazy screen lines</h3>
+        <p>The per-row plaintext array (used for mouse/copy) is expensive to compute because it requires stripping ANSI codes from every row. It is only recomputed on the first mouse event after a frame change.</p>
+      </div>
+      <div class="perf-card">
+        <h3>Batched renders</h3>
+        <p>Multiple synchronous state mutations that happen in the same tick (e.g. updating multiple blocks) coalesce into a single render via <code>setImmediate()</code>, avoiding redundant frame computation.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Data Flow Summary ── -->
+  <div class="section">
+    <h2><span class="icon">📊</span> End-to-End Data Flow</h2>
+    <div class="card">
+      <p style="margin-bottom: 14px; color: var(--muted);">From keypress to AI response to screen update:</p>
+      <div style="font-family: monospace; font-size: 0.85rem; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 22px; line-height: 2; overflow-x: auto; white-space: pre;">
+<span style="color:var(--accent);">User keypresses</span>
+    │  (raw stdin bytes — tui.ts handleData)
+    ▼
+<span style="color:var(--green);">TUI input buffer</span>  ←→  cursor movement, word ops, paste handling
+    │  Enter pressed → onSubmit(message)
+    ▼
+<span style="color:var(--yellow);">app.ts handleUserInput()</span>
+    ├── "/" prefix  → handleCommand()  [/new, /model, …]
+    ├── "!" prefix  → direct bash tool execution
+    └── normal text → prompt()
+            │
+            ├── push user message to history
+            ├── read AGENTS.md (if present)
+            ├── build system prompt + cache_control
+            │
+            ▼
+<span style="color:var(--purple);">Anthropic API  (streaming)</span>
+    │  ant.messages.stream(model, messages, tools, …)
+    ├── text_delta          → TUI: append to assistant block (live)
+    ├── input_json_delta    → TUI: update tool block title (partial JSON)
+    └── content_block_stop  → block finalised
+            │
+            ▼
+<span style="color:var(--orange);">Tool execution loop</span>  (sequential per response)
+    ├── Zod schema validation
+    ├── tool.execute(input, abortSignal)
+    │       ├── read / write / edit  (fs/promises)
+    │       ├── bash                 (child_process.spawn)
+    │       ├── web_fetch            (fetch + Turndown)
+    │       └── web_search           (Exa MCP via fetch)
+    ├── push tool_result to history
+    └── if stop_reason === "tool_use" → loop back to API
+            │
+            ▼
+<span style="color:var(--teal);">Final model response</span>
+    │  update token / cost counters
+    └── TUI rendered (status bar + new blocks)
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Footer ── -->
+  <div class="footer">
+    Generated by Agento itself &mdash; a self-describing AI coding agent.
+  </div>
+
+</div>
+</body>
+</html>
