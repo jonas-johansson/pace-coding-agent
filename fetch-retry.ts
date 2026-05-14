@@ -4,7 +4,7 @@
 
 import { emitEvent } from "./events";
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 6;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30000;
 
@@ -36,7 +36,10 @@ export async function fetchWithRetry(
     }
 
     if (attempt >= MAX_RETRIES) {
-      return response;
+      throw new Error(
+        `Rate limit (429) persisted after ${MAX_RETRIES} retries with exponential backoff. ` +
+        `The server is still too busy — try again in a moment.`,
+      );
     }
 
     // Honor Retry-After if present (seconds); otherwise exponential backoff + jitter.
