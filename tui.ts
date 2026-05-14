@@ -2512,27 +2512,25 @@ function formatTokenCount(tokens: number): string {
 
 function formatContextInfo(info: ContextInfo): string {
   const used = formatTokenCount(info.usedTokens);
-  const total = formatTokenCount(info.contextWindow);
   const percent = info.contextWindow > 0
     ? Math.round((info.usedTokens / info.contextWindow) * 100)
     : 0;
-  const base = `${used}/${total} (${percent}%)`;
+  let result = `${used} (${percent}%)`;
 
-  // Show cache status when there are cached tokens
   const cacheRead = info.cacheReadTokens ?? 0;
   const cacheCreation = info.cacheCreationTokens ?? 0;
   if (cacheRead > 0 || cacheCreation > 0) {
-    const cachedTotal = cacheRead + cacheCreation;
-    const cachePercent = info.usedTokens > 0
-      ? Math.round((cacheRead / info.usedTokens) * 100)
-      : 0;
     if (cacheRead > 0) {
-      return `${base} cache ${formatTokenCount(cacheRead)}/${formatTokenCount(cachedTotal)} (${cachePercent}% hit)`;
+      const cachePercent = info.usedTokens > 0
+        ? Math.round((cacheRead / info.usedTokens) * 100)
+        : 0;
+      result += ` (${cachePercent}% cache hit)`;
+    } else {
+      result += ` (new)`;
     }
-    return `${base} cache ${formatTokenCount(cachedTotal)} (new)`;
   }
 
-  return base;
+  return result;
 }
 
 function formatCost(cost: number): string {

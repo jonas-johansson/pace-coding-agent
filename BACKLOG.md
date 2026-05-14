@@ -6,11 +6,4 @@ CTRL+T to change thinking level/reasoning effort or whatever it's called: xhigh,
 
 Syntax highlighting for markdown code blocks
 
-Come up with a name for this coding agent: boom, wing, cush, cuz, yea
-
-Remove CTRL+C to exit
-
-Reduce status bar clutter.
-- Show used tokens but don't show max tokens.
-- Reduce cache hit verbosity.
-- Example: 15.8k (7%) (95% cache hit)
+Come up with a name for this coding agent: boom, wing, cush, cuz, yea, pax
