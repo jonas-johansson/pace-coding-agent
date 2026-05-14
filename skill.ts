@@ -235,16 +235,16 @@ export function formatSkillsListing(skills: Skill[]): string {
 
   if (projectSkills.length > 0) {
     const lines = projectSkills.map(
-      (s) => `- **${s.name}** — ${s.description}`,
+      (s) => `**${s.name}**\n${s.description}`,
     );
-    sections.push(`### Project (.agents/skills/)\n\n${lines.join("\n")}`);
+    sections.push(`### Project (.agents/skills/)\n\n${lines.join("\n\n")}`);
   }
 
   if (globalSkills.length > 0) {
     const lines = globalSkills.map(
-      (s) => `- **${s.name}** — ${s.description}`,
+      (s) => `**${s.name}**\n${s.description}`,
     );
-    sections.push(`### Global (~/.agents/skills/)\n\n${lines.join("\n")}`);
+    sections.push(`### Global (~/.agents/skills/)\n\n${lines.join("\n\n")}`);
   }
 
   if (sections.length === 0) {
