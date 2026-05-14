@@ -10,7 +10,15 @@ import {
   formatToolResultBody,
   isAbortError,
   getProviderToolDefinitions,
+  setCurrentSkills,
 } from "./tool";
+import {
+  discoverSkills,
+  findSkill,
+  loadSkillContent,
+  formatSkillsSystemPromptBlock,
+  formatSkillsListing,
+} from "./skill";
 import type {
   Provider,
   ProviderMessage,
@@ -251,7 +259,7 @@ function formatModelList() {
     .join("\n");
 }
 
-function handleCommand(command: string): boolean {
+async function handleCommand(command: string): Promise<boolean> {
   const [name, ...args] = command.split(/\s+/);
 
   switch (name) {
@@ -300,9 +308,73 @@ function handleCommand(command: string): boolean {
       tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModelId}.` });
       return true;
     }
-    default:
+    case "/skills": {
+      const skills = await discoverSkills();
+      tui.addBlock({
+        role: "assistant",
+        title: "Skills",
+        content: formatSkillsListing(skills),
+      });
+      return true;
+    }
+    default: {
+      // Handle /skill:<name> [args]
+      if (name && name.startsWith("/skill:")) {
+        const skillName = name.slice("/skill:".length);
+        if (!skillName) {
+          tui.addBlock({ role: "error", title: "Error", content: "Usage: /skill:<name> [arguments]" });
+          return true;
+        }
+
+        const skills = await discoverSkills();
+        const skill = findSkill(skills, skillName);
+        if (!skill) {
+          tui.addBlock({
+            role: "error",
+            title: "Unknown skill",
+            content: `Unknown skill: ${skillName}\n\nUse /skills to see available skills.`,
+          });
+          return true;
+        }
+
+        let content = await loadSkillContent(skill);
+        const skillArgs = args.join(" ");
+        if (skillArgs) {
+          content = content.replaceAll("$ARGUMENTS", skillArgs);
+        }
+
+        // Inject the skill content as a user message and prompt
+        if (promptRunning) {
+          tui.setStatus("Agent is still running");
+          return true;
+        }
+
+        promptRunning = true;
+        tui.setRunning(true, "thinking");
+        const startTime = Date.now();
+
+        try {
+          const displayText = skillArgs
+            ? `/skill:${skillName} ${skillArgs}`
+            : `/skill:${skillName}`;
+          await prompt(displayText, [{ type: "text", text: content }]);
+        } catch (error: unknown) {
+          tui.addBlock({ role: "error", title: "Error", content: formatError(error) });
+        } finally {
+          promptRunning = false;
+          tui.setRunning(false, "idle");
+          if (!tui.isFocused) {
+            const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+            sendDesktopNotification("Agento", `Agent finished in ${elapsedSec}s.`);
+          }
+        }
+
+        return true;
+      }
+
       tui.addBlock({ role: "error", title: "Unknown command", content: `Unknown command: ${name}` });
       return true;
+    }
   }
 }
 
@@ -591,7 +663,7 @@ async function executeToolUseBatch(
 
 async function handleUserInput(userMessage: string) {
   if (userMessage.startsWith("/")) {
-    handleCommand(userMessage.trim());
+    await handleCommand(userMessage.trim());
     return;
   }
 
@@ -717,12 +789,26 @@ async function prompt(
   let pendingToolUseIds: string[] = [];
   let currentToolBlocks = new Map<string, number>();
 
-  const agentsFileContents = await loadAgentsFile();
+  const [agentsFileContents, skills] = await Promise.all([
+    loadAgentsFile(),
+    discoverSkills(),
+  ]);
+
+  // Update the skill tool with the current set of skills
+  setCurrentSkills(skills);
+  tui.setSkillCount(skills.length);
 
   const baseSystem = `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${formatCwd(process.cwd())}\n\nCurrent date (YYYY-MM-DD): ${new Date().toISOString().split("T")[0]}\n\nWhen operating on files or directories in the current working directory, use relative paths rather than absolute paths.\n\nWhen listing files, use \`/bin/ls -1\` to show only filenames (one per line, no icons or extra info). Only add flags like \`-la\` if the user explicitly asks for more details.\n\nWhen searching files with Bash, prefer \`rg\`/\`rg --files\` over \`grep -R\`, \`find .\`, or \`ls -R\` because ripgrep respects \`.gitignore\`; do not run unbounded recursive searches, and if \`rg\` is unavailable explicitly exclude \`node_modules\`, \`.git\`, \`dist\`, \`build\`, \`coverage\`, \`.next\`, and \`vendor\`.`;
-  const systemText = agentsFileContents
-    ? `${baseSystem}\n\n---\n\n# Project-specific instructions (from AGENTS.md)\n\n${agentsFileContents}`
-    : baseSystem;
+
+  // Build system text: base → skills → AGENTS.md
+  const skillsBlock = formatSkillsSystemPromptBlock(skills);
+  let systemText = baseSystem;
+  if (skillsBlock) {
+    systemText += `\n\n---\n\n${skillsBlock}`;
+  }
+  if (agentsFileContents) {
+    systemText += `\n\n---\n\n# Project-specific instructions (from AGENTS.md)\n\n${agentsFileContents}`;
+  }
 
   const modelConfig = currentModelConfig();
   const provider = getProvider(modelConfig);

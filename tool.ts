@@ -645,6 +645,50 @@ const webSearchTool = Tool({
   },
 });
 
+// ─── Skill Tool ─────────────────────────────────────────────────────────────
+
+import type { Skill } from "./skill";
+import { findSkill, loadSkillContent, formatSkillsForToolDescription } from "./skill";
+
+let currentSkills: Skill[] = [];
+
+/**
+ * Update the set of skills available to the skill tool.
+ * Called from app.ts at the start of each prompt cycle.
+ */
+export function setCurrentSkills(skills: Skill[]) {
+  currentSkills = skills;
+}
+
+const skillTool = Tool({
+  name: "skill",
+  description:
+    "Load a skill's full instructions by name. " +
+    "Use this to read the complete SKILL.md content for an available skill when you determine it is relevant to the current task.",
+  concurrency: "safe",
+  inputSchema: z.object({
+    name: z.string().describe("The skill name to load"),
+  }),
+  titleFormatter: (input) => `skill: ${input.name ?? ""}`,
+  showContent: false,
+  execute: async (input, signal): Promise<ToolOutput> => {
+    throwIfAborted(signal);
+    const skill = findSkill(currentSkills, input.name);
+    if (!skill) {
+      return {
+        content: [{ type: "text", text: `Unknown skill: ${input.name}` }],
+        is_error: true,
+      };
+    }
+    const content = await loadSkillContent(skill);
+    return {
+      content: [{ type: "text", text: content }],
+    };
+  },
+});
+
+// ─── Tool definition export ─────────────────────────────────────────────────
+
 function makeAnthropicToolsFromCustomTools() {
   let transformedTools: Anthropic.Tool[] = [];
   for (let i=0; i < tools.length; i++) {
@@ -664,11 +708,26 @@ import type { ToolDefinition } from "./provider";
 /**
  * Provider-agnostic tool definitions. Used by the provider abstraction layer
  * so each provider can serialise tools into its own API format.
+ *
+ * The skill tool's description is dynamically augmented with the current
+ * skill listing so the model can see available skills in the tool schema.
  */
 export function getProviderToolDefinitions(): ToolDefinition[] {
-  return tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    inputSchema: z.toJSONSchema(t.inputSchema) as Record<string, unknown>,
-  }));
+  return tools.map((t) => {
+    let description = t.description;
+
+    // Dynamically append skill listing to the skill tool
+    if (t.name === "skill" && currentSkills.length > 0) {
+      const listing = formatSkillsForToolDescription(currentSkills);
+      if (listing) {
+        description = `${description}\n\nAvailable skills:\n${listing}`;
+      }
+    }
+
+    return {
+      name: t.name,
+      description,
+      inputSchema: z.toJSONSchema(t.inputSchema) as Record<string, unknown>,
+    };
+  });
 }

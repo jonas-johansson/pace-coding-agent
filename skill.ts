@@ -1,0 +1,262 @@
+/**
+ * Skill discovery and loading.
+ *
+ * Implements the Agent Skills specification (https://github.com/agentskills/agentskills).
+ * Skills are directories containing a SKILL.md file with YAML frontmatter
+ * (name + description) followed by markdown instructions.
+ *
+ * Discovery paths:
+ *   Project: .agents/skills/<name>/SKILL.md
+ *   Global:  ~/.config/agents/skills/<name>/SKILL.md
+ */
+
+import { readFile, readdir, stat } from "fs/promises";
+import { homedir } from "os";
+import { join, basename } from "path";
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export type SkillSource = "project" | "global";
+
+export type Skill = {
+  name: string;
+  description: string;
+  /** Absolute path to the SKILL.md file. */
+  filePath: string;
+  /** Absolute path to the skill directory (parent of SKILL.md). */
+  baseDir: string;
+  source: SkillSource;
+  disableModelInvocation: boolean;
+};
+
+// ── Frontmatter parsing ──────────────────────────────────────────────────────
+
+type Frontmatter = {
+  name?: string;
+  description?: string;
+  "disable-model-invocation"?: boolean;
+};
+
+/**
+ * Parse simple YAML frontmatter from a SKILL.md file's text.
+ * Handles only flat key: value pairs and simple quoted strings.
+ * Returns null if no valid frontmatter delimiters are found.
+ */
+function parseFrontmatter(text: string): Frontmatter | null {
+  // Frontmatter must start with --- on the first line
+  if (!text.startsWith("---")) return null;
+
+  const endIndex = text.indexOf("\n---", 3);
+  if (endIndex === -1) return null;
+
+  const block = text.slice(text.indexOf("\n", 0) + 1, endIndex);
+  const result: Record<string, string | boolean> = {};
+
+  for (const line of block.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const colonIdx = trimmed.indexOf(":");
+    if (colonIdx === -1) continue;
+
+    const key = trimmed.slice(0, colonIdx).trim();
+    let value: string | boolean = trimmed.slice(colonIdx + 1).trim();
+
+    // Strip surrounding quotes
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    // Parse booleans
+    if (value === "true") value = true;
+    else if (value === "false") value = false;
+
+    result[key] = value;
+  }
+
+  return result as Frontmatter;
+}
+
+// ── Name validation ──────────────────────────────────────────────────────────
+
+const SKILL_NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+function isValidSkillName(name: string): boolean {
+  if (name.length < 1 || name.length > 64) return false;
+  if (!SKILL_NAME_RE.test(name)) return false;
+  if (name.includes("--")) return false;
+  return true;
+}
+
+// ── Discovery ────────────────────────────────────────────────────────────────
+
+/**
+ * Scan a single skills directory for valid skill subdirectories.
+ * Returns skills found, silently skipping invalid ones.
+ */
+async function scanSkillsDir(
+  skillsDir: string,
+  source: SkillSource,
+): Promise<Skill[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(skillsDir);
+  } catch {
+    return [];
+  }
+
+  const skills: Skill[] = [];
+
+  for (const entry of entries) {
+    const skillDir = join(skillsDir, entry);
+
+    // Must be a directory
+    try {
+      const s = await stat(skillDir);
+      if (!s.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    const skillFile = join(skillDir, "SKILL.md");
+    let content: string;
+    try {
+      content = await readFile(skillFile, "utf-8");
+    } catch {
+      continue;
+    }
+
+    const fm = parseFrontmatter(content);
+    if (!fm) continue;
+
+    const name = typeof fm.name === "string" ? fm.name : "";
+    const description = typeof fm.description === "string" ? fm.description : "";
+
+    // Validate name
+    if (!isValidSkillName(name)) continue;
+
+    // Name must match directory name
+    if (name !== basename(skillDir)) continue;
+
+    // Description is required and must be 1-1024 chars
+    if (description.length < 1 || description.length > 1024) continue;
+
+    skills.push({
+      name,
+      description,
+      filePath: skillFile,
+      baseDir: skillDir,
+      source,
+      disableModelInvocation: fm["disable-model-invocation"] === true,
+    });
+  }
+
+  return skills;
+}
+
+/**
+ * Discover all skills from project and global directories.
+ * Project skills take precedence over global skills with the same name.
+ */
+export async function discoverSkills(): Promise<Skill[]> {
+  const projectDir = join(process.cwd(), ".agents", "skills");
+  const globalDir = join(homedir(), ".config", "agents", "skills");
+
+  const [projectSkills, globalSkills] = await Promise.all([
+    scanSkillsDir(projectDir, "project"),
+    scanSkillsDir(globalDir, "global"),
+  ]);
+
+  // Deduplicate: project wins over global
+  const seen = new Set<string>();
+  const result: Skill[] = [];
+
+  for (const skill of projectSkills) {
+    seen.add(skill.name);
+    result.push(skill);
+  }
+
+  for (const skill of globalSkills) {
+    if (!seen.has(skill.name)) {
+      seen.add(skill.name);
+      result.push(skill);
+    }
+  }
+
+  return result;
+}
+
+// ── Querying ─────────────────────────────────────────────────────────────────
+
+/** Return skills the model can see (excludes disable-model-invocation). */
+export function getModelVisibleSkills(skills: Skill[]): Skill[] {
+  return skills.filter((s) => !s.disableModelInvocation);
+}
+
+/** Find a skill by name. */
+export function findSkill(skills: Skill[], name: string): Skill | undefined {
+  return skills.find((s) => s.name === name);
+}
+
+/** Read the full content of a skill's SKILL.md. */
+export async function loadSkillContent(skill: Skill): Promise<string> {
+  return readFile(skill.filePath, "utf-8");
+}
+
+// ── Formatting ───────────────────────────────────────────────────────────────
+
+/**
+ * Build the <available_skills> XML block for the system prompt.
+ * Only includes model-visible skills.
+ */
+export function formatSkillsSystemPromptBlock(skills: Skill[]): string {
+  const visible = getModelVisibleSkills(skills);
+  if (visible.length === 0) return "";
+
+  const lines = visible.map(
+    (s) => `<skill name="${s.name}">${s.description}</skill>`,
+  );
+  return `<available_skills>\n${lines.join("\n")}\n</available_skills>`;
+}
+
+/**
+ * Build a human-readable listing of all skills for the /skills command.
+ */
+export function formatSkillsListing(skills: Skill[]): string {
+  const projectSkills = skills.filter((s) => s.source === "project");
+  const globalSkills = skills.filter((s) => s.source === "global");
+  const sections: string[] = [];
+
+  if (projectSkills.length > 0) {
+    const lines = projectSkills.map(
+      (s) => `  ${s.name} — ${s.description}`,
+    );
+    sections.push(`Project skills (.agents/skills/):\n${lines.join("\n")}`);
+  }
+
+  if (globalSkills.length > 0) {
+    const lines = globalSkills.map(
+      (s) => `  ${s.name} — ${s.description}`,
+    );
+    sections.push(`Global skills (~/.config/agents/skills/):\n${lines.join("\n")}`);
+  }
+
+  if (sections.length === 0) {
+    return "No skills found.\n\nPlace skills in .agents/skills/<name>/SKILL.md (project) or ~/.config/agents/skills/<name>/SKILL.md (global).";
+  }
+
+  return sections.join("\n\n");
+}
+
+/**
+ * Build a compact skill listing for tool descriptions.
+ * Format: "- name: description" per line.
+ */
+export function formatSkillsForToolDescription(skills: Skill[]): string {
+  const visible = getModelVisibleSkills(skills);
+  if (visible.length === 0) return "";
+  return visible.map((s) => `- ${s.name}: ${s.description}`).join("\n");
+}
