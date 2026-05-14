@@ -154,6 +154,7 @@ export class Tui {
   private imageCount = 0;
   private skillCount = 0;
   private focused = true;
+  private exitConfirmPresses = 0;
 
   constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; model?: string; cwd?: string } = {}) {
     this.model = options.model ?? "";
@@ -442,14 +443,22 @@ export class Tui {
   private handleData = (data: string) => {
     if (data === "\u0003") {
       if (this.input) {
+        this.exitConfirmPresses = 0;
         this.clearInput();
         this.requestRender();
-      } else {
-        this.status = "Use /exit";
+      } else if (this.exitConfirmPresses === 0) {
+        this.exitConfirmPresses = 1;
+        this.status = "Press Ctrl+C again to exit";
         this.requestRender();
+      } else {
+        this.stop();
+        process.exit(0);
       }
       return;
     }
+
+    // Any key other than Ctrl+C cancels the exit confirmation
+    this.exitConfirmPresses = 0;
 
     if (this.handleEscape(data)) {
       return;

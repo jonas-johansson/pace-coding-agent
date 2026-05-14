@@ -159,30 +159,33 @@ async function scanSkillsDir(
 
 /**
  * Discover all skills from project and global directories.
- * Project skills take precedence over global skills with the same name.
+ *
+ * Scanned in order (first match for a given name wins):
+ *   1. <cwd>/.agents/skills/    (project)
+ *   2. ~/.agents/skills/         (global — used by Cline, Warp, and others)
+ *   3. ~/.config/agents/skills/  (global — universal convention)
  */
 export async function discoverSkills(): Promise<Skill[]> {
   const projectDir = join(process.cwd(), ".agents", "skills");
-  const globalDir = join(homedir(), ".config", "agents", "skills");
+  const globalDir1 = join(homedir(), ".agents", "skills");
+  const globalDir2 = join(homedir(), ".config", "agents", "skills");
 
-  const [projectSkills, globalSkills] = await Promise.all([
+  const [projectSkills, globalSkills1, globalSkills2] = await Promise.all([
     scanSkillsDir(projectDir, "project"),
-    scanSkillsDir(globalDir, "global"),
+    scanSkillsDir(globalDir1, "global"),
+    scanSkillsDir(globalDir2, "global"),
   ]);
 
-  // Deduplicate: project wins over global
+  // Deduplicate: project → ~/.agents/ → ~/.config/agents/
   const seen = new Set<string>();
   const result: Skill[] = [];
 
-  for (const skill of projectSkills) {
-    seen.add(skill.name);
-    result.push(skill);
-  }
-
-  for (const skill of globalSkills) {
-    if (!seen.has(skill.name)) {
-      seen.add(skill.name);
-      result.push(skill);
+  for (const list of [projectSkills, globalSkills1, globalSkills2]) {
+    for (const skill of list) {
+      if (!seen.has(skill.name)) {
+        seen.add(skill.name);
+        result.push(skill);
+      }
     }
   }
 
@@ -245,7 +248,7 @@ export function formatSkillsListing(skills: Skill[]): string {
   }
 
   if (sections.length === 0) {
-    return "No skills found.\n\nPlace skills in .agents/skills/<name>/SKILL.md (project) or ~/.config/agents/skills/<name>/SKILL.md (global).";
+    return "No skills found.\n\nPlace skills in .agents/skills/<name>/SKILL.md (project) or ~/.agents/skills/<name>/SKILL.md (global).\n\nOr install from the skills.sh ecosystem: npx skills add <owner/repo>";
   }
 
   return sections.join("\n\n");

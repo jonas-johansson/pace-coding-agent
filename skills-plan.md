@@ -143,11 +143,12 @@ We lean on the generic `.agents/` convention, which is the universal standard us
 | Scope | Path | Notes |
 |-------|------|-------|
 | Project | `.agents/skills/*/SKILL.md` | Generic standard, checked into repo |
-| Global | `~/.config/agents/skills/*/SKILL.md` | Generic standard personal skills |
+| Global | `~/.agents/skills/*/SKILL.md` | Used by Cline, Warp, and many `npx skills` installs |
+| Global | `~/.config/agents/skills/*/SKILL.md` | Universal convention |
 
 For project paths, we scan only from cwd (no walking up to git root in v1 — keeps it simple).
 
-**Precedence**: When the same skill name appears in both locations, the project skill wins.
+**Precedence**: When the same skill name appears in multiple locations, the first match wins in scan order: project → `~/.agents/` → `~/.config/agents/`.
 
 ### `npx skills` integration
 
