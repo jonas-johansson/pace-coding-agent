@@ -154,7 +154,7 @@ export class Tui {
   private imageCount = 0;
   private focused = true;
 
-  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; model?: string; cwd?: string } = {}) {
+  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; model?: string; cwd?: string } = {}) {
     this.model = options.model ?? "";
     this.cwd = options.cwd ?? "";
   }
@@ -612,6 +612,11 @@ export class Tui {
         return true;
       case "\x1b[1;5F":
         this.scrollToBottom();
+        return true;
+
+      // Shift+Tab — cycle model in reverse
+      case "\x1b[Z":
+        this.options.onShiftTab?.();
         return true;
 
       // Delete key — delete character after cursor

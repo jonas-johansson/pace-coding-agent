@@ -93,7 +93,7 @@ function cancelPrompt() {
   currentAbortController.abort();
 }
 
-const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, onEscape: cancelPrompt, onPasteImage: handlePasteImage, model: DEFAULT_MODEL_ID, cwd: process.cwd() });
+const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, onShiftTab: cycleModelReverse, onEscape: cancelPrompt, onPasteImage: handlePasteImage, model: DEFAULT_MODEL_ID, cwd: process.cwd() });
 
 let promptRunning = false;
 let currentAbortController: AbortController | null = null;
@@ -222,6 +222,15 @@ function cycleModel() {
   const currentIndex = ids.indexOf(currentModelId);
   const nextIndex = (currentIndex + 1) % ids.length;
   currentModelId = ids[nextIndex];
+  tui.setModel(currentModelId);
+  updateContextInfo();
+}
+
+function cycleModelReverse() {
+  const ids = AVAILABLE_MODEL_IDS;
+  const currentIndex = ids.indexOf(currentModelId);
+  const prevIndex = (currentIndex - 1 + ids.length) % ids.length;
+  currentModelId = ids[prevIndex];
   tui.setModel(currentModelId);
   updateContextInfo();
 }
