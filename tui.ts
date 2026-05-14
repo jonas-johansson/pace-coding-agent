@@ -438,10 +438,11 @@ export class Tui {
       if (this.input) {
         this.clearInput();
         this.requestRender();
-        return;
+      } else {
+        this.status = "Use /exit";
+        this.requestRender();
       }
-      this.stop();
-      process.exit(0);
+      return;
     }
 
     if (this.handleEscape(data)) {

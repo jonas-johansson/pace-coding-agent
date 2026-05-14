@@ -254,6 +254,11 @@ function handleCommand(command: string): boolean {
       tui.clearBlocks();
       updateContextInfo();
       return true;
+    case "/exit":
+    case "/quit": {
+      tui.stop();
+      process.exit(0);
+    }
     case "/model": {
       const requestedModel = args[0];
       if (!requestedModel) {
