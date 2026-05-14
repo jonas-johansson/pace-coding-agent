@@ -14,7 +14,7 @@ Input box improvements:
 
 
 
-Add exponential backoff to deal with 429 error from Fireworks.
+Add exponential backoff to deal with 429 error from Fireworks. Right now I only see this error message. But it would make sense to do retry with exponential backoff and then if that fails then tell the user that it retried with exponential backoff but it still failed.
 
 Error
 

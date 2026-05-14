@@ -162,7 +162,6 @@ export class Tui {
   private screenLinesDirty = true;
 
   private imageCount = 0;
-  private skillCount = 0;
   private focused = true;
   private exitConfirmPresses = 0;
 
@@ -311,11 +310,6 @@ export class Tui {
 
   setImageCount(count: number) {
     this.imageCount = count;
-    this.requestRender();
-  }
-
-  setSkillCount(count: number) {
-    this.skillCount = count;
     this.requestRender();
   }
 
@@ -1688,7 +1682,6 @@ export class Tui {
     const imageText = this.imageCount > 0 ? `${statusText ? " | " : ""}📎 ${this.imageCount} image${this.imageCount === 1 ? "" : "s"}` : "";
     const scrollText = this.scrollOffset > 0 ? `${statusText || imageText ? " | " : ""}scroll ${this.scrollOffset}/${maxScroll} | End latest` : "";
     const leftText = `${spinner}${statusText}${imageText}${scrollText}`;
-    const skillText = this.skillCount > 0 ? `  skills: ${this.skillCount}  ` : "";
     const costText = this.cost > 0 ? `  ${formatCost(this.cost)}  ` : "";
     const contextText = this.contextInfo ? `  ${formatContextInfo(this.contextInfo)}  ` : "";
     const modelText = this.model ? `  ${this.model}  ` : "";
@@ -1697,7 +1690,7 @@ export class Tui {
     const cwdText = displayCwd ? `  ${displayCwd}  ` : "";
     const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
     // These strings are plain ASCII (no ANSI), so displayWidth === .length
-    const rightWidth = cwdText.length + skillText.length + costText.length + contextText.length + modelText.length;
+    const rightWidth = cwdText.length + costText.length + contextText.length + modelText.length;
     const leftWidth = Math.max(1, columns - horizontalPadding * 2 - rightWidth);
     const leftVisible = takeRight(leftText, leftWidth);
     const leftPadded = `${" ".repeat(horizontalPadding)}${leftVisible}`;
@@ -1708,7 +1701,6 @@ export class Tui {
     return (
       `${bg(235)}${fg(fgColor)}${leftPadded}${" ".repeat(gapWidth)}` +
       `${bg(235)}${fg(246)}${cwdText}` +
-      `${bg(235)}${fg(151)}${skillText}` +
       `${bg(235)}${fg(187)}${costText}` +
       `${bg(235)}${fg(contextFgColor)}${contextText}` +
       `${bg(235)}${fg(109)}${modelText}${RESET}`
