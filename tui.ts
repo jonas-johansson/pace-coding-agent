@@ -511,6 +511,8 @@ export class Tui {
           if (chars[i + 1] === "\n") {
             i += 1;
           }
+        } else if (this.suggestionActive) {
+          this.acceptSuggestion();
         } else {
           this.submitInput();
         }
@@ -996,7 +998,7 @@ export class Tui {
     if (slash) {
       const query = slash.query.toLowerCase();
       const matches = this.slashItems.filter((item) => item.label.toLowerCase().includes(query));
-      if (matches.length > 0) {
+      if (matches.length > 0 && !this.hasExactMatch(matches, this.input)) {
         this.suggestionMode = "slash";
         this.suggestionQuery = slash.query;
         this.suggestionTokenStart = slash.start;
@@ -1020,7 +1022,7 @@ export class Tui {
       }
       const query = file.query.toLowerCase();
       const matches = this.filePaths.filter((path) => path.toLowerCase().includes(query));
-      if (matches.length > 0) {
+      if (matches.length > 0 && !this.hasExactMatchForPaths(matches, "@" + file.query)) {
         this.suggestionMode = "file";
         this.suggestionQuery = file.query;
         this.suggestionTokenStart = file.start;
@@ -1032,6 +1034,16 @@ export class Tui {
     }
 
     this.dismissSuggestions();
+  }
+
+  private hasExactMatch(matches: SuggestionItem[], fullToken: string): boolean {
+    const tokenLower = fullToken.toLowerCase();
+    return matches.some((item) => item.label.toLowerCase() === tokenLower);
+  }
+
+  private hasExactMatchForPaths(paths: string[], fullToken: string): boolean {
+    const tokenLower = fullToken.toLowerCase();
+    return paths.some((path) => path.toLowerCase() === tokenLower);
   }
 
   private dismissSuggestions() {
@@ -1076,8 +1088,9 @@ export class Tui {
       const chars = Array.from(this.input);
       const before = chars.slice(0, this.suggestionTokenStart).join("");
       const after = chars.slice(this.suggestionTokenEnd).join("");
-      this.input = before + item.insertText + after;
-      this.inputCursor = this.suggestionTokenStart + item.insertText.length;
+      const insertWithSpace = item.insertText + " ";
+      this.input = before + insertWithSpace + after;
+      this.inputCursor = this.suggestionTokenStart + insertWithSpace.length;
     }
     this.dismissSuggestions();
     this.requestRender();
@@ -1771,7 +1784,13 @@ export class Tui {
     const isBashCommand = this.input.startsWith("!");
     const inputBg = isBashCommand ? 237 : 236;
     const inputFg = isBashCommand ? 179 : 252;
-    const renderedContent = visibleRows.map((line) => renderBar(`${" ".repeat(horizontalPadding)}${line}`, columns, inputBg, inputFg, true));
+    const renderedContent = visibleRows.map((line) => {
+      const prefix = " ".repeat(horizontalPadding);
+      const highlighted = highlightInputLine(line, inputFg);
+      const visibleWidth = horizontalPadding + displayWidth(line);
+      const pad = Math.max(0, columns - visibleWidth);
+      return `${bg(inputBg)}${fg(inputFg)}${prefix}${highlighted}${RESET}${bg(inputBg)}${" ".repeat(pad)}${RESET}`;
+    });
 
     return {
       lines: hasPadding
@@ -1781,6 +1800,52 @@ export class Tui {
       cursorCol,
     };
   }
+}
+
+/**
+ * Highlights slash commands (`/word`) and file mentions (`@word`) in the
+ * input line with distinct colors. Returns an ANSI string where tokens are
+ * wrapped in the appropriate fg() sequences. The caller is responsible for
+ * adding background and padding.
+ */
+function highlightInputLine(line: string, inputFg: number): string {
+  const segments: { text: string; color: number }[] = [];
+  let index = 0;
+
+  while (index < line.length) {
+    let found = false;
+    for (let i = index; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === "/" || ch === "@") {
+        const isWordStart = i === index || !/[\p{L}\p{Nd}]/u.test(line[i - 1]);
+        if (isWordStart) {
+          if (i > index) {
+            segments.push({ text: line.slice(index, i), color: inputFg });
+          }
+          let j = i + 1;
+          while (j < line.length && line[j] !== " ") {
+            j++;
+          }
+          const word = line.slice(i, j);
+          const color = ch === "/" ? 117 : 151;
+          segments.push({ text: word, color });
+          index = j;
+          found = true;
+          break;
+        }
+      }
+    }
+    if (!found) {
+      segments.push({ text: line.slice(index), color: inputFg });
+      break;
+    }
+  }
+
+  let result = "";
+  for (const seg of segments) {
+    result += `${fg(seg.color)}${seg.text}`;
+  }
+  return result;
 }
 
 function copyToClipboard(text: string) {
