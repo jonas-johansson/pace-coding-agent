@@ -1817,7 +1817,10 @@ function highlightInputLine(line: string, inputFg: number): string {
     for (let i = index; i < line.length; i++) {
       const ch = line[i];
       if (ch === "/" || ch === "@") {
-        const isWordStart = i === index || !/[\p{L}\p{Nd}]/u.test(line[i - 1]);
+        const prev = i > 0 ? line[i - 1] : undefined;
+        const isWordStart = ch === "/"
+          ? (prev === undefined || /\s/.test(prev))
+          : (prev === undefined || !/[\p{L}\p{Nd}]/u.test(prev));
         if (isWordStart) {
           if (i > index) {
             segments.push({ text: line.slice(index, i), color: inputFg });
