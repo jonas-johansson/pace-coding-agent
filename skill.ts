@@ -235,23 +235,23 @@ export function formatSkillsListing(skills: Skill[]): string {
 
   if (projectSkills.length > 0) {
     const lines = projectSkills.map(
-      (s) => `  ${s.name} — ${s.description}`,
+      (s) => `- **${s.name}** — ${s.description}`,
     );
-    sections.push(`Project skills (.agents/skills/):\n${lines.join("\n")}`);
+    sections.push(`### Project (.agents/skills/)\n\n${lines.join("\n")}`);
   }
 
   if (globalSkills.length > 0) {
     const lines = globalSkills.map(
-      (s) => `  ${s.name} — ${s.description}`,
+      (s) => `- **${s.name}** — ${s.description}`,
     );
-    sections.push(`Global skills (~/.config/agents/skills/):\n${lines.join("\n")}`);
+    sections.push(`### Global (~/.agents/skills/)\n\n${lines.join("\n")}`);
   }
 
   if (sections.length === 0) {
-    return "No skills found.\n\nPlace skills in .agents/skills/<name>/SKILL.md (project) or ~/.agents/skills/<name>/SKILL.md (global).\n\nOr install from the skills.sh ecosystem: npx skills add <owner/repo>";
+    return "No skills found.\n\nPlace skills in `.agents/skills/<name>/SKILL.md` (project) or `~/.agents/skills/<name>/SKILL.md` (global).\n\nOr install from the skills.sh ecosystem: `npx skills add <owner/repo>`";
   }
 
-  return sections.join("\n\n");
+  return `## Available Skills\n\n${sections.join("\n\n")}`;
 }
 
 /**
