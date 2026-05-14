@@ -146,7 +146,7 @@ export interface Provider {
 
 export type ModelConfig = {
   id: string;
-  provider: "anthropic" | "opencode-zen" | "openai";
+  provider: "anthropic" | "opencode-zen" | "openai" | "fireworks";
   contextWindow: number;
   maxOutputTokens: number;
   supportsImages: boolean;
@@ -211,6 +211,19 @@ export const MODELS: Record<string, ModelConfig> = {
       outputPerMTok: 4.00,
     },
   },
+  "kimi-k2.6-fw": {
+    id: "kimi-k2.6-fw",
+    provider: "fireworks",
+    contextWindow: 262_144,
+    maxOutputTokens: 32_000,
+    supportsImages: true,
+    pricing: {
+      inputPerMTok: 0.95,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.16,
+      outputPerMTok: 4.00,
+    },
+  },
   "gpt-5.5": {
     id: "gpt-5.5",
     provider: "openai",
@@ -232,6 +245,8 @@ export const MODEL_ALIASES: Record<string, string> = {
   opus: "claude-opus-4-6",
   kimi: "kimi-k2.6",
   "k2.6": "kimi-k2.6",
+  "kimi-fw": "kimi-k2.6-fw",
+  "k2.6-fw": "kimi-k2.6-fw",
   "gpt5.5": "gpt-5.5",
   "5.5": "gpt-5.5",
 };

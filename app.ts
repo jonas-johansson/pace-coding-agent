@@ -33,6 +33,7 @@ import {
 import { AnthropicProvider } from "./providers/anthropic";
 import { OpenCodeZenProvider } from "./providers/opencode-zen";
 import { OpenAIProvider } from "./providers/openai";
+import { FireworksProvider } from "./providers/fireworks";
 import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
 import { sendDesktopNotification } from "./notify";
 
@@ -60,6 +61,7 @@ function formatCwd(cwd: string): string {
 let anthropicProvider: AnthropicProvider | undefined;
 let openCodeZenProvider: OpenCodeZenProvider | undefined;
 let openAIProvider: OpenAIProvider | undefined;
+let fireworksProvider: FireworksProvider | undefined;
 
 function getProvider(config: ModelConfig): Provider {
   switch (config.provider) {
@@ -72,6 +74,9 @@ function getProvider(config: ModelConfig): Provider {
     case "openai":
       if (!openAIProvider) openAIProvider = new OpenAIProvider();
       return openAIProvider;
+    case "fireworks":
+      if (!fireworksProvider) fireworksProvider = new FireworksProvider();
+      return fireworksProvider;
   }
 }
 
