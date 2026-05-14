@@ -218,6 +218,58 @@ async function* parseSseLines(reader: ReadableStreamDefaultReader<Uint8Array>): 
   }
 }
 
+// ── Retry helpers ───────────────────────────────────────────────────────────
+
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 1000;
+const MAX_DELAY_MS = 30000;
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }, { once: true });
+  });
+}
+
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  signal?: AbortSignal,
+): Promise<Response> {
+  let attempt = 0;
+  while (true) {
+    const response = await fetch(url, { ...init, signal });
+
+    if (response.status !== 429) {
+      return response;
+    }
+
+    if (attempt >= MAX_RETRIES) {
+      return response;
+    }
+
+    // Honor Retry-After if present (seconds); otherwise exponential backoff + jitter.
+    const retryAfter = response.headers.get("retry-after");
+    let waitMs = retryAfter
+      ? parseInt(retryAfter, 10) * 1000
+      : Math.min(MAX_DELAY_MS, BASE_DELAY_MS * Math.pow(2, attempt));
+    waitMs += Math.random() * 1000; // jitter
+
+    console.error(
+      `Fireworks rate limit (429), retrying in ${(waitMs / 1000).toFixed(1)}s… (attempt ${attempt + 1}/${MAX_RETRIES})`,
+    );
+    await delay(waitMs, signal);
+    attempt++;
+  }
+}
+
 // ── Provider implementation ─────────────────────────────────────────────────
 
 export class FireworksProvider implements Provider {
@@ -267,16 +319,19 @@ export class FireworksProvider implements Provider {
       frequency_penalty: 0,
     };
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
+    const response = await fetchWithRetry(
+      `${this.baseUrl}/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(body),
       },
-      body: JSON.stringify(body),
-      signal: params.signal,
-    });
+      params.signal,
+    );
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
