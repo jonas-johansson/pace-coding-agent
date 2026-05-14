@@ -64,6 +64,25 @@ function formatCwd(cwd: string): string {
   return cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd;
 }
 
+async function getProjectFiles(): Promise<string[]> {
+  const { exec } = await import("child_process");
+  const { promisify } = await import("util");
+  const execAsync = promisify(exec);
+
+  try {
+    const { stdout } = await execAsync(
+      `rg --files --hidden -g '!node_modules/' -g '!.git/' -g '!dist/' -g '!build/' -g '!coverage/' -g '!.next/' -g '!vendor/'`,
+      { cwd: process.cwd(), maxBuffer: 10 * 1024 * 1024 },
+    );
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  } catch {
+    return [];
+  }
+}
+
 // ── Provider instances (lazily created) ──────────────────────────────────────
 
 let anthropicProvider: AnthropicProvider | undefined;
@@ -101,7 +120,24 @@ function cancelPrompt() {
   currentAbortController.abort();
 }
 
-const tui = new Tui({ onSubmit: handleUserInput, onTab: cycleModel, onShiftTab: cycleModelReverse, onEscape: cancelPrompt, onPasteImage: handlePasteImage, model: DEFAULT_MODEL_ID, cwd: process.cwd() });
+const tui = new Tui({
+  onSubmit: handleUserInput,
+  onTab: cycleModel,
+  onShiftTab: cycleModelReverse,
+  onEscape: cancelPrompt,
+  onPasteImage: handlePasteImage,
+  slashCommands: () => [
+    { label: "/new", detail: "Start a new conversation", kind: "command", insertText: "/new " },
+    { label: "/exit", detail: "Exit the application", kind: "command", insertText: "/exit " },
+    { label: "/quit", detail: "Exit the application", kind: "command", insertText: "/quit " },
+    { label: "/model", detail: "Show or switch model", kind: "command", insertText: "/model " },
+    { label: "/skills", detail: "List available skills", kind: "command", insertText: "/skills " },
+    { label: "/skill:<name>", detail: "Load and run a skill", kind: "command", insertText: "/skill:" },
+  ],
+  fileSuggestions: getProjectFiles,
+  model: DEFAULT_MODEL_ID,
+  cwd: process.cwd(),
+});
 
 let promptRunning = false;
 let currentAbortController: AbortController | null = null;

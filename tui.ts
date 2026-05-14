@@ -23,6 +23,14 @@ export type ContextInfo = {
 import { homedir } from "os";
 
 type SubmitHandler = (input: string) => void | Promise<void>;
+type SuggestionItem = {
+  label: string;
+  detail: string;
+  kind: "command" | "file";
+  insertText: string;
+};
+type SuggestionProvider = () => SuggestionItem[];
+type FileSuggestionProvider = () => Promise<string[]>;
 type SegmentStyle = "normal" | "bold" | "italic" | "code" | "heading" | "title";
 
 type ScreenPosition = {
@@ -77,6 +85,8 @@ const INPUT_VERTICAL_PADDING = 2;
 const STATUS_ROWS = 1;
 const MIN_MESSAGE_ROWS = 1;
 const INSERT_NEWLINE_KEYS = new Set(["\x1b[13;2u", "\x1b[13;2~", "\x1b[27;2;13~"]);
+const MAX_SUGGESTION_ROWS = 6;
+const SUGGESTION_BG = 235;
 
 /** Pitch black background used for the main canvas (assistant text, inline tools). */
 const CANVAS_BG = 234;
@@ -156,9 +166,22 @@ export class Tui {
   private focused = true;
   private exitConfirmPresses = 0;
 
-  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; model?: string; cwd?: string } = {}) {
+  // ── Suggestion popup state ──
+  private slashItems: SuggestionItem[] = [];
+  private filePaths: string[] = [];
+  private filePathsLoaded = false;
+  private filePathsLoading = false;
+  private suggestionMode: "none" | "slash" | "file" = "none";
+  private suggestionQuery = "";
+  private suggestionIndex = 0;
+  private suggestionActive = false;
+  private suggestionTokenStart = 0;
+  private suggestionTokenEnd = 0;
+
+  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; slashCommands?: SuggestionProvider; fileSuggestions?: FileSuggestionProvider; model?: string; cwd?: string } = {}) {
     this.model = options.model ?? "";
     this.cwd = options.cwd ?? "";
+    this.slashItems = options.slashCommands ? options.slashCommands() : [];
   }
 
   start() {
@@ -360,6 +383,7 @@ export class Tui {
     this.inputCursor = 0;
     this.inputScrollRow = 0;
     this.deactivateHistory();
+    this.dismissSuggestions();
   }
 
   private recallHistory(index: number) {
@@ -367,6 +391,7 @@ export class Tui {
     this.input = this.inputHistory[index] ?? "";
     this.inputCursor = Array.from(this.input).length;
     this.inputScrollRow = 0;
+    this.dismissSuggestions();
     this.requestRender();
   }
 
@@ -442,6 +467,11 @@ export class Tui {
 
   private handleData = (data: string) => {
     if (data === "\u0003") {
+      if (this.suggestionActive) {
+        this.dismissSuggestions();
+        this.requestRender();
+        return;
+      }
       if (this.input) {
         this.exitConfirmPresses = 0;
         this.clearInput();
@@ -503,7 +533,11 @@ export class Tui {
       }
 
       if (char === "\t") {
-        this.options.onTab?.();
+        if (this.suggestionActive) {
+          this.acceptSuggestion();
+        } else {
+          this.options.onTab?.();
+        }
         continue;
       }
 
@@ -537,8 +571,13 @@ export class Tui {
   };
 
   private handleEscape(data: string) {
-    // Bare ESC key (single \x1b byte) — cancel running prompt
+    // Bare ESC key (single \x1b byte) — dismiss suggestions first, then cancel running prompt
     if (data === "\x1b") {
+      if (this.suggestionActive) {
+        this.dismissSuggestions();
+        this.requestRender();
+        return true;
+      }
       if (this.running) {
         this.options.onEscape?.();
       }
@@ -556,15 +595,16 @@ export class Tui {
     }
 
     switch (data) {
-      // Up/Down navigate input history while a recalled history entry is active.
-      // Left/Right only move the cursor and keep history navigation active.
+      // Up/Down navigate suggestions when active, otherwise input history / cursor.
       case "\x1b[A":
         this.clearSelection();
+        if (this.navigateSuggestionUp()) return true;
         if (this.navigateHistoryUp()) return true;
         this.moveCursorUp();
         return true;
       case "\x1b[B":
         this.clearSelection();
+        if (this.navigateSuggestionDown()) return true;
         if (this.navigateHistoryDown()) return true;
         this.moveCursorDown();
         return true;
@@ -673,6 +713,7 @@ export class Tui {
     chars.splice(this.inputCursor, 0, ...insertChars);
     this.input = chars.join("");
     this.inputCursor += insertChars.length;
+    this.updateSuggestions();
     this.requestRender();
   }
 
@@ -686,6 +727,7 @@ export class Tui {
     chars.splice(this.inputCursor - 1, 1);
     this.input = chars.join("");
     this.inputCursor -= 1;
+    this.updateSuggestions();
     this.requestRender();
   }
 
@@ -698,6 +740,7 @@ export class Tui {
     this.applyHistoryInput();
     chars.splice(this.inputCursor, 1);
     this.input = chars.join("");
+    this.updateSuggestions();
     this.requestRender();
   }
 
@@ -706,6 +749,7 @@ export class Tui {
     const chars = Array.from(this.input);
     this.input = chars.slice(this.inputCursor).join("");
     this.inputCursor = 0;
+    this.updateSuggestions();
     this.requestRender();
   }
 
@@ -724,6 +768,7 @@ export class Tui {
       chars.splice(index, 1);
       this.input = chars.join("");
       this.inputCursor -= 1;
+      this.updateSuggestions();
       this.requestRender();
       return;
     }
@@ -745,12 +790,14 @@ export class Tui {
     chars.splice(deleteFrom, deleteCount);
     this.input = chars.join("");
     this.inputCursor = deleteFrom;
+    this.updateSuggestions();
     this.requestRender();
   }
 
   private moveCursorLeft() {
     if (this.inputCursor > 0) {
       this.inputCursor -= 1;
+      this.updateSuggestions();
       this.requestRender();
     }
   }
@@ -759,6 +806,7 @@ export class Tui {
     const length = Array.from(this.input).length;
     if (this.inputCursor < length) {
       this.inputCursor += 1;
+      this.updateSuggestions();
       this.requestRender();
     }
   }
@@ -787,6 +835,7 @@ export class Tui {
     }
 
     this.inputCursor = Math.max(0, index + 1);
+    this.updateSuggestions();
     this.requestRender();
   }
 
@@ -814,6 +863,7 @@ export class Tui {
     }
 
     this.inputCursor = Math.min(chars.length, index);
+    this.updateSuggestions();
     this.requestRender();
   }
 
@@ -827,6 +877,7 @@ export class Tui {
     if (layout.cursorLine <= 0) {
       // Already on the first visual line — move to start
       this.inputCursor = 0;
+      this.updateSuggestions();
       this.requestRender();
       return;
     }
@@ -835,6 +886,7 @@ export class Tui {
     const targetLine = layout.cursorLine - 1;
     const targetCol = layout.cursorCol;
     this.inputCursor = layout.charOffsetAt(targetLine, targetCol);
+    this.updateSuggestions();
     this.requestRender();
   }
 
@@ -848,6 +900,7 @@ export class Tui {
     if (layout.cursorLine >= layout.lines.length - 1) {
       // Already on the last visual line — move to end
       this.inputCursor = Array.from(this.input).length;
+      this.updateSuggestions();
       this.requestRender();
       return;
     }
@@ -856,6 +909,7 @@ export class Tui {
     const targetLine = layout.cursorLine + 1;
     const targetCol = layout.cursorCol;
     this.inputCursor = layout.charOffsetAt(targetLine, targetCol);
+    this.updateSuggestions();
     this.requestRender();
   }
 
@@ -867,6 +921,7 @@ export class Tui {
     const layout = wrapInputTextWithCursor(raw, textWidth, this.inputCursor);
 
     this.inputCursor = layout.charOffsetAt(layout.cursorLine, 0);
+    this.updateSuggestions();
     this.requestRender();
   }
 
@@ -880,7 +935,170 @@ export class Tui {
     const lineText = layout.lines[layout.cursorLine] ?? "";
     const lineWidth = displayWidth(lineText);
     this.inputCursor = layout.charOffsetAt(layout.cursorLine, lineWidth);
+    this.updateSuggestions();
     this.requestRender();
+  }
+
+  // ── Suggestion popup logic ──
+
+  private async ensureFilePaths() {
+    if (this.filePathsLoaded || this.filePathsLoading || !this.options.fileSuggestions) {
+      return;
+    }
+    this.filePathsLoading = true;
+    try {
+      const paths = await this.options.fileSuggestions();
+      this.filePaths = paths.slice(0, 5000);
+      this.filePathsLoaded = true;
+    } catch {
+      this.filePaths = [];
+      this.filePathsLoaded = true;
+    } finally {
+      this.filePathsLoading = false;
+      if (this.suggestionMode === "file" && this.suggestionActive) {
+        this.updateSuggestions();
+        this.requestRender();
+      }
+    }
+  }
+
+  private detectSlashMode(): { query: string; start: number; end: number } | null {
+    if (!this.input.startsWith("/")) {
+      return null;
+    }
+    const chars = Array.from(this.input);
+    // Cursor must be within the first token (no spaces yet)
+    for (let i = 0; i < this.inputCursor; i++) {
+      if (chars[i] === " " || chars[i] === "\n") {
+        return null;
+      }
+    }
+    return { query: this.input.slice(1, this.inputCursor), start: 0, end: this.inputCursor };
+  }
+
+  private detectFileMode(): { query: string; start: number; end: number } | null {
+    const chars = Array.from(this.input);
+    let start = this.inputCursor - 1;
+    while (start >= 0 && chars[start] !== " " && chars[start] !== "\n") {
+      start -= 1;
+    }
+    start += 1;
+    const end = this.inputCursor;
+    const token = chars.slice(start, end).join("");
+    if (token.startsWith("@")) {
+      return { query: token.slice(1), start, end };
+    }
+    return null;
+  }
+
+  private updateSuggestions() {
+    const slash = this.detectSlashMode();
+    if (slash) {
+      const query = slash.query.toLowerCase();
+      const matches = this.slashItems.filter((item) => item.label.toLowerCase().includes(query));
+      if (matches.length > 0) {
+        this.suggestionMode = "slash";
+        this.suggestionQuery = slash.query;
+        this.suggestionTokenStart = slash.start;
+        this.suggestionTokenEnd = slash.end;
+        this.suggestionIndex = Math.min(this.suggestionIndex, matches.length - 1);
+        this.suggestionActive = true;
+        return;
+      }
+    }
+
+    const file = this.detectFileMode();
+    if (file) {
+      if (!this.filePathsLoaded && this.options.fileSuggestions) {
+        this.suggestionMode = "file";
+        this.suggestionQuery = file.query;
+        this.suggestionTokenStart = file.start;
+        this.suggestionTokenEnd = file.end;
+        this.suggestionActive = true;
+        void this.ensureFilePaths();
+        return;
+      }
+      const query = file.query.toLowerCase();
+      const matches = this.filePaths.filter((path) => path.toLowerCase().includes(query));
+      if (matches.length > 0) {
+        this.suggestionMode = "file";
+        this.suggestionQuery = file.query;
+        this.suggestionTokenStart = file.start;
+        this.suggestionTokenEnd = file.end;
+        this.suggestionIndex = Math.min(this.suggestionIndex, matches.length - 1);
+        this.suggestionActive = true;
+        return;
+      }
+    }
+
+    this.dismissSuggestions();
+  }
+
+  private dismissSuggestions() {
+    this.suggestionMode = "none";
+    this.suggestionQuery = "";
+    this.suggestionIndex = 0;
+    this.suggestionActive = false;
+    this.suggestionTokenStart = 0;
+    this.suggestionTokenEnd = 0;
+  }
+
+  private getSuggestionMatches(): SuggestionItem[] {
+    if (!this.suggestionActive) return [];
+    const query = this.suggestionQuery.toLowerCase();
+    if (this.suggestionMode === "slash") {
+      return this.slashItems.filter((item) => item.label.toLowerCase().includes(query));
+    }
+    if (this.suggestionMode === "file") {
+      return this.filePaths
+        .filter((path) => path.toLowerCase().includes(query))
+        .map((path) => ({
+          label: path,
+          detail: "file",
+          kind: "file" as const,
+          insertText: `@${path}`,
+        }));
+    }
+    return [];
+  }
+
+  private acceptSuggestion() {
+    const matches = this.getSuggestionMatches();
+    if (matches.length === 0) {
+      this.dismissSuggestions();
+      return;
+    }
+    const item = matches[this.suggestionIndex];
+    if (this.suggestionMode === "slash") {
+      this.input = item.insertText;
+      this.inputCursor = this.input.length;
+    } else {
+      const chars = Array.from(this.input);
+      const before = chars.slice(0, this.suggestionTokenStart).join("");
+      const after = chars.slice(this.suggestionTokenEnd).join("");
+      this.input = before + item.insertText + after;
+      this.inputCursor = this.suggestionTokenStart + item.insertText.length;
+    }
+    this.dismissSuggestions();
+    this.requestRender();
+  }
+
+  private navigateSuggestionUp(): boolean {
+    if (!this.suggestionActive) return false;
+    const matches = this.getSuggestionMatches();
+    if (matches.length === 0) return false;
+    this.suggestionIndex = Math.max(0, this.suggestionIndex - 1);
+    this.requestRender();
+    return true;
+  }
+
+  private navigateSuggestionDown(): boolean {
+    if (!this.suggestionActive) return false;
+    const matches = this.getSuggestionMatches();
+    if (matches.length === 0) return false;
+    this.suggestionIndex = Math.min(matches.length - 1, this.suggestionIndex + 1);
+    this.requestRender();
+    return true;
   }
 
   private handleMouse(data: string) {
@@ -1142,7 +1360,11 @@ export class Tui {
     const rows = Math.max(process.stdout.rows ?? 24, 1);
     const statusRows = this.statusRows(rows);
     const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
-    const messageRows = Math.max(0, rows - statusRows - input.lines.length);
+    const suggestionPopup = this.suggestionActive
+      ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex)
+      : [];
+    const popupRows = suggestionPopup.length;
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows);
     const renderedBlocks: string[] = [];
     const blockLineMap: number[] = [];
     const spinnerFrame = SPINNER_FRAMES[this.spinnerFrame];
@@ -1311,8 +1533,8 @@ export class Tui {
     const inputSection = input.lines;
 
     const lines = statusRows > 0
-      ? [...messageLines, ...inputSection, statusLine]
-      : [...messageLines, ...inputSection];
+      ? [...messageLines, ...suggestionPopup, ...inputSection, statusLine]
+      : [...messageLines, ...suggestionPopup, ...inputSection];
     this.screenColumns = columns;
     // Defer screenLines computation — it runs clipAnsi + stripAnsi on
     // every row and is only needed for mouse selection / copy.  Store
@@ -1380,7 +1602,7 @@ export class Tui {
     this.previousFrameColumns = columns;
 
     // Always position cursor and show it
-    output.push(`\x1b[${Math.min(rows, messageRows + input.cursorRow)};${input.cursorCol}H${SHOW_CURSOR}`);
+    output.push(`\x1b[${Math.min(rows, messageRows + suggestionPopup.length + input.cursorRow)};${input.cursorCol}H${SHOW_CURSOR}`);
 
     process.stdout.write(output.join(""));
   }
@@ -1478,6 +1700,34 @@ export class Tui {
       `${bg(235)}${fg(contextFgColor)}${contextText}` +
       `${bg(235)}${fg(109)}${modelText}${RESET}`
     );
+  }
+
+  private renderSuggestionPopup(columns: number, matches: SuggestionItem[], selectedIndex: number): string[] {
+    if (matches.length === 0) return [];
+    const maxRows = Math.min(matches.length, MAX_SUGGESTION_ROWS);
+    const lines: string[] = [];
+    for (let i = 0; i < maxRows; i++) {
+      const item = matches[i];
+      const isSelected = i === selectedIndex;
+      const prefix = isSelected ? `${INVERSE}` : "";
+      const suffix = isSelected ? `${RESET}` : "";
+      const labelColor = item.kind === "command" ? fg(117) : fg(252);
+      const label = item.label.padEnd(20, " ");
+      const detail = item.detail;
+      const text = `  ${label} ${detail}`;
+      const clipped = clipAnsi(text, columns - 4);
+      const pad = Math.max(0, columns - 4 - visibleLength(clipped));
+      lines.push(
+        `${bg(SUGGESTION_BG)}  ${prefix}${labelColor}${clipped}${suffix}${" ".repeat(pad)}  ${RESET}`,
+      );
+    }
+    if (matches.length > MAX_SUGGESTION_ROWS) {
+      const remaining = matches.length - MAX_SUGGESTION_ROWS;
+      const moreText = `  … and ${remaining} more  `;
+      const pad = Math.max(0, columns - visibleLength(moreText));
+      lines.push(`${bg(SUGGESTION_BG)}${fg(245)}${moreText}${" ".repeat(pad)}${RESET}`);
+    }
+    return lines;
   }
 
   private renderInputLine(columns: number, maxRows: number) {
