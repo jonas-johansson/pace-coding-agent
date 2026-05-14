@@ -44,6 +44,7 @@ import { OpenAIProvider } from "./providers/openai";
 import { FireworksProvider } from "./providers/fireworks";
 import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
 import { sendDesktopNotification } from "./notify";
+import { onEvent } from "./events";
 
 /**
  * Attempts to read AGENTS.md from the current working directory.
@@ -1023,6 +1024,11 @@ async function prompt(
 async function main() {
   tui.start();
   updateContextInfo();
+
+  onEvent("rate-limit-retry", (event) => {
+    const seconds = (event.waitMs / 1000).toFixed(1);
+    tui.setStatus(`Rate limited on ${new URL(event.url).hostname}, retrying in ${seconds}s… (${event.attempt}/${event.maxRetries})`);
+  });
 }
 
 process.on("uncaughtException", (error: unknown) => {
