@@ -253,7 +253,7 @@ export const MODEL_ALIASES: Record<string, string> = {
 
 export const AVAILABLE_MODEL_IDS = Object.keys(MODELS);
 
-export const DEFAULT_MODEL_ID = "claude-haiku-4-5";
+export const DEFAULT_MODEL_ID = "kimi-k2.6-fw";
 
 export function resolveModelId(input: string): string | undefined {
   if (input in MODELS) return input;
