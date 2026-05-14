@@ -139,6 +139,7 @@ export class Tui {
   private selection: SelectionRange | undefined;
   private selecting = false;
   private selectionMoved = false;
+  private inputClickStart = false;
   private blockLineMap: number[] = [];
   private lastMessageStart = 0;
   private lastMessageRows = 0;
@@ -676,6 +677,18 @@ export class Tui {
         this.deleteForward();
         return true;
 
+      // Shift+Delete — delete current line
+      case "\x1b[3;2~":
+        this.clearSelection();
+        this.deleteCurrentLine();
+        return true;
+
+      // Ctrl+Delete — delete next word
+      case "\x1b[3;5~":
+        this.clearSelection();
+        this.deleteWordForward();
+        return true;
+
       // Alt+Backspace — delete word
       case "\x1b\u007f":
       case "\x1b\b":
@@ -790,6 +803,75 @@ export class Tui {
     this.requestRender();
   }
 
+  private deleteCurrentLine() {
+    if (!this.input) {
+      return;
+    }
+
+    this.applyHistoryInput();
+    const chars = Array.from(this.input);
+
+    // Find start of current line (after previous \n, or index 0)
+    let start = this.inputCursor;
+    while (start > 0 && chars[start - 1] !== "\n") {
+      start -= 1;
+    }
+
+    // Find end of current line (before next \n, or end of string)
+    let end = this.inputCursor;
+    while (end < chars.length && chars[end] !== "\n") {
+      end += 1;
+    }
+
+    // Delete the line content plus one adjacent newline
+    if (end < chars.length) {
+      // There's a \n after the line — include it
+      end += 1;
+    } else if (start > 0) {
+      // No \n after, but there's a \n before — include the preceding \n
+      start -= 1;
+    }
+
+    chars.splice(start, end - start);
+    this.input = chars.join("");
+    this.inputCursor = start;
+    this.updateSuggestions();
+    this.requestRender();
+  }
+
+  private deleteWordForward() {
+    const chars = Array.from(this.input);
+    if (this.inputCursor >= chars.length) {
+      return;
+    }
+
+    this.applyHistoryInput();
+    let index = this.inputCursor;
+
+    // Skip spaces
+    while (index < chars.length && (chars[index] === " " || chars[index] === "\t")) {
+      index += 1;
+    }
+
+    // If on a word character, skip consecutive word characters
+    if (index < chars.length && /^[\p{L}\p{Nd}]$/u.test(chars[index])) {
+      while (index < chars.length && /^[\p{L}\p{Nd}]$/u.test(chars[index])) {
+        index += 1;
+      }
+    } else {
+      // Skip consecutive special characters until space or word character
+      while (index < chars.length && chars[index] !== " " && chars[index] !== "\t" && !/^[\p{L}\p{Nd}]$/u.test(chars[index])) {
+        index += 1;
+      }
+    }
+
+    const deleteCount = index - this.inputCursor;
+    chars.splice(this.inputCursor, deleteCount);
+    this.input = chars.join("");
+    this.updateSuggestions();
+    this.requestRender();
+  }
+
   private moveCursorLeft() {
     if (this.inputCursor > 0) {
       this.inputCursor -= 1;
@@ -843,19 +925,23 @@ export class Tui {
 
     let index = this.inputCursor;
 
-    // Skip word characters
-    while (index < chars.length && /^[\p{L}\p{Nd}]$/u.test(chars[index])) {
-      index += 1;
-    }
-
-    // Skip spaces
-    while (index < chars.length && (chars[index] === " " || chars[index] === "\t")) {
-      index += 1;
-    }
-
-    // If we didn't move (started on a non-word, non-space char), skip it
-    if (index === this.inputCursor) {
-      index += 1;
+    if (/^[\p{L}\p{Nd}]$/u.test(chars[index])) {
+      // On a word character — move to the end of this word
+      while (index < chars.length && /^[\p{L}\p{Nd}]$/u.test(chars[index])) {
+        index += 1;
+      }
+    } else {
+      // On a non-word character (space or special) — skip spaces/specials,
+      // then move to the end of the next word
+      while (index < chars.length && (chars[index] === " " || chars[index] === "\t")) {
+        index += 1;
+      }
+      while (index < chars.length && chars[index] !== " " && chars[index] !== "\t" && !/^[\p{L}\p{Nd}]$/u.test(chars[index])) {
+        index += 1;
+      }
+      while (index < chars.length && /^[\p{L}\p{Nd}]$/u.test(chars[index])) {
+        index += 1;
+      }
     }
 
     this.inputCursor = Math.min(chars.length, index);
@@ -1163,6 +1249,14 @@ export class Tui {
       }
 
       this.updateSelection(position);
+      if (this.inputClickStart && this.isInputPosition(position.col, position.row) && !this.selectionMoved) {
+        this.handleInputClick(position.col, position.row);
+        this.selecting = false;
+        this.selection = undefined;
+        this.inputClickStart = false;
+        return true;
+      }
+      this.inputClickStart = false;
       this.finishSelection();
       return true;
     }
@@ -1181,8 +1275,141 @@ export class Tui {
       return true;
     }
 
+    if (this.isInputPosition(position.col, position.row)) {
+      this.inputClickStart = true;
+      this.selection = { anchor: position, focus: position };
+      this.selecting = true;
+      this.selectionMoved = false;
+      this.requestRender();
+      return true;
+    }
+
     this.startSelection(position);
     return true;
+  }
+
+  private handleInputClick(col: number, row: number): boolean {
+    const rows = Math.max(process.stdout.rows ?? 24, 1);
+    const statusRows = rows > 1 ? STATUS_ROWS : 0;
+    const columns = Math.max(process.stdout.columns ?? 80, 1);
+    const maxInputRows = Math.max(1, rows - statusRows - MIN_MESSAGE_ROWS);
+    const input = this.renderInputLine(columns, maxInputRows);
+    const popupRows = this.suggestionActive
+      ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex).length
+      : 0;
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows);
+
+    const inputStartRow = messageRows + popupRows + 1;
+    const inputEndRow = inputStartRow + input.lines.length - 1;
+
+    if (row < inputStartRow || row > inputEndRow) {
+      return false;
+    }
+
+    const hasPadding = maxInputRows >= INPUT_VERTICAL_PADDING + 1;
+    let contentRow = row - inputStartRow;
+    if (hasPadding) {
+      contentRow -= 1; // skip top bar
+    }
+    const contentRows = input.lines.length - (hasPadding ? 2 : 0);
+    contentRow = Math.max(0, Math.min(contentRows - 1, contentRow));
+
+    const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
+    const textWidth = Math.max(1, columns - horizontalPadding * 2);
+    const raw = sanitizeContent(this.input);
+    const layout = wrapInputTextWithCursor(raw, textWidth, this.inputCursor);
+
+    const textCol = col - horizontalPadding - 1;
+    const visualLine = this.inputScrollRow + contentRow;
+    const clampedLine = Math.max(0, Math.min(layout.lines.length - 1, visualLine));
+    const clampedCol = Math.max(0, textCol);
+
+    this.inputCursor = layout.charOffsetAt(clampedLine, clampedCol);
+    this.clearSelection();
+    this.requestRender();
+    return true;
+  }
+
+  private isInputPosition(col: number, row: number): boolean {
+    const rows = Math.max(process.stdout.rows ?? 24, 1);
+    const statusRows = rows > 1 ? STATUS_ROWS : 0;
+    const columns = Math.max(process.stdout.columns ?? 80, 1);
+    const maxInputRows = Math.max(1, rows - statusRows - MIN_MESSAGE_ROWS);
+    const input = this.renderInputLine(columns, maxInputRows);
+    const popupRows = this.suggestionActive
+      ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex).length
+      : 0;
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows);
+    const inputStartRow = messageRows + popupRows + 1;
+    const inputEndRow = inputStartRow + input.lines.length - 1;
+    return row >= inputStartRow && row <= inputEndRow;
+  }
+
+  /**
+   * If the current selection is entirely within the input box, returns the
+   * selected input text (without padding or ANSI). Otherwise returns undefined.
+   */
+  private getInputSelectionText(): string | undefined {
+    if (!this.selection) {
+      return undefined;
+    }
+
+    const rows = Math.max(process.stdout.rows ?? 24, 1);
+    const statusRows = rows > 1 ? STATUS_ROWS : 0;
+    const columns = Math.max(process.stdout.columns ?? 80, 1);
+    const maxInputRows = Math.max(1, rows - statusRows - MIN_MESSAGE_ROWS);
+    const input = this.renderInputLine(columns, maxInputRows);
+    const popupRows = this.suggestionActive
+      ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex).length
+      : 0;
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows);
+    const inputStartRow = messageRows + popupRows + 1;
+    const inputEndRow = inputStartRow + input.lines.length - 1;
+
+    const { start, end } = normalizeSelection(this.selection);
+    if (start.row < inputStartRow || end.row > inputEndRow) {
+      return undefined;
+    }
+
+    const hasPadding = maxInputRows >= INPUT_VERTICAL_PADDING + 1;
+    const horizontalPadding = Math.min(INPUT_HORIZONTAL_PADDING, Math.floor((columns - 1) / 2));
+    const textWidth = Math.max(1, columns - horizontalPadding * 2);
+    const raw = sanitizeContent(this.input);
+    const layout = wrapInputTextWithCursor(raw, textWidth, this.inputCursor);
+
+    const lines: string[] = [];
+    for (let screenRow = start.row; screenRow <= end.row; screenRow += 1) {
+      const bounds = selectionBoundsForRow(this.selection, screenRow, columns);
+      if (!bounds) {
+        continue;
+      }
+
+      // Map screen row to visual line index within the input content
+      let contentRow = screenRow - inputStartRow;
+      if (hasPadding) {
+        contentRow -= 1;
+      }
+      const contentRows = input.lines.length - (hasPadding ? 2 : 0);
+      contentRow = Math.max(0, Math.min(contentRows - 1, contentRow));
+      const visualLine = this.inputScrollRow + contentRow;
+      const clampedLine = Math.max(0, Math.min(layout.lines.length - 1, visualLine));
+      const lineText = layout.lines[clampedLine] ?? "";
+
+      // Convert selection bounds from screen columns to text columns
+      const lineStart = bounds.start - horizontalPadding;
+      const lineEnd = bounds.end - horizontalPadding;
+      lines.push(sliceByCells(lineText, Math.max(0, lineStart), Math.max(0, lineEnd)));
+    }
+
+    // Trim leading/trailing empty lines the same way selectedText() does
+    while (lines[0]?.trim() === "") {
+      lines.shift();
+    }
+    while (lines[lines.length - 1]?.trim() === "") {
+      lines.pop();
+    }
+
+    return lines.join("\n");
   }
 
   /** Lazily compute screenLines (plain text per row) for mouse/selection use. */
@@ -1228,6 +1455,18 @@ export class Tui {
     this.selecting = false;
     if (!this.selectionMoved) {
       this.handleBlockClick(this.selection?.anchor);
+      this.clearSelection();
+      return;
+    }
+
+    const inputText = this.getInputSelectionText();
+    if (inputText !== undefined) {
+      const text = cleanCopiedText(inputText);
+      if (text) {
+        copyToClipboard(text);
+        const lineCount = text.split("\n").length;
+        this.status = lineCount === 1 ? `copied ${visibleLength(text)} chars` : `copied ${lineCount} lines`;
+      }
       this.clearSelection();
       return;
     }
