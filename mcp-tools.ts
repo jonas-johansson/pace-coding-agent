@@ -9,7 +9,7 @@ import { z } from "zod";
 import { loadMcpConfig, getEnabledServers, type McpServerConfig } from "./mcp-config";
 import { McpStdioTransport, McpHttpTransport } from "./mcp-transport";
 import { McpClient, type McpTool } from "./mcp-client";
-import { tools as toolRegistry, type ToolDescriptor, type ToolOutput } from "./tool";
+import { registerTool, tools as toolRegistry, type ToolDescriptor, type ToolOutput } from "./tool";
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -126,7 +126,7 @@ function registerMcpTools(serverName: string, client: McpClient, mcpTools: McpTo
       continue;
     }
 
-    toolRegistry.push(descriptor as ToolDescriptor);
+    registerTool(descriptor as ToolDescriptor);
     registered.push(prefixedName);
   }
 

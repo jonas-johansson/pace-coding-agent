@@ -8,6 +8,7 @@ import {
   visualizeToolTitle,
   visualizeToolPartialTitle,
   formatToolResultBody,
+  truncateToolOutputIfNeeded,
   isAbortError,
   getProviderToolDefinitions,
   setCurrentSkills,
@@ -686,7 +687,9 @@ async function executeToolUseBlock(
 
   try {
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-    const toolOutput = await toolToExecute.execute(inputParseResult.data, signal);
+    const rawToolOutput = await toolToExecute.execute(inputParseResult.data, signal);
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    const toolOutput = await truncateToolOutputIfNeeded(rawToolOutput, contentBlock.name, contentBlock.id);
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
     const showContent = toolToExecute.showContent !== false || toolOutput.is_error;
     tui.updateBlock(blockId, {
@@ -764,8 +767,9 @@ async function handleUserInput(userMessage: string) {
     const blockId = tui.addBlock({ role: "tool", title: `bash: ${command}`, content: "", state: "running" });
 
     try {
-      const output = await bashTool.execute({ command }, undefined);
-      const content = output.content.map((p) => (p.type === "text" ? p.text : "")).join("\n").trimEnd();
+      const rawOutput = await bashTool.execute({ command }, undefined);
+      const output = await truncateToolOutputIfNeeded(rawOutput, "bash");
+      const content = formatToolResultBody(output);
       tui.updateBlock(blockId, { content, state: output.is_error ? "error" : "done" });
     } catch (error: unknown) {
       tui.updateBlock(blockId, { content: formatError(error), state: "error" });

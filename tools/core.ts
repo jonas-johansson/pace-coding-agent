@@ -1,0 +1,125 @@
+import type Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
+import { parse } from "partial-json";
+
+export function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+}
+
+export function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+export type ToolOutput = {
+  content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.SearchResultBlockParam | Anthropic.DocumentBlockParam | Anthropic.ToolReferenceBlockParam>;
+  is_error?: boolean;
+}
+
+export type ToolDisplayBlock = {
+  title?: string;
+  content: string;
+}
+
+type ZodObjectSchema = z.ZodObject<z.core.$ZodShape>;
+
+export type ToolConcurrency = "safe" | "exclusive";
+
+export type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
+  name: string;
+  description: string;
+  inputSchema: T;
+  execute: (input: z.infer<T>, signal?: AbortSignal) => Promise<ToolOutput>;
+  concurrency?: ToolConcurrency;
+  titleFormatter?: (input: Partial<z.infer<T>>) => string;
+  /**
+   * When false, the tool's result body is hidden in the TUI; the block shows
+   * only its title and state glyph. The body is still sent to the model
+   * verbatim. Errors are always shown regardless of this flag. Defaults to true.
+   */
+  showContent?: boolean;
+}
+
+export const tools: ToolDescriptor[] = [];
+
+export function registerTool<T extends ZodObjectSchema>(definition: ToolDescriptor<T>) {
+  if (tools.some(tool => tool.name === definition.name)) {
+    throw new Error(`Duplicate tool name: "${definition.name}" is already registered`);
+  }
+
+  tools.push(definition as ToolDescriptor);
+  return definition;
+}
+
+export function defineTool<T extends ZodObjectSchema>(definition: ToolDescriptor<T>) {
+  return definition;
+}
+
+export function visualizeToolTitle(toolName: string, input: unknown): string {
+  const tool = tools.find((candidate) => candidate.name === toolName);
+  if (tool?.titleFormatter && input && typeof input === "object") {
+    try {
+      return oneLine(tool.titleFormatter(input as never));
+    } catch {
+      // fall through to generic
+    }
+  }
+  return oneLine(`${toolName}: ${defaultInputSummary(input)}`);
+}
+
+export function visualizeToolPartialTitle(toolName: string, jsonString: string): string {
+  let parsed: unknown = {};
+  try {
+    parsed = parsePartialJson(jsonString);
+  } catch {
+    parsed = {};
+  }
+  return visualizeToolTitle(toolName, parsed);
+}
+
+export function formatToolResultBody(output: ToolOutput): string {
+  return formatToolOutput(output).trimEnd();
+}
+
+function defaultInputSummary(input: unknown): string {
+  if (input === null || input === undefined) return "";
+  if (typeof input === "string") return input;
+  if (typeof input !== "object") return String(input);
+  const obj = input as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  if (keys.length === 0) return "";
+  // Prefer common "path" or "command" keys
+  for (const preferred of ["command", "path", "file", "name"]) {
+    if (typeof obj[preferred] === "string") return obj[preferred] as string;
+  }
+  // Fall back to first string value
+  for (const key of keys) {
+    if (typeof obj[key] === "string") return obj[key] as string;
+  }
+  return JSON.stringify(input);
+}
+
+function oneLine(text: string): string {
+  return String(text).replace(/\s+/g, " ").trim();
+}
+
+function parsePartialJson(jsonString: string): unknown {
+  if (jsonString.length === 0) {
+    return {};
+  }
+
+  return parse(jsonString);
+}
+
+function formatToolOutput(toolOutput: ToolOutput) {
+  return toolOutput.content
+    .map((part) => {
+      if (part.type === "text") {
+        return part.text;
+      }
+
+      return `[${part.type}] ${JSON.stringify(part, null, 2)}`;
+    })
+    .join("\n\n");
+}
