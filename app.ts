@@ -45,6 +45,12 @@ import { FireworksProvider } from "./providers/fireworks";
 import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
 import { sendDesktopNotification } from "./notify";
 import { onEvent } from "./events";
+import {
+  initMcpServers,
+  shutdownMcpServers,
+  formatMcpListing,
+  getConnectedMcpServers,
+} from "./mcp-tools";
 
 /**
  * Attempts to read AGENTS.md from the current working directory.
@@ -134,6 +140,7 @@ const tui = new Tui({
     { label: "/model", detail: "Show or switch model", kind: "command", insertText: "/model " },
     { label: "/skills", detail: "List available skills", kind: "command", insertText: "/skills " },
     { label: "/skill:<name>", detail: "Load and run a skill", kind: "command", insertText: "/skill:" },
+    { label: "/mcp", detail: "List connected MCP servers and tools", kind: "command", insertText: "/mcp" },
   ],
   fileSuggestions: getProjectFiles,
   model: DEFAULT_MODEL_ID,
@@ -318,6 +325,7 @@ async function handleCommand(command: string): Promise<boolean> {
       return true;
     case "/exit":
     case "/quit": {
+      await shutdownMcpServers();
       tui.stop();
       process.exit(0);
     }
@@ -354,6 +362,14 @@ async function handleCommand(command: string): Promise<boolean> {
         role: "assistant",
         title: "Skills",
         content: formatSkillsListing(skills),
+      });
+      return true;
+    }
+    case "/mcp": {
+      tui.addBlock({
+        role: "assistant",
+        title: "MCP Servers",
+        content: formatMcpListing(),
       });
       return true;
     }
@@ -862,12 +878,24 @@ async function prompt(
 
   const baseSystem = `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${formatCwd(process.cwd())}\n\nCurrent date (YYYY-MM-DD): ${new Date().toISOString().split("T")[0]}\n\nWhen operating on files or directories in the current working directory, use relative paths rather than absolute paths.\n\nWhen listing files, use \`/bin/ls -1\` to show only filenames (one per line, no icons or extra info). Only add flags like \`-la\` if the user explicitly asks for more details.\n\nWhen searching files with Bash, prefer \`rg\`/\`rg --files\` over \`grep -R\`, \`find .\`, or \`ls -R\` because ripgrep respects \`.gitignore\`; do not run unbounded recursive searches, and if \`rg\` is unavailable explicitly exclude \`node_modules\`, \`.git\`, \`dist\`, \`build\`, \`coverage\`, \`.next\`, and \`vendor\`.`;
 
-  // Build system text: base → skills → AGENTS.md
+  // Build system text: base → skills → MCP → AGENTS.md
   const skillsBlock = formatSkillsSystemPromptBlock(skills);
   let systemText = baseSystem;
   if (skillsBlock) {
     systemText += `\n\n---\n\n${skillsBlock}`;
   }
+
+  // Mention active MCP servers so the model knows they're available
+  const mcpServers = getConnectedMcpServers();
+  if (mcpServers.length > 0) {
+    const mcpLines = mcpServers.map(
+      (s) => `  - ${s.name} (${s.tools.length} tool${s.tools.length === 1 ? "" : "s"})`,
+    );
+    systemText +=
+      `\n\n---\n\nAvailable MCP servers:\n${mcpLines.join("\n")}\n\n` +
+      `MCP tools are named mcp__<server>__<tool>. Use them when they are relevant to the task.`;
+  }
+
   if (agentsFileContents) {
     systemText += `\n\n---\n\n# Project-specific instructions (from AGENTS.md)\n\n${agentsFileContents}`;
   }
@@ -1054,6 +1082,25 @@ async function main() {
     const seconds = (event.waitMs / 1000).toFixed(1);
     tui.setStatus(`Rate limited on ${new URL(event.url).hostname}, retrying in ${seconds}s… (${event.attempt}/${event.maxRetries})`);
   });
+
+  // Initialize MCP servers
+  try {
+    const { connected, errors } = await initMcpServers();
+    if (connected.length > 0) {
+      const serverNames = connected.map((s) => s.name).join(", ");
+      const totalTools = connected.reduce((sum, s) => sum + s.tools.length, 0);
+      tui.setStatus(`MCP: connected to ${connected.length} server(s) (${totalTools} tools): ${serverNames}`);
+    }
+    for (const err of errors) {
+      tui.addBlock({
+        role: "error",
+        title: `MCP: ${err.name}`,
+        content: err.error,
+      });
+    }
+  } catch {
+    // MCP init errors are already handled above; don't crash the app.
+  }
 }
 
 process.on("uncaughtException", (error: unknown) => {

@@ -32,7 +32,7 @@ type ZodObjectSchema = z.ZodObject<z.core.$ZodShape>;
 
 export type ToolConcurrency = "safe" | "exclusive";
 
-type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
+export type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
   name: string;
   description: string;
   inputSchema: T;
