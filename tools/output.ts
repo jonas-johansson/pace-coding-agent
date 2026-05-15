@@ -2,9 +2,9 @@ import { createWriteStream, type WriteStream } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { formatToolResultBody, type ToolOutput } from "./core";
 
-export const TOOL_OUTPUT_TRUNCATION_BYTES = 128 * 1024;
-export const TOOL_OUTPUT_TRUNCATION_HEAD_BYTES = 96 * 1024;
-export const TOOL_OUTPUT_TRUNCATION_TAIL_BYTES = 32 * 1024;
+export const TOOL_OUTPUT_TRUNCATION_BYTES = 4 * 1024;
+export const TOOL_OUTPUT_TRUNCATION_HEAD_BYTES = 3 * 1024;
+export const TOOL_OUTPUT_TRUNCATION_TAIL_BYTES = 1 * 1024;
 const TOOL_OUTPUT_DIR = ".agento/tool-outputs";
 let toolOutputTruncationSuppressionDepth = 0;
 

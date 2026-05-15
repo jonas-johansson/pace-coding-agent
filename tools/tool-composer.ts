@@ -24,13 +24,15 @@ const SCRIPT_MAX_LOG_MESSAGE_LENGTH = 50;
 const SCRIPT_MAX_STDERR_BYTES = 64 * 1024;
 const SCRIPT_MAX_RESULT_BYTES = 128 * 1024;
 const SCRIPT_MAX_FILE_BYTES = 50 * 1024 * 1024;
+const REQUIRED_MAIN_SIGNATURE = "async function main({ agento, tools, args, log })";
+const REQUIRED_MAIN_FUNCTION_PATTERN = /(^|\s)async function main\(\{ agento, tools, args, log \}\)\s*\{/;
 
-export const scriptTool = defineTool({
-  name: "script",
+export const toolComposerTool = defineTool({
+  name: "tool_composer",
   description:
     "Run a JavaScript script that can call Agento tools internally without adding intermediate results to the conversation. " +
-    "Use this for complex multi-step tasks, binary file handling, repeated tool calls, or workflows where only a concise final result should be returned to the model. " +
-    "The script runs as `async function main({ agento, tools, args, log }) { ... }`; use `return` for the final result. " +
+    "Use this for complex multi-step tasks, base64 binary file handling, repeated tool calls, or workflows where only a concise final result should be returned to the model. " +
+    "The code must define exactly `async function main({ agento, tools, args, log }) { ... }`; do not provide only the function body or any other signature. Use `return` inside `main` for the final result. " +
     "Available APIs: `await tools.<toolName>(input)` returns text and throws on tool errors; `await agento.callToolRaw(name, input)` returns `{ content, text, isError }`; " +
     "`agento.readFileText(path)`, `agento.readFileBase64(path)`, `agento.writeFileText(path, content)`, and `agento.writeFileBase64(path, base64Content)` handle local files. " +
     "Use `log(...)` only for short local progress logs. Each log message is truncated to 50 characters and total logs are capped at 64 KB. " +
@@ -38,15 +40,15 @@ export const scriptTool = defineTool({
   concurrency: "exclusive",
   inputSchema: z.object({
     language: z.enum(["javascript"]).default("javascript").describe("Script language. Currently only javascript is supported."),
-    code: z.string().describe("JavaScript body for async function main({ agento, tools, args, log }). Use return for the final result."),
+    code: z.string().describe("Complete JavaScript code that defines exactly `async function main({ agento, tools, args, log }) { ... }`. Do not provide only the function body or any other signature. Use return inside main for the final result."),
     args: z.record(z.string(), z.unknown()).optional().describe("Optional JSON-serializable arguments available to the script as `args`."),
-    allowedTools: z.array(z.string()).optional().describe("Optional allowlist of Agento tool names the script may call. If omitted, all tools except `script` are available."),
+    allowedTools: z.array(z.string()).optional().describe("Optional allowlist of Agento tool names the script may call. If omitted, all tools except `tool_composer` are available."),
     timeoutSeconds: z.number().int().positive().max(300).optional().describe("Maximum runtime in seconds. Defaults to 60, max 300."),
     maxToolCalls: z.number().int().positive().max(SCRIPT_MAX_TOOL_CALLS).optional().describe("Maximum number of internal Agento tool calls. Defaults to 100, max 500."),
   }),
   titleFormatter: (input) => {
     const lines = typeof input.code === "string" ? input.code.split(/\r?\n/).length : 0;
-    return `script: ${input.language ?? "javascript"}${lines > 0 ? `, ${lines} line${lines === 1 ? "" : "s"}` : ""}`;
+    return `tool_composer: ${input.language ?? "javascript"}${lines > 0 ? `, ${lines} line${lines === 1 ? "" : "s"}` : ""}`;
   },
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
@@ -159,7 +161,8 @@ const agento = {
   try {
     send({ type: "ready" });
     const init = await initPromise;
-    const fn = new AsyncFunction("agento", "tools", "args", "log", init.code);
+    const source = init.code + "\n;return await main({ agento, tools, args, log });";
+    const fn = new AsyncFunction("agento", "tools", "args", "log", source);
     const value = await fn(agento, tools, init.args || {}, log);
     send({ type: "final", result: value === undefined ? "" : stringify(value) });
   } catch (error) {
@@ -177,6 +180,14 @@ const agento = {
 }
 
 async function runJavascriptScript(options: ScriptRunOptions): Promise<ToolOutput> {
+  const mainValidationError = validateScriptMainFunction(options.code);
+  if (mainValidationError) {
+    return {
+      content: [{ type: "text", text: buildScriptOutput(options.code, [], mainValidationError) }],
+      is_error: true,
+    };
+  }
+
   const child = spawn(process.execPath, ["-e", makeScriptChildSource()], {
     detached: true,
     stdio: ["pipe", "pipe", "pipe"],
@@ -218,8 +229,12 @@ async function runJavascriptScript(options: ScriptRunOptions): Promise<ToolOutpu
 
   const executeInternalTool = async (message: Extract<ScriptChildMessage, { type: "tool_call" }>) => {
     try {
-      if (message.name === "script") {
-        throw new Error("Scripts may not call the script tool recursively");
+      if (message.name === "tool_composer") {
+        throw new Error("tool_composer may not call itself recursively");
+      }
+      const toolToExecute = tools.find((tool) => tool.name === message.name);
+      if (!toolToExecute) {
+        throw new Error(`Unknown tool: ${message.name}`);
       }
       if (allowedToolSet && !allowedToolSet.has(message.name)) {
         throw new Error(`Tool ${message.name} is not allowed by this script`);
@@ -227,10 +242,6 @@ async function runJavascriptScript(options: ScriptRunOptions): Promise<ToolOutpu
       toolCallCount += 1;
       if (toolCallCount > options.maxToolCalls) {
         throw new Error(`Script exceeded maxToolCalls (${options.maxToolCalls})`);
-      }
-      const toolToExecute = tools.find((tool) => tool.name === message.name);
-      if (!toolToExecute) {
-        throw new Error(`Unknown tool: ${message.name}`);
       }
       const parsed = toolToExecute.inputSchema.safeParse(message.input);
       if (!parsed.success) {
@@ -417,6 +428,11 @@ async function runJavascriptScript(options: ScriptRunOptions): Promise<ToolOutpu
 
   const output = await runPromise;
   return output;
+}
+
+function validateScriptMainFunction(code: string): string | undefined {
+  if (REQUIRED_MAIN_FUNCTION_PATTERN.test(code)) return undefined;
+  return `Script must define exactly \`${REQUIRED_MAIN_SIGNATURE} { ... }\`. Do not provide only a function body or a differently shaped main function.`;
 }
 
 function truncateText(text: string, maxBytes: number, label: string): string {

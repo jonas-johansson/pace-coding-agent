@@ -5,7 +5,7 @@ import { formatSkillsForToolDescription } from "../skill";
 import { registerTool, tools, type ToolDescriptor } from "./core";
 import { readTool, writeTool, editTool } from "./files";
 import { bashTool } from "./bash";
-import { scriptTool } from "./script";
+import { toolComposerTool } from "./tool-composer";
 import { webFetchTool } from "./web-fetch";
 import { webSearchTool } from "./web-search";
 import { skillTool, setCurrentSkills, getCurrentSkills } from "./skill";
@@ -15,7 +15,7 @@ const builtInTools: ToolDescriptor[] = [
   writeTool,
   editTool,
   bashTool,
-  scriptTool,
+  toolComposerTool,
   webFetchTool,
   webSearchTool,
   skillTool,
