@@ -1,20 +1,45 @@
 /**
- * syntax.ts — Hand-rolled syntax tokenizer for fenced code blocks.
+ * syntax.ts — Syntax tokenizer for fenced code blocks.
  *
  * Exposes:
- *   tokenizeCode(lines, language) → StyledSegment[][]
+ *   initHighlighter()              — call once at startup (fire-and-forget)
+ *   tokenizeCode(lines, language)  → SyntaxSegment[][]
  *
- * Each entry in the returned array corresponds to one input line and contains
- * a sequence of StyledSegment values whose styles are "sh-keyword", "sh-string",
- * "sh-number", "sh-comment", "sh-type", "sh-function", "sh-operator",
- * "sh-punctuation", "sh-property", or the plain "code" style for anything that
- * did not match a rule.
+ * Shiki is used when available (initialized asynchronously at startup).
+ * The hand-rolled tokenizer is used as an immediate fallback until Shiki is
+ * ready, and permanently for any language Shiki did not load.
+ *
+ * SyntaxSegment styles:
+ *   "sh-raw"        — Shiki token; carries a CSS hex `color` field
+ *   "sh-keyword"    — hand-rolled: keywords
+ *   "sh-string"     — hand-rolled: string literals
+ *   "sh-number"     — hand-rolled: numeric literals
+ *   "sh-comment"    — hand-rolled: comments
+ *   "sh-type"       — hand-rolled: type names / built-ins
+ *   "sh-function"   — hand-rolled: function calls
+ *   "sh-operator"   — hand-rolled: operators
+ *   "sh-punctuation"— hand-rolled: brackets, commas, colons
+ *   "sh-property"   — hand-rolled: object keys / CSS properties
+ *   "code"          — plain (unrecognised) token
  */
 
-// We re-declare the minimal slice of types we need so this module has no
-// circular dependency on tui.ts.
+import {
+  createHighlighterCoreSync,
+  type HighlighterCore,
+  type ThemedToken,
+  type ThemeRegistrationAny,
+  type LanguageRegistration,
+} from "shiki/core";
+import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+import { bundledLanguages, bundledThemes } from "shiki";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 type SyntaxStyle =
   | "code"
+  | "sh-raw"
   | "sh-keyword"
   | "sh-string"
   | "sh-number"
@@ -25,17 +50,158 @@ type SyntaxStyle =
   | "sh-punctuation"
   | "sh-property";
 
-export type SyntaxSegment = { text: string; style: SyntaxStyle };
+export type SyntaxSegment = {
+  text: string;
+  style: SyntaxStyle;
+  /** Only set when style === "sh-raw". CSS hex color string, e.g. "#569CD6". */
+  color?: string;
+  /** Only set when style === "sh-raw". FontStyle bitmask: Bold=2, Italic=1. */
+  fontStyle?: number;
+};
 
 // ---------------------------------------------------------------------------
-// Token rule
+// Shiki integration
+// ---------------------------------------------------------------------------
+
+const THEME = "dark-plus";
+
+const SHIKI_LANGS = [
+  "typescript",
+  "javascript",
+  "json",
+  "python",
+  "bash",
+  "shell",
+  "markdown",
+  "html",
+  "css",
+  "sql",
+  "rust",
+  "go",
+  "yaml",
+  "toml",
+  "dockerfile",
+  "regex",
+] as const;
+
+type ShikiLang = (typeof SHIKI_LANGS)[number];
+
+/** Normalises common LLM-output language tags to Shiki's bundled IDs. */
+const shikiLangAlias: Record<string, ShikiLang> = {
+  // JavaScript
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  // TypeScript
+  ts: "typescript",
+  tsx: "typescript",
+  // Python
+  py: "python",
+  python3: "python",
+  // Shell
+  sh: "bash",
+  zsh: "bash",
+  fish: "bash",
+  // YAML
+  yml: "yaml",
+  // JSON variants
+  jsonc: "json",
+  json5: "json",
+};
+
+function resolveShikiLang(lang: string): string {
+  const lower = lang.toLowerCase();
+  return shikiLangAlias[lower] ?? lower;
+}
+
+let shiki: HighlighterCore | null = null;
+
+/**
+ * Asynchronously initialises the Shiki highlighter.  Call once at app startup
+ * and ignore the return value — the hand-rolled tokenizer works immediately
+ * while Shiki loads in the background.
+ */
+export async function initHighlighter(): Promise<void> {
+  const engine = createJavaScriptRegexEngine();
+
+  const [themeModule, ...langModules] = await Promise.all([
+    bundledThemes[THEME]() as Promise<{ default: ThemeRegistrationAny }>,
+    ...SHIKI_LANGS.map((l) =>
+      (bundledLanguages as Record<string, () => Promise<{ default: LanguageRegistration | LanguageRegistration[] }>>)[l]()
+    ),
+  ]);
+
+  shiki = createHighlighterCoreSync({
+    themes: [themeModule.default],
+    langs: langModules.map((m) => m.default),
+    engine,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Hex → ANSI 256-color conversion
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a CSS hex color (e.g. "#569CD6") to the nearest ANSI 256-color index.
+ * Uses the 6×6×6 RGB cube (indices 16–231) and the 24-step grayscale ramp
+ * (indices 232–255).
+ */
+export function hexToAnsi256(hex: string): number {
+  const c = hex.replace("#", "");
+  const full = c.length === 3 ? c.split("").map((x) => x + x).join("") : c;
+
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+
+  // Grayscale ramp (232–255): use when all channels are close to each other.
+  if (Math.abs(r - g) < 10 && Math.abs(g - b) < 10) {
+    if (r < 8)   return 16;   // nearest black in color cube
+    if (r > 248) return 231;  // nearest white in color cube
+    return Math.round(((r - 8) / 247) * 24) + 232;
+  }
+
+  // 6×6×6 color cube (16–231): channel steps are 0, 95, 135, 175, 215, 255.
+  const steps = [0, 95, 135, 175, 215, 255];
+  const nearest = (v: number) =>
+    steps.reduce((best, s, i) => (Math.abs(s - v) < Math.abs(steps[best] - v) ? i : best), 0);
+
+  return 16 + 36 * nearest(r) + 6 * nearest(g) + nearest(b);
+}
+
+// ---------------------------------------------------------------------------
+// Shiki tokenization path
+// ---------------------------------------------------------------------------
+
+function tokenizeWithShiki(lines: string[], lang: string): SyntaxSegment[][] {
+  const code = lines.join("\n");
+  const tokenLines: ThemedToken[][] = shiki!.codeToTokensBase(code, {
+    lang,
+    theme: THEME,
+  });
+
+  // codeToTokensBase may return a trailing empty line; align to input lines.
+  return lines.map((line, i) => {
+    const tokens = tokenLines[i] ?? [];
+    if (tokens.length === 0) {
+      return [{ text: line, style: "code" as const }];
+    }
+    return tokens.map((t) => ({
+      text: t.content,
+      style: "sh-raw" as const,
+      color: t.color,
+      fontStyle: t.fontStyle ?? 0,
+    }));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Hand-rolled tokenizer
 // ---------------------------------------------------------------------------
 
 type TokenRule = { pattern: RegExp; style: SyntaxStyle };
-
-// ---------------------------------------------------------------------------
-// Shared / language-agnostic helpers
-// ---------------------------------------------------------------------------
 
 /** Walk `line` left-to-right matching the earliest rule at each position. */
 function tokenizeLine(line: string, rules: TokenRule[]): SyntaxSegment[] {
@@ -58,19 +224,16 @@ function tokenizeLine(line: string, rules: TokenRule[]): SyntaxSegment[] {
         earliestStyle = rule.style;
       }
       if (start === pos) {
-        // Already at the earliest possible position; no need to keep looking.
-        break;
+        break; // already at the earliest possible position
       }
     }
 
     if (earliest === -1) {
-      // No rule matched anywhere in the remaining string.
       segments.push({ text: line.slice(pos), style: "code" });
       break outer;
     }
 
     if (earliest > pos) {
-      // Plain text before the match.
       segments.push({ text: line.slice(pos, earliest), style: "code" });
     }
 
@@ -79,6 +242,16 @@ function tokenizeLine(line: string, rules: TokenRule[]): SyntaxSegment[] {
   }
 
   return segments;
+}
+
+/** Renamed internal wrapper used by tokenizeCode() when Shiki is unavailable. */
+function tokenizeWithRules(lines: string[], language: string | null): SyntaxSegment[][] {
+  const rules = language ? (langRules[language.toLowerCase()] ?? null) : null;
+  return lines.map((line) => {
+    if (!rules) return [{ text: line, style: "code" as const }];
+    const segments = tokenizeLine(line, rules);
+    return segments.length === 0 ? [{ text: line, style: "code" as const }] : segments;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -96,29 +269,17 @@ const JS_KEYWORDS =
 const JS_TYPES = "\\b(?:[A-Z][A-Za-z0-9_]*)\\b";
 
 const jsRules: TokenRule[] = [
-  // Single-line comment
   { pattern: /\/\/.*/gy, style: "sh-comment" },
-  // Multi-line comment (simplified — captures the whole match on one logical scan)
   { pattern: /\/\*[\s\S]*?\*\//gy, style: "sh-comment" },
-  // Template literals (simplified — no nested ${…} coloring)
   { pattern: /`(?:[^`\\]|\\.)*`/gy, style: "sh-string" },
-  // Double-quoted strings
   { pattern: /"(?:[^"\\]|\\.)*"/gy, style: "sh-string" },
-  // Single-quoted strings
   { pattern: /'(?:[^'\\]|\\.)*'/gy, style: "sh-string" },
-  // Keywords
   { pattern: new RegExp(JS_KEYWORDS, "gy"), style: "sh-keyword" },
-  // Type/class names (PascalCase identifiers)
   { pattern: new RegExp(JS_TYPES, "gy"), style: "sh-type" },
-  // Function calls:  ident(
   { pattern: /\b([a-z_$][A-Za-z0-9_$]*)(?=\s*\()/gy, style: "sh-function" },
-  // Numbers (hex, float, int, bigint)
   { pattern: /\b0x[\da-fA-F]+n?\b|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?n?\b/gy, style: "sh-number" },
-  // Operators
   { pattern: /(?:===|!==|=>|<=|>=|<<|>>|\+\+|--|&&|\|\||[+\-*/%&|^~!=<>?])/gy, style: "sh-operator" },
-  // Punctuation
   { pattern: /[{}()[\],.;:]/gy, style: "sh-punctuation" },
-  // Object/type property keys:  word  followed by  : (not ::)
   { pattern: /\b([a-zA-Z_$][a-zA-Z0-9_$]*)(?=\s*:(?!:))/gy, style: "sh-property" },
 ];
 
@@ -136,31 +297,18 @@ const PY_BUILTINS =
   "tuple|type|vars|zip)\\b";
 
 const pyRules: TokenRule[] = [
-  // Comments
   { pattern: /#.*/gy, style: "sh-comment" },
-  // Triple double-quoted strings
   { pattern: /"""[\s\S]*?"""/gy, style: "sh-string" },
-  // Triple single-quoted strings
   { pattern: /'''[\s\S]*?'''/gy, style: "sh-string" },
-  // Double-quoted strings
   { pattern: /"(?:[^"\\]|\\.)*"/gy, style: "sh-string" },
-  // Single-quoted strings
   { pattern: /'(?:[^'\\]|\\.)*'/gy, style: "sh-string" },
-  // Keywords
   { pattern: new RegExp(PY_KEYWORDS, "gy"), style: "sh-keyword" },
-  // Built-ins
   { pattern: new RegExp(PY_BUILTINS, "gy"), style: "sh-type" },
-  // Class names (PascalCase)
   { pattern: /\b[A-Z][A-Za-z0-9_]*\b/gy, style: "sh-type" },
-  // Function/method calls
   { pattern: /\b([a-z_][A-Za-z0-9_]*)(?=\s*\()/gy, style: "sh-function" },
-  // Decorators
   { pattern: /@[A-Za-z_][A-Za-z0-9_.]*/gy, style: "sh-keyword" },
-  // Numbers
   { pattern: /\b0x[\da-fA-F]+\b|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/gy, style: "sh-number" },
-  // Operators
   { pattern: /(?:==|!=|<=|>=|\*\*|\/\/|<<|>>|->|[+\-*/%&|^~!=<>])/gy, style: "sh-operator" },
-  // Punctuation
   { pattern: /[{}()[\],.;:]/gy, style: "sh-punctuation" },
 ];
 
@@ -176,82 +324,49 @@ const SH_BUILTINS =
   "unset|wait)\\b";
 
 const shRules: TokenRule[] = [
-  // Comments
   { pattern: /#.*/gy, style: "sh-comment" },
-  // Double-quoted strings
   { pattern: /"(?:[^"\\]|\\.)*"/gy, style: "sh-string" },
-  // Single-quoted strings (no escapes inside)
   { pattern: /'[^']*'/gy, style: "sh-string" },
-  // Variable expansions: ${VAR}, $VAR, $0-$9, $@, $*
   { pattern: /\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[@*#?$!0-9])/gy, style: "sh-type" },
-  // Keywords
   { pattern: new RegExp(SH_KEYWORDS, "gy"), style: "sh-keyword" },
-  // Built-ins
   { pattern: new RegExp(SH_BUILTINS, "gy"), style: "sh-function" },
-  // Numbers
   { pattern: /\b\d+\b/gy, style: "sh-number" },
-  // Operators / redirects
   { pattern: /(?:&&|\|\||>>|[|&;<>])/gy, style: "sh-operator" },
-  // Punctuation
   { pattern: /[{}()[\],.]/gy, style: "sh-punctuation" },
-  // Flags: -x or --long-flag
   { pattern: /(?:^|\s)--?[A-Za-z][A-Za-z0-9_-]*/gy, style: "sh-property" },
 ];
 
 // JSON
 const jsonRules: TokenRule[] = [
-  // Strings
   { pattern: /"(?:[^"\\]|\\.)*"/gy, style: "sh-string" },
-  // Keywords (true/false/null)
   { pattern: /\b(?:true|false|null)\b/gy, style: "sh-keyword" },
-  // Numbers
   { pattern: /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/gy, style: "sh-number" },
-  // Object keys — already captured by sh-string above when quoted; no extra rule needed
-  // Operators / structural
   { pattern: /:/gy, style: "sh-operator" },
-  // Punctuation
   { pattern: /[{}()[\],]/gy, style: "sh-punctuation" },
 ];
 
 // CSS
 const cssRules: TokenRule[] = [
-  // Comments
   { pattern: /\/\*[\s\S]*?\*\//gy, style: "sh-comment" },
-  // Strings
   { pattern: /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/gy, style: "sh-string" },
-  // At-rules
   { pattern: /@[A-Za-z-]+/gy, style: "sh-keyword" },
-  // Property values: colors, sizes, keywords
   { pattern: /#[\da-fA-F]{3,8}\b/gy, style: "sh-number" },
-  // Numbers with optional unit
   { pattern: /-?\d+(?:\.\d+)?(?:px|em|rem|vh|vw|vmin|vmax|%|s|ms|deg|rad|fr|ch|ex)?\b/gy, style: "sh-number" },
-  // Selectors / pseudo-classes / pseudo-elements
   { pattern: /::?[A-Za-z-]+/gy, style: "sh-type" },
-  // Important
   { pattern: /!important\b/gy, style: "sh-keyword" },
-  // CSS property names (word followed by colon)
   { pattern: /[A-Za-z-]+(?=\s*:)/gy, style: "sh-property" },
-  // Punctuation
   { pattern: /[{}()[\],;:]/gy, style: "sh-punctuation" },
 ];
 
-// HTML / XML (very light — just tags and attributes)
+// HTML / XML
 const htmlRules: TokenRule[] = [
-  // Comments
   { pattern: /<!--[\s\S]*?-->/gy, style: "sh-comment" },
-  // Doctype / processing instructions
   { pattern: /<!?[A-Za-z][^>]*>/gy, style: "sh-comment" },
-  // Closing tags
   { pattern: /<\/[A-Za-z][A-Za-z0-9._:-]*>/gy, style: "sh-keyword" },
-  // Self-closing or opening tags (capture just the tag name portion)
   { pattern: /<[A-Za-z][A-Za-z0-9._:-]*/gy, style: "sh-keyword" },
-  // Attribute values
   { pattern: /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/gy, style: "sh-string" },
-  // Attribute names
   { pattern: /\b[A-Za-z_:][A-Za-z0-9_.:-]*(?=\s*=)/gy, style: "sh-property" },
-  // Punctuation
   { pattern: /[<>/=]/gy, style: "sh-punctuation" },
-  // Entities
   { pattern: /&[A-Za-z#][A-Za-z0-9]*;/gy, style: "sh-type" },
 ];
 
@@ -267,105 +382,52 @@ const SQL_KEYWORDS =
   "right|select|set|table|then|top|union|unique|update|values|view|when|where|with)\\b";
 
 const sqlRules: TokenRule[] = [
-  // Comments
   { pattern: /--.*|\/\*[\s\S]*?\*\//gy, style: "sh-comment" },
-  // Strings
   { pattern: /'(?:[^'\\]|\\.)*'/gy, style: "sh-string" },
-  // Keywords
   { pattern: new RegExp(SQL_KEYWORDS, "gy"), style: "sh-keyword" },
-  // Numbers
   { pattern: /\b\d+(?:\.\d+)?\b/gy, style: "sh-number" },
-  // Operators
   { pattern: /(?:!=|<>|<=|>=|[+\-*/%=<>])/gy, style: "sh-operator" },
-  // Punctuation
   { pattern: /[{}()[\],.;:]/gy, style: "sh-punctuation" },
-  // Identifiers in backticks or brackets
   { pattern: /`[^`]*`|\[[^\]]*\]/gy, style: "sh-property" },
 ];
 
 // YAML
 const yamlRules: TokenRule[] = [
-  // Comments
   { pattern: /#.*/gy, style: "sh-comment" },
-  // Strings (quoted)
   { pattern: /"(?:[^"\\]|\\.)*"|'[^']*'/gy, style: "sh-string" },
-  // YAML anchors & aliases
   { pattern: /[&*][A-Za-z_][A-Za-z0-9_-]*/gy, style: "sh-type" },
-  // Keys (word followed by colon)
   { pattern: /\b[A-Za-z_][A-Za-z0-9_-]*(?=\s*:)/gy, style: "sh-property" },
-  // Booleans / null
   { pattern: /\b(?:true|false|yes|no|null|~)\b/gy, style: "sh-keyword" },
-  // Numbers
   { pattern: /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/gy, style: "sh-number" },
-  // Punctuation
   { pattern: /[{}()[\],:?|>-]/gy, style: "sh-punctuation" },
 ];
 
 // TOML
 const tomlRules: TokenRule[] = [
-  // Comments
   { pattern: /#.*/gy, style: "sh-comment" },
-  // Multi-line strings
   { pattern: /"""[\s\S]*?"""|'''[\s\S]*?'''/gy, style: "sh-string" },
-  // Strings
   { pattern: /"(?:[^"\\]|\\.)*"|'[^']*'/gy, style: "sh-string" },
-  // Table headers  [section] / [[array-of-tables]]
   { pattern: /\[\[?[^\]]+\]\]?/gy, style: "sh-type" },
-  // Keys
   { pattern: /\b[A-Za-z_][A-Za-z0-9_."-]*(?=\s*=)/gy, style: "sh-property" },
-  // Booleans
   { pattern: /\b(?:true|false)\b/gy, style: "sh-keyword" },
-  // Numbers / dates
   { pattern: /\b\d{4}-\d{2}-\d{2}(?:T\S*)?\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/gy, style: "sh-number" },
-  // Punctuation
   { pattern: /[{}()[\],.=]/gy, style: "sh-punctuation" },
 ];
 
 // ---------------------------------------------------------------------------
-// Language alias map
+// Language alias map (hand-rolled)
 // ---------------------------------------------------------------------------
 
 const langRules: Record<string, TokenRule[]> = {
-  // JavaScript
-  js: jsRules,
-  javascript: jsRules,
-  jsx: jsRules,
-  mjs: jsRules,
-  cjs: jsRules,
-  // TypeScript
-  ts: jsRules,
-  typescript: jsRules,
-  tsx: jsRules,
-  // JSON
-  json: jsonRules,
-  jsonc: jsonRules,
-  json5: jsonRules,
-  // Python
-  py: pyRules,
-  python: pyRules,
-  python3: pyRules,
-  // Shell / Bash
-  sh: shRules,
-  bash: shRules,
-  shell: shRules,
-  zsh: shRules,
-  fish: shRules,
-  // CSS
-  css: cssRules,
-  scss: cssRules,
-  sass: cssRules,
-  less: cssRules,
-  // HTML / XML
-  html: htmlRules,
-  htm: htmlRules,
-  xml: htmlRules,
-  svg: htmlRules,
-  // SQL
+  js: jsRules, javascript: jsRules, jsx: jsRules, mjs: jsRules, cjs: jsRules,
+  ts: jsRules, typescript: jsRules, tsx: jsRules,
+  json: jsonRules, jsonc: jsonRules, json5: jsonRules,
+  py: pyRules, python: pyRules, python3: pyRules,
+  sh: shRules, bash: shRules, shell: shRules, zsh: shRules, fish: shRules,
+  css: cssRules, scss: cssRules, sass: cssRules, less: cssRules,
+  html: htmlRules, htm: htmlRules, xml: htmlRules, svg: htmlRules,
   sql: sqlRules,
-  // YAML
-  yaml: yamlRules,
-  yml: yamlRules,
-  // TOML
+  yaml: yamlRules, yml: yamlRules,
   toml: tomlRules,
 };
 
@@ -374,24 +436,15 @@ const langRules: Record<string, TokenRule[]> = {
 // ---------------------------------------------------------------------------
 
 /**
- * Tokenize `lines` using the rules for the given `language`.
- * Returns one `SyntaxSegment[]` per input line.
- * Falls back to a single "code"-styled segment per line when the language is
- * unknown or not provided.
+ * Tokenize `lines` using Shiki when available, falling back to the hand-rolled
+ * tokenizer.  Returns one `SyntaxSegment[]` per input line.
  */
 export function tokenizeCode(lines: string[], language: string | null): SyntaxSegment[][] {
-  const rules = language ? (langRules[language.toLowerCase()] ?? null) : null;
-
-  return lines.map((line) => {
-    if (!rules) {
-      return [{ text: line, style: "code" as const }];
+  if (shiki && language) {
+    const resolved = resolveShikiLang(language);
+    if (shiki.getLoadedLanguages().includes(resolved)) {
+      return tokenizeWithShiki(lines, resolved);
     }
-    const segments = tokenizeLine(line, rules);
-    // If we got nothing (e.g. empty line), return a single empty code segment
-    // so callers can always rely on at least one element.
-    if (segments.length === 0) {
-      return [{ text: line, style: "code" as const }];
-    }
-    return segments;
-  });
+  }
+  return tokenizeWithRules(lines, language);
 }

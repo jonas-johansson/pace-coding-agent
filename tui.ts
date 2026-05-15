@@ -21,7 +21,7 @@ export type ContextInfo = {
 };
 
 import { homedir } from "os";
-import { tokenizeCode } from "./syntax.js";
+import { tokenizeCode, hexToAnsi256 } from "./syntax.js";
 
 type SubmitHandler = (input: string) => void | Promise<void>;
 type SuggestionItem = {
@@ -39,6 +39,7 @@ type SegmentStyle =
   | "code"
   | "heading"
   | "title"
+  | "sh-raw"
   | "sh-keyword"
   | "sh-string"
   | "sh-number"
@@ -62,6 +63,10 @@ type SelectionRange = {
 type StyledSegment = {
   text: string;
   style: SegmentStyle;
+  /** CSS hex color string — only used when style === "sh-raw" (Shiki tokens). */
+  color?: string;
+  /** FontStyle bitmask — only used when style === "sh-raw". Bold=2, Italic=1. */
+  fontStyle?: number;
 };
 
 type BlockTheme = {
@@ -2640,6 +2645,12 @@ function renderSegment(segment: StyledSegment, theme: BlockTheme) {
       return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${ITALIC}${segment.text}`;
     case "code":
       return `${RESET}${bg(theme.bg)}${fg(118)}${segment.text}`;
+    case "sh-raw": {
+      const ansiColor = segment.color ? hexToAnsi256(segment.color) : theme.fg;
+      const bold = segment.fontStyle && (segment.fontStyle & 2) ? BOLD : "";
+      const italic = segment.fontStyle && (segment.fontStyle & 1) ? ITALIC : "";
+      return `${RESET}${bg(theme.bg)}${fg(ansiColor)}${bold}${italic}${segment.text}`;
+    }
     default: {
       const syntaxColor = syntaxColors[segment.style];
       if (syntaxColor !== undefined) {

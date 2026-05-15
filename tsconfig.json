@@ -18,6 +18,7 @@
     "provider.ts",
     "clipboard.ts",
     "skill.ts",
+    "syntax.ts",
     "providers/anthropic.ts",
     "providers/opencode-zen.ts",
     "providers/openai.ts"

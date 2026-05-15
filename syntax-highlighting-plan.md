@@ -202,6 +202,8 @@ This is a visual-design decision that can be deferred to a later iteration.
 - Make `tokenizeCode()` try Shiki first, fall back to the hand-rolled tokenizer if the language is unavailable or Shiki is not ready.
 - Cache tokenized results per block to avoid re-highlighting unchanged content on every render.
 
+See the detailed design below.
+
 ### Phase 4 — Visual polish
 - Add a subtle left border / gutter to code blocks.
 - Add an info line showing the detected language (e.g., `typescript`) in the top-right corner of the first code line.
@@ -215,6 +217,263 @@ This is a visual-design decision that can be deferred to a later iteration.
 | `syntax.ts` | Create | Tokenizer rules for JS/TS, JSON, Python, Bash; `tokenizeCode()` function. |
 | `package.json` | Modify | Add `shiki` (Phase 3 only; Phase 2 needs no new deps). |
 | `app.ts` | Modify | `await initHighlighter()` at startup (Phase 3 only). |
+
+---
+
+## Phase 3 Detailed Design — Shiki Integration
+
+### Overview
+
+Shiki v4 produces `ThemedToken[][]` — one array of tokens per line, each token carrying a `color` hex string (and optional `fontStyle` flags for bold/italic). We convert that into our existing `SyntaxSegment[][]` format by mapping hex colors to the nearest ANSI 256-color code. This keeps `tokenizeCode()` synchronous after startup and requires no changes outside `syntax.ts` and `app.ts`.
+
+### Shiki API choices
+
+Shiki v4 ships two regex engines:
+
+| Engine | Init | Notes |
+|--------|------|-------|
+| `createOnigurumaEngine` | `async` (loads WASM) | Full grammar accuracy. ~5–8 MB WASM blob. |
+| `createJavaScriptRegexEngine` | synchronous | Pure-JS transpiled regexes. Covers all bundled languages well. No WASM. Recommended. |
+
+**Use `createJavaScriptRegexEngine`.** It avoids the WASM load entirely, makes startup simpler, and still produces grammar-accurate output far beyond our hand-rolled tokenizer.
+
+After the engine is resolved we use `createHighlighterCoreSync` so the highlighter instance is available synchronously for subsequent `codeToTokensBase()` calls inside the render loop.
+
+### Initialization sequence
+
+```
+app startup
+  └─ await initHighlighter()          (syntax.ts export)
+       ├─ createJavaScriptRegexEngine()   — synchronous
+       ├─ createHighlighterCoreSync({     — synchronous
+       │     themes: [themeObject],
+       │     langs:  [lang1, lang2, …],
+       │     engine,
+       │  })
+       └─ shikiReady = true
+```
+
+`initHighlighter` is `async` only because the lang/theme modules are dynamic imports (each is a small JSON-like object). They can all be `await Promise.all()`-ed in one shot.
+
+### `syntax.ts` changes
+
+```ts
+import { createHighlighterCoreSync } from "shiki/core";
+import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+import type { HighlighterCore, ThemedToken } from "shiki/core";
+
+let shiki: HighlighterCore | null = null;
+const THEME = "dark-plus";
+
+// Pre-registered languages (aliases resolved via langMap below).
+const SHIKI_LANGS = [
+  "typescript", "javascript", "json", "python", "bash",
+  "shell", "markdown", "html", "css", "sql", "rust", "go",
+  "yaml", "toml", "dockerfile", "regex",
+] as const;
+
+export async function initHighlighter(): Promise<void> {
+  const engine = createJavaScriptRegexEngine();
+  const [theme, ...langs] = await Promise.all([
+    import("shiki/themes/dark-plus"),
+    ...SHIKI_LANGS.map((l) => import(`shiki/langs/${l}`)),
+  ]);
+  shiki = createHighlighterCoreSync({
+    themes: [theme.default],
+    langs: langs.map((m) => m.default),
+    engine,
+  });
+}
+```
+
+**Language alias resolution** — Shiki's bundled language IDs are the full names (`typescript`, `javascript`, …), but LLM output uses short tags (`ts`, `js`, `py`, `sh`). Add a `shikiLangAlias` map that normalises the tag before passing it to `codeToTokensBase()`:
+
+```ts
+const shikiLangAlias: Record<string, string> = {
+  ts: "typescript", tsx: "typescript",
+  js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript",
+  py: "python", python3: "python",
+  sh: "bash", shell: "bash", zsh: "bash", fish: "bash",
+  yml: "yaml",
+  jsonc: "json", json5: "json",
+  // full names pass through unchanged
+};
+
+function resolveShikiLang(lang: string): string {
+  return shikiLangAlias[lang] ?? lang;
+}
+```
+
+**`tokenizeCode()` — try Shiki, fall back to hand-rolled:**
+
+```ts
+export function tokenizeCode(lines: string[], language: string | null): SyntaxSegment[][] {
+  if (shiki && language) {
+    const resolved = resolveShikiLang(language.toLowerCase());
+    if (shiki.getLoadedLanguages().includes(resolved)) {
+      return tokenizeWithShiki(lines, resolved);
+    }
+  }
+  // Hand-rolled fallback (existing logic unchanged).
+  return tokenizeWithRules(lines, language);
+}
+```
+
+### Converting `ThemedToken[][]` → `SyntaxSegment[][]`
+
+Shiki returns `ThemedToken[][]` where each token has:
+- `content: string` — the token text
+- `color?: string` — CSS hex color from the theme, e.g. `"#569CD6"`
+- `fontStyle?: number` — bitmask (bold = 2, italic = 1, underline = 4)
+
+We need to map hex colors to `SyntaxSegment` styles. Because `renderSegment()` is already wired to emit ANSI fg colors for `sh-*` styles, the cleanest approach for Shiki tokens is to introduce a new **passthrough segment style** `"sh-raw"` that carries the hex color directly, and let `renderSegment()` convert it to an ANSI 256-color code at render time:
+
+```ts
+// New style added to SegmentStyle in tui.ts:
+| "sh-raw"
+
+// New field added to StyledSegment in tui.ts:
+type StyledSegment = {
+  text: string;
+  style: SegmentStyle;
+  color?: string;   // only set when style === "sh-raw"; holds a CSS hex color
+};
+```
+
+`renderSegment` gains a new case:
+
+```ts
+case "sh-raw": {
+  const ansi = segment.color ? hexToAnsi256(segment.color) : theme.fg;
+  const prefix = (segment.fontStyle ?? 0) & 2 ? BOLD : "";
+  const italic = (segment.fontStyle ?? 0) & 1 ? ITALIC : "";
+  return `${RESET}${bg(theme.bg)}${fg(ansi)}${prefix}${italic}${segment.text}`;
+}
+```
+
+`SyntaxSegment` in `syntax.ts` is extended with the same optional `color` field so it can carry Shiki data without breaking the existing hand-rolled path.
+
+The `tokenizeWithShiki` helper:
+
+```ts
+function tokenizeWithShiki(lines: string[], lang: string): SyntaxSegment[][] {
+  const code = lines.join("\n");
+  // codeToTokensBase is synchronous on a fully-initialised highlighter.
+  const tokenLines: ThemedToken[][] = shiki!.codeToTokensBase(code, {
+    lang,
+    theme: THEME,
+  });
+
+  // Pad/trim to match the input line count (Shiki may add a trailing empty line).
+  return lines.map((_, i) => {
+    const tokens = tokenLines[i] ?? [];
+    if (tokens.length === 0) return [{ text: lines[i], style: "code" as const }];
+    return tokens.map((t) => ({
+      text: t.content,
+      style: "sh-raw" as const,
+      color: t.color,
+    }));
+  });
+}
+```
+
+### Hex → ANSI 256 conversion
+
+Add `hexToAnsi256(hex: string): number` to `syntax.ts`. The standard ANSI 256-color cube (colors 16–231) uses a 6×6×6 RGB grid with channel steps `[0, 95, 135, 175, 215, 255]`. The grayscale ramp (232–255) covers 24 levels from 8 to 238 in steps of 10.
+
+```ts
+function hexToAnsi256(hex: string): number {
+  // Parse "#RRGGBB" or "#RGB"
+  const c = hex.replace("#", "");
+  const full = c.length === 3
+    ? c.split("").map((x) => x + x).join("")
+    : c;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+
+  // Check grayscale ramp first (more precise for near-gray colors).
+  if (Math.abs(r - g) < 10 && Math.abs(g - b) < 10) {
+    if (r < 8)  return 16;   // black
+    if (r > 248) return 231;  // white
+    return Math.round((r - 8) / 247 * 24) + 232;
+  }
+
+  // Map each channel to the nearest 6-step cube index.
+  const steps = [0, 95, 135, 175, 215, 255];
+  const ri = steps.reduce((best, v, i) => Math.abs(v - r) < Math.abs(steps[best] - r) ? i : best, 0);
+  const gi = steps.reduce((best, v, i) => Math.abs(v - g) < Math.abs(steps[best] - g) ? i : best, 0);
+  const bi = steps.reduce((best, v, i) => Math.abs(v - b) < Math.abs(steps[best] - b) ? i : best, 0);
+  return 16 + 36 * ri + 6 * gi + bi;
+}
+```
+
+### `app.ts` changes
+
+```ts
+import { initHighlighter } from "./syntax.js";
+
+async function main() {
+  tui.start();
+  updateContextInfo();
+  // …existing startup code…
+
+  // Initialise Shiki in the background; syntax.ts falls back to the
+  // hand-rolled tokenizer until the promise resolves.
+  initHighlighter().catch(() => {
+    // Non-fatal: hand-rolled highlighting remains active.
+  });
+}
+```
+
+`initHighlighter` is fire-and-forget — the first render(s) use the hand-rolled tokenizer and switch automatically to Shiki once `shiki` is assigned.
+
+### `package.json` changes
+
+```json
+"dependencies": {
+  "shiki": "^4.0.0"
+}
+```
+
+No additional `@types/shiki` needed — the package ships its own TypeScript declarations.
+
+### `tsconfig.json` changes
+
+`syntax.ts` needs to be added to the `include` list (it currently is not):
+
+```json
+"include": [
+  "app.ts", "tool.ts", "tui.ts", "input.ts", "provider.ts",
+  "clipboard.ts", "skill.ts", "syntax.ts",
+  "providers/anthropic.ts", "providers/opencode-zen.ts", "providers/openai.ts"
+]
+```
+
+### Token cache
+
+Shiki is fast but `codeToTokensBase` does real work on every call. Because `blockRenderCache` already caches rendered rows keyed on `(content, title, state, collapsed, columns)`, re-highlighting is already avoided for unchanged blocks — no additional cache is needed.
+
+If profiling shows render cost, a `Map<string, SyntaxSegment[][]>` keyed on `lang + "\0" + code` inside `syntax.ts` would be sufficient.
+
+### Files modified / created
+
+| File | Change |
+|------|--------|
+| `syntax.ts` | Add `initHighlighter()`, `hexToAnsi256()`, `tokenizeWithShiki()`, `shikiLangAlias` map; extend `SyntaxSegment` with optional `color` field; update `tokenizeCode()` to try Shiki first. |
+| `tui.ts` | Add `"sh-raw"` to `SegmentStyle`; add `color?: string` to `StyledSegment`; add `"sh-raw"` case in `renderSegment()`. |
+| `app.ts` | Import and fire-and-forget `initHighlighter()` in `main()`. |
+| `package.json` | Add `"shiki": "^4.0.0"` to `dependencies`. |
+| `tsconfig.json` | Add `"syntax.ts"` to `include`. |
+
+### Risk / mitigation
+
+| Risk | Mitigation |
+|------|------------|
+| Shiki dynamic imports fail (e.g., no internet at install time) | `initHighlighter` failure is silently caught; hand-rolled tokenizer keeps working. |
+| `createJavaScriptRegexEngine` produces incorrect highlighting for some grammars | Hand-rolled fallback activates for any language Shiki did not load. |
+| Large code block causes perceptible render lag | Block-level cache in `blockRenderCache` means Shiki only runs once per unique block content. |
+| Shiki `dark-plus` colors clash with terminal palette | `hexToAnsi256` quantises to the nearest of the 240 non-system colors; inherently approximate but well-tested for `dark-plus` on 256-color terminals. |
 
 ## Open Decisions
 

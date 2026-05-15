@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve, extname } from "path";
 import { Tui } from "./tui";
+import { initHighlighter } from "./syntax";
 import {
   tools,
   visualizeToolTitle,
@@ -1088,6 +1089,12 @@ async function prompt(
 async function main() {
   tui.start();
   updateContextInfo();
+
+  // Initialise Shiki in the background. The hand-rolled tokenizer remains
+  // active until the promise resolves, then Shiki takes over automatically.
+  initHighlighter().catch(() => {
+    // Non-fatal — hand-rolled highlighting stays active.
+  });
 
   onEvent("rate-limit-retry", (event) => {
     const seconds = (event.waitMs / 1000).toFixed(1);
