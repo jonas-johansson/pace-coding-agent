@@ -21,7 +21,7 @@ export type ContextInfo = {
 };
 
 import { homedir } from "os";
-import { tokenizeCode, hexToAnsi256 } from "./syntax.js";
+import { tokenizeCode, hexToAnsi256, onHighlighterReady } from "./syntax.js";
 
 type SubmitHandler = (input: string) => void | Promise<void>;
 type SuggestionItem = {
@@ -203,6 +203,13 @@ export class Tui {
     this.model = options.model ?? "";
     this.cwd = options.cwd ?? "";
     this.slashItems = options.slashCommands ? options.slashCommands() : [];
+
+    // When Shiki finishes loading, flush the render cache so code blocks get
+    // re-rendered with full syntax highlighting.
+    onHighlighterReady(() => {
+      this.blockRenderCache.clear();
+      this.requestRender();
+    });
   }
 
   start() {
@@ -2315,7 +2322,7 @@ function splitContentRegions(content: string): ContentRegion[] {
 
   for (const line of content.split("\n")) {
     if (!inCode) {
-      const openFence = /^```(\w*)$/.exec(line);
+      const openFence = /^`{3,}(\w*)[^\S\n]*.*$/.exec(line);
       if (openFence) {
         // Flush any pending markdown lines.
         if (currentMarkdown.length > 0) {
@@ -2329,7 +2336,7 @@ function splitContentRegions(content: string): ContentRegion[] {
         currentMarkdown.push(line);
       }
     } else {
-      if (/^```$/.test(line)) {
+      if (/^`{3,}\s*$/.test(line)) {
         // Close the code region.
         regions.push({ kind: "code", language: codeLang, lines: codeLines });
         inCode = false;

@@ -117,6 +117,18 @@ function resolveShikiLang(lang: string): string {
 
 let shiki: HighlighterCore | null = null;
 
+/** Registered callbacks fired once Shiki finishes loading. */
+const readyCallbacks: Array<() => void> = [];
+
+/** Register a callback to be invoked when Shiki becomes available. */
+export function onHighlighterReady(cb: () => void): void {
+  if (shiki) {
+    cb();
+  } else {
+    readyCallbacks.push(cb);
+  }
+}
+
 /**
  * Asynchronously initialises the Shiki highlighter.  Call once at app startup
  * and ignore the return value — the hand-rolled tokenizer works immediately
@@ -137,6 +149,9 @@ export async function initHighlighter(): Promise<void> {
     langs: langModules.map((m) => m.default),
     engine,
   });
+
+  for (const cb of readyCallbacks) cb();
+  readyCallbacks.length = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,18 +284,18 @@ const JS_KEYWORDS =
 const JS_TYPES = "\\b(?:[A-Z][A-Za-z0-9_]*)\\b";
 
 const jsRules: TokenRule[] = [
-  { pattern: /\/\/.*/gy, style: "sh-comment" },
-  { pattern: /\/\*[\s\S]*?\*\//gy, style: "sh-comment" },
-  { pattern: /`(?:[^`\\]|\\.)*`/gy, style: "sh-string" },
-  { pattern: /"(?:[^"\\]|\\.)*"/gy, style: "sh-string" },
-  { pattern: /'(?:[^'\\]|\\.)*'/gy, style: "sh-string" },
-  { pattern: new RegExp(JS_KEYWORDS, "gy"), style: "sh-keyword" },
-  { pattern: new RegExp(JS_TYPES, "gy"), style: "sh-type" },
-  { pattern: /\b([a-z_$][A-Za-z0-9_$]*)(?=\s*\()/gy, style: "sh-function" },
-  { pattern: /\b0x[\da-fA-F]+n?\b|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?n?\b/gy, style: "sh-number" },
-  { pattern: /(?:===|!==|=>|<=|>=|<<|>>|\+\+|--|&&|\|\||[+\-*/%&|^~!=<>?])/gy, style: "sh-operator" },
-  { pattern: /[{}()[\],.;:]/gy, style: "sh-punctuation" },
-  { pattern: /\b([a-zA-Z_$][a-zA-Z0-9_$]*)(?=\s*:(?!:))/gy, style: "sh-property" },
+  { pattern: /\/\/.*/g, style: "sh-comment" },
+  { pattern: /\/\*[\s\S]*?\*\//g, style: "sh-comment" },
+  { pattern: /`(?:[^`\\]|\\.)*`/g, style: "sh-string" },
+  { pattern: /"(?:[^"\\]|\\.)*"/g, style: "sh-string" },
+  { pattern: /'(?:[^'\\]|\\.)*'/g, style: "sh-string" },
+  { pattern: new RegExp(JS_KEYWORDS, "g"), style: "sh-keyword" },
+  { pattern: new RegExp(JS_TYPES, "g"), style: "sh-type" },
+  { pattern: /\b([a-z_$][A-Za-z0-9_$]*)(?=\s*\()/g, style: "sh-function" },
+  { pattern: /\b0x[\da-fA-F]+n?\b|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?n?\b/g, style: "sh-number" },
+  { pattern: /(?:===|!==|=>|<=|>=|<<|>>|\+\+|--|&&|\|\||[+\-*/%&|^~!=<>?])/g, style: "sh-operator" },
+  { pattern: /[{}()[\],.;:]/g, style: "sh-punctuation" },
+  { pattern: /\b([a-zA-Z_$][a-zA-Z0-9_$]*)(?=\s*:(?!:))/g, style: "sh-property" },
 ];
 
 // Python
@@ -297,19 +312,19 @@ const PY_BUILTINS =
   "tuple|type|vars|zip)\\b";
 
 const pyRules: TokenRule[] = [
-  { pattern: /#.*/gy, style: "sh-comment" },
-  { pattern: /"""[\s\S]*?"""/gy, style: "sh-string" },
-  { pattern: /'''[\s\S]*?'''/gy, style: "sh-string" },
-  { pattern: /"(?:[^"\\]|\\.)*"/gy, style: "sh-string" },
-  { pattern: /'(?:[^'\\]|\\.)*'/gy, style: "sh-string" },
-  { pattern: new RegExp(PY_KEYWORDS, "gy"), style: "sh-keyword" },
-  { pattern: new RegExp(PY_BUILTINS, "gy"), style: "sh-type" },
-  { pattern: /\b[A-Z][A-Za-z0-9_]*\b/gy, style: "sh-type" },
-  { pattern: /\b([a-z_][A-Za-z0-9_]*)(?=\s*\()/gy, style: "sh-function" },
-  { pattern: /@[A-Za-z_][A-Za-z0-9_.]*/gy, style: "sh-keyword" },
-  { pattern: /\b0x[\da-fA-F]+\b|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/gy, style: "sh-number" },
-  { pattern: /(?:==|!=|<=|>=|\*\*|\/\/|<<|>>|->|[+\-*/%&|^~!=<>])/gy, style: "sh-operator" },
-  { pattern: /[{}()[\],.;:]/gy, style: "sh-punctuation" },
+  { pattern: /#.*/g, style: "sh-comment" },
+  { pattern: /"""[\s\S]*?"""/g, style: "sh-string" },
+  { pattern: /'''[\s\S]*?'''/g, style: "sh-string" },
+  { pattern: /"(?:[^"\\]|\\.)*"/g, style: "sh-string" },
+  { pattern: /'(?:[^'\\]|\\.)*'/g, style: "sh-string" },
+  { pattern: new RegExp(PY_KEYWORDS, "g"), style: "sh-keyword" },
+  { pattern: new RegExp(PY_BUILTINS, "g"), style: "sh-type" },
+  { pattern: /\b[A-Z][A-Za-z0-9_]*\b/g, style: "sh-type" },
+  { pattern: /\b([a-z_][A-Za-z0-9_]*)(?=\s*\()/g, style: "sh-function" },
+  { pattern: /@[A-Za-z_][A-Za-z0-9_.]*/g, style: "sh-keyword" },
+  { pattern: /\b0x[\da-fA-F]+\b|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g, style: "sh-number" },
+  { pattern: /(?:==|!=|<=|>=|\*\*|\/\/|<<|>>|->|[+\-*/%&|^~!=<>])/g, style: "sh-operator" },
+  { pattern: /[{}()[\],.;:]/g, style: "sh-punctuation" },
 ];
 
 // Bash / shell
@@ -324,50 +339,50 @@ const SH_BUILTINS =
   "unset|wait)\\b";
 
 const shRules: TokenRule[] = [
-  { pattern: /#.*/gy, style: "sh-comment" },
-  { pattern: /"(?:[^"\\]|\\.)*"/gy, style: "sh-string" },
-  { pattern: /'[^']*'/gy, style: "sh-string" },
-  { pattern: /\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[@*#?$!0-9])/gy, style: "sh-type" },
-  { pattern: new RegExp(SH_KEYWORDS, "gy"), style: "sh-keyword" },
-  { pattern: new RegExp(SH_BUILTINS, "gy"), style: "sh-function" },
-  { pattern: /\b\d+\b/gy, style: "sh-number" },
-  { pattern: /(?:&&|\|\||>>|[|&;<>])/gy, style: "sh-operator" },
-  { pattern: /[{}()[\],.]/gy, style: "sh-punctuation" },
-  { pattern: /(?:^|\s)--?[A-Za-z][A-Za-z0-9_-]*/gy, style: "sh-property" },
+  { pattern: /#.*/g, style: "sh-comment" },
+  { pattern: /"(?:[^"\\]|\\.)*"/g, style: "sh-string" },
+  { pattern: /'[^']*'/g, style: "sh-string" },
+  { pattern: /\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[@*#?$!0-9])/g, style: "sh-type" },
+  { pattern: new RegExp(SH_KEYWORDS, "g"), style: "sh-keyword" },
+  { pattern: new RegExp(SH_BUILTINS, "g"), style: "sh-function" },
+  { pattern: /\b\d+\b/g, style: "sh-number" },
+  { pattern: /(?:&&|\|\||>>|[|&;<>])/g, style: "sh-operator" },
+  { pattern: /[{}()[\],.]/g, style: "sh-punctuation" },
+  { pattern: /(?:^|\s)--?[A-Za-z][A-Za-z0-9_-]*/g, style: "sh-property" },
 ];
 
 // JSON
 const jsonRules: TokenRule[] = [
-  { pattern: /"(?:[^"\\]|\\.)*"/gy, style: "sh-string" },
-  { pattern: /\b(?:true|false|null)\b/gy, style: "sh-keyword" },
-  { pattern: /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/gy, style: "sh-number" },
-  { pattern: /:/gy, style: "sh-operator" },
-  { pattern: /[{}()[\],]/gy, style: "sh-punctuation" },
+  { pattern: /"(?:[^"\\]|\\.)*"/g, style: "sh-string" },
+  { pattern: /\b(?:true|false|null)\b/g, style: "sh-keyword" },
+  { pattern: /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g, style: "sh-number" },
+  { pattern: /:/g, style: "sh-operator" },
+  { pattern: /[{}()[\],]/g, style: "sh-punctuation" },
 ];
 
 // CSS
 const cssRules: TokenRule[] = [
-  { pattern: /\/\*[\s\S]*?\*\//gy, style: "sh-comment" },
-  { pattern: /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/gy, style: "sh-string" },
-  { pattern: /@[A-Za-z-]+/gy, style: "sh-keyword" },
-  { pattern: /#[\da-fA-F]{3,8}\b/gy, style: "sh-number" },
-  { pattern: /-?\d+(?:\.\d+)?(?:px|em|rem|vh|vw|vmin|vmax|%|s|ms|deg|rad|fr|ch|ex)?\b/gy, style: "sh-number" },
-  { pattern: /::?[A-Za-z-]+/gy, style: "sh-type" },
-  { pattern: /!important\b/gy, style: "sh-keyword" },
-  { pattern: /[A-Za-z-]+(?=\s*:)/gy, style: "sh-property" },
-  { pattern: /[{}()[\],;:]/gy, style: "sh-punctuation" },
+  { pattern: /\/\*[\s\S]*?\*\//g, style: "sh-comment" },
+  { pattern: /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, style: "sh-string" },
+  { pattern: /@[A-Za-z-]+/g, style: "sh-keyword" },
+  { pattern: /#[\da-fA-F]{3,8}\b/g, style: "sh-number" },
+  { pattern: /-?\d+(?:\.\d+)?(?:px|em|rem|vh|vw|vmin|vmax|%|s|ms|deg|rad|fr|ch|ex)?\b/g, style: "sh-number" },
+  { pattern: /::?[A-Za-z-]+/g, style: "sh-type" },
+  { pattern: /!important\b/g, style: "sh-keyword" },
+  { pattern: /[A-Za-z-]+(?=\s*:)/g, style: "sh-property" },
+  { pattern: /[{}()[\],;:]/g, style: "sh-punctuation" },
 ];
 
 // HTML / XML
 const htmlRules: TokenRule[] = [
-  { pattern: /<!--[\s\S]*?-->/gy, style: "sh-comment" },
-  { pattern: /<!?[A-Za-z][^>]*>/gy, style: "sh-comment" },
-  { pattern: /<\/[A-Za-z][A-Za-z0-9._:-]*>/gy, style: "sh-keyword" },
-  { pattern: /<[A-Za-z][A-Za-z0-9._:-]*/gy, style: "sh-keyword" },
-  { pattern: /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/gy, style: "sh-string" },
-  { pattern: /\b[A-Za-z_:][A-Za-z0-9_.:-]*(?=\s*=)/gy, style: "sh-property" },
-  { pattern: /[<>/=]/gy, style: "sh-punctuation" },
-  { pattern: /&[A-Za-z#][A-Za-z0-9]*;/gy, style: "sh-type" },
+  { pattern: /<!--[\s\S]*?-->/g, style: "sh-comment" },
+  { pattern: /<!?[A-Za-z][^>]*>/g, style: "sh-comment" },
+  { pattern: /<\/[A-Za-z][A-Za-z0-9._:-]*>/g, style: "sh-keyword" },
+  { pattern: /<[A-Za-z][A-Za-z0-9._:-]*/g, style: "sh-keyword" },
+  { pattern: /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, style: "sh-string" },
+  { pattern: /\b[A-Za-z_:][A-Za-z0-9_.:-]*(?=\s*=)/g, style: "sh-property" },
+  { pattern: /[<>/=]/g, style: "sh-punctuation" },
+  { pattern: /&[A-Za-z#][A-Za-z0-9]*;/g, style: "sh-type" },
 ];
 
 // SQL
@@ -382,36 +397,36 @@ const SQL_KEYWORDS =
   "right|select|set|table|then|top|union|unique|update|values|view|when|where|with)\\b";
 
 const sqlRules: TokenRule[] = [
-  { pattern: /--.*|\/\*[\s\S]*?\*\//gy, style: "sh-comment" },
-  { pattern: /'(?:[^'\\]|\\.)*'/gy, style: "sh-string" },
-  { pattern: new RegExp(SQL_KEYWORDS, "gy"), style: "sh-keyword" },
-  { pattern: /\b\d+(?:\.\d+)?\b/gy, style: "sh-number" },
-  { pattern: /(?:!=|<>|<=|>=|[+\-*/%=<>])/gy, style: "sh-operator" },
-  { pattern: /[{}()[\],.;:]/gy, style: "sh-punctuation" },
-  { pattern: /`[^`]*`|\[[^\]]*\]/gy, style: "sh-property" },
+  { pattern: /--.*|\/\*[\s\S]*?\*\//g, style: "sh-comment" },
+  { pattern: /'(?:[^'\\]|\\.)*'/g, style: "sh-string" },
+  { pattern: new RegExp(SQL_KEYWORDS, "g"), style: "sh-keyword" },
+  { pattern: /\b\d+(?:\.\d+)?\b/g, style: "sh-number" },
+  { pattern: /(?:!=|<>|<=|>=|[+\-*/%=<>])/g, style: "sh-operator" },
+  { pattern: /[{}()[\],.;:]/g, style: "sh-punctuation" },
+  { pattern: /`[^`]*`|\[[^\]]*\]/g, style: "sh-property" },
 ];
 
 // YAML
 const yamlRules: TokenRule[] = [
-  { pattern: /#.*/gy, style: "sh-comment" },
-  { pattern: /"(?:[^"\\]|\\.)*"|'[^']*'/gy, style: "sh-string" },
-  { pattern: /[&*][A-Za-z_][A-Za-z0-9_-]*/gy, style: "sh-type" },
-  { pattern: /\b[A-Za-z_][A-Za-z0-9_-]*(?=\s*:)/gy, style: "sh-property" },
-  { pattern: /\b(?:true|false|yes|no|null|~)\b/gy, style: "sh-keyword" },
-  { pattern: /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/gy, style: "sh-number" },
-  { pattern: /[{}()[\],:?|>-]/gy, style: "sh-punctuation" },
+  { pattern: /#.*/g, style: "sh-comment" },
+  { pattern: /"(?:[^"\\]|\\.)*"|'[^']*'/g, style: "sh-string" },
+  { pattern: /[&*][A-Za-z_][A-Za-z0-9_-]*/g, style: "sh-type" },
+  { pattern: /\b[A-Za-z_][A-Za-z0-9_-]*(?=\s*:)/g, style: "sh-property" },
+  { pattern: /\b(?:true|false|yes|no|null|~)\b/g, style: "sh-keyword" },
+  { pattern: /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g, style: "sh-number" },
+  { pattern: /[{}()[\],:?|>-]/g, style: "sh-punctuation" },
 ];
 
 // TOML
 const tomlRules: TokenRule[] = [
-  { pattern: /#.*/gy, style: "sh-comment" },
-  { pattern: /"""[\s\S]*?"""|'''[\s\S]*?'''/gy, style: "sh-string" },
-  { pattern: /"(?:[^"\\]|\\.)*"|'[^']*'/gy, style: "sh-string" },
-  { pattern: /\[\[?[^\]]+\]\]?/gy, style: "sh-type" },
-  { pattern: /\b[A-Za-z_][A-Za-z0-9_."-]*(?=\s*=)/gy, style: "sh-property" },
-  { pattern: /\b(?:true|false)\b/gy, style: "sh-keyword" },
-  { pattern: /\b\d{4}-\d{2}-\d{2}(?:T\S*)?\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/gy, style: "sh-number" },
-  { pattern: /[{}()[\],.=]/gy, style: "sh-punctuation" },
+  { pattern: /#.*/g, style: "sh-comment" },
+  { pattern: /"""[\s\S]*?"""|'''[\s\S]*?'''/g, style: "sh-string" },
+  { pattern: /"(?:[^"\\]|\\.)*"|'[^']*'/g, style: "sh-string" },
+  { pattern: /\[\[?[^\]]+\]\]?/g, style: "sh-type" },
+  { pattern: /\b[A-Za-z_][A-Za-z0-9_."-]*(?=\s*=)/g, style: "sh-property" },
+  { pattern: /\b(?:true|false)\b/g, style: "sh-keyword" },
+  { pattern: /\b\d{4}-\d{2}-\d{2}(?:T\S*)?\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g, style: "sh-number" },
+  { pattern: /[{}()[\],.=]/g, style: "sh-punctuation" },
 ];
 
 // ---------------------------------------------------------------------------
