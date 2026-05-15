@@ -186,6 +186,9 @@ const IMAGE_REF_PATTERN = /@image\(([^)]+)\)/g;
 /** Pattern matching bare image file paths at word boundaries. */
 const BARE_IMAGE_PATH_PATTERN = /(?:^|\s)((?:\.{0,2}\/|~\/)[^\s]+\.(?:jpg|jpeg|png|gif|webp))(?=\s|$)/gi;
 
+/** Pattern matching @filename references (e.g. @file.txt, @src/foo.ts). */
+const FILE_REF_PATTERN = /@([\w./\-]+\.\w+)/g;
+
 function estimateBase64Size(rawBytes: number): number {
   return Math.ceil(rawBytes / 3) * 4;
 }
@@ -464,10 +467,23 @@ type ParsedUserInput = {
   error?: string;
 };
 
+function stripExistingFileRef(fullMatch: string, rawPath: string): string {
+  if (rawPath.startsWith("image(")) return fullMatch;
+  const filePath = resolve(expandHomePath(rawPath));
+  if (existsSync(filePath)) {
+    return rawPath;
+  }
+  return fullMatch;
+}
+
 async function parseUserInput(raw: string): Promise<ParsedUserInput> {
   const images: ImageAttachment[] = [...pendingImages];
   let displayText = raw;
   let modelText = raw;
+
+  // Replace @file references with bare file names if the file exists
+  displayText = displayText.replace(/(?<!\S)@([^\s]+)/g, stripExistingFileRef);
+  modelText = modelText.replace(/(?<!\S)@([^\s]+)/g, stripExistingFileRef);
 
   // Process @image(...) references
   const imageRefMatches = Array.from(raw.matchAll(IMAGE_REF_PATTERN));
@@ -535,6 +551,16 @@ async function parseUserInput(raw: string): Promise<ParsedUserInput> {
       // Bare paths are left in model text — just attach the image in addition
     } catch {
       // Silently skip unreadable bare paths
+    }
+  }
+
+  // Replace @file.txt mentions with just file.txt when the file exists
+  for (const match of Array.from(modelText.matchAll(FILE_REF_PATTERN))) {
+    const rawPath = match[1];
+    const filePath = resolve(expandHomePath(rawPath));
+    if (existsSync(filePath)) {
+      modelText = modelText.replace(match[0], rawPath);
+      displayText = displayText.replace(match[0], rawPath);
     }
   }
 
