@@ -21,6 +21,7 @@ export type ContextInfo = {
 };
 
 import { homedir } from "os";
+import { tokenizeCode } from "./syntax.js";
 
 type SubmitHandler = (input: string) => void | Promise<void>;
 type SuggestionItem = {
@@ -31,7 +32,22 @@ type SuggestionItem = {
 };
 type SuggestionProvider = () => SuggestionItem[];
 type FileSuggestionProvider = () => Promise<string[]>;
-type SegmentStyle = "normal" | "bold" | "italic" | "code" | "heading" | "title";
+type SegmentStyle =
+  | "normal"
+  | "bold"
+  | "italic"
+  | "code"
+  | "heading"
+  | "title"
+  | "sh-keyword"
+  | "sh-string"
+  | "sh-number"
+  | "sh-comment"
+  | "sh-type"
+  | "sh-function"
+  | "sh-operator"
+  | "sh-punctuation"
+  | "sh-property";
 
 type ScreenPosition = {
   row: number;
@@ -2272,6 +2288,88 @@ function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) 
   return renderErrorBlock(block, columns, sanitized);
 }
 
+// ---------------------------------------------------------------------------
+// Block-level region splitting
+// ---------------------------------------------------------------------------
+
+type ContentRegion =
+  | { kind: "markdown"; lines: string[] }
+  | { kind: "code"; language: string | null; lines: string[] };
+
+/**
+ * Split raw content text into a sequence of alternating markdown and fenced
+ * code regions.  Opening fences are ``` optionally followed by a language tag;
+ * closing fences are ``` on their own line.
+ */
+function splitContentRegions(content: string): ContentRegion[] {
+  const regions: ContentRegion[] = [];
+  let currentMarkdown: string[] = [];
+  let inCode = false;
+  let codeLang: string | null = null;
+  let codeLines: string[] = [];
+
+  for (const line of content.split("\n")) {
+    if (!inCode) {
+      const openFence = /^```(\w*)$/.exec(line);
+      if (openFence) {
+        // Flush any pending markdown lines.
+        if (currentMarkdown.length > 0) {
+          regions.push({ kind: "markdown", lines: currentMarkdown });
+          currentMarkdown = [];
+        }
+        inCode = true;
+        codeLang = openFence[1] || null;
+        codeLines = [];
+      } else {
+        currentMarkdown.push(line);
+      }
+    } else {
+      if (/^```$/.test(line)) {
+        // Close the code region.
+        regions.push({ kind: "code", language: codeLang, lines: codeLines });
+        inCode = false;
+        codeLang = null;
+        codeLines = [];
+      } else {
+        codeLines.push(line);
+      }
+    }
+  }
+
+  // Flush any remaining open code block (unterminated fence, e.g. streaming).
+  if (inCode && codeLines.length > 0) {
+    regions.push({ kind: "code", language: codeLang, lines: codeLines });
+  } else if (currentMarkdown.length > 0) {
+    regions.push({ kind: "markdown", lines: currentMarkdown });
+  }
+
+  return regions;
+}
+
+/**
+ * Convert a list of content regions into rows of StyledSegments, ready for
+ * wrapping and rendering.
+ */
+function regionToRows(regions: ContentRegion[], innerWidth: number): StyledSegment[][] {
+  const rows: StyledSegment[][] = [];
+
+  for (const region of regions) {
+    if (region.kind === "markdown") {
+      for (const line of region.lines) {
+        rows.push(...wrapSegments(parseMarkdownLine(line), innerWidth));
+      }
+    } else {
+      // Code region — tokenize and wrap each line.
+      const tokenized = tokenizeCode(region.lines, region.language);
+      for (const segments of tokenized) {
+        rows.push(...wrapSegments(segments as StyledSegment[], innerWidth));
+      }
+    }
+  }
+
+  return rows;
+}
+
 /** Render a user message as a boxed card with padding (keeps existing look). */
 function renderUserBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
   const theme = themes.user;
@@ -2285,9 +2383,7 @@ function renderUserBlock(block: RenderBlock, columns: number, sanitizedContent: 
   }
 
   if (content) {
-    for (const line of content.split("\n")) {
-      rows.push(...wrapSegments(parseMarkdownLine(line), innerWidth));
-    }
+    rows.push(...regionToRows(splitContentRegions(content), innerWidth));
   }
 
   rows.push([]); // bottom padding
@@ -2310,11 +2406,8 @@ function renderAssistantBlock(block: RenderBlock, columns: number, sanitizedCont
     }
     // blank line between title and content
     result.push(renderBlockRow([], theme, columns));
-    for (const line of content.split("\n")) {
-      const wrapped = wrapSegments(parseMarkdownLine(line), innerWidth);
-      for (const row of wrapped) {
-        result.push(renderBlockRow(row, theme, columns));
-      }
+    for (const row of regionToRows(splitContentRegions(content), innerWidth)) {
+      result.push(renderBlockRow(row, theme, columns));
     }
   } else if (block.title) {
     const titleRows = wrapSegments([{ text: block.title, style: "title" }], innerWidth);
@@ -2322,11 +2415,8 @@ function renderAssistantBlock(block: RenderBlock, columns: number, sanitizedCont
       result.push(renderBlockRow(row, theme, columns));
     }
   } else if (content) {
-    for (const line of content.split("\n")) {
-      const wrapped = wrapSegments(parseMarkdownLine(line), innerWidth);
-      for (const row of wrapped) {
-        result.push(renderBlockRow(row, theme, columns));
-      }
+    for (const row of regionToRows(splitContentRegions(content), innerWidth)) {
+      result.push(renderBlockRow(row, theme, columns));
     }
   }
 
@@ -2371,9 +2461,7 @@ function renderPanelToolBlock(block: RenderBlock, columns: number, spinnerFrame:
   }
 
   if (content) {
-    for (const line of content.split("\n")) {
-      rows.push(...wrapSegments(parseMarkdownLine(line), innerWidth));
-    }
+    rows.push(...regionToRows(splitContentRegions(content), innerWidth));
   }
 
   rows.push([]); // bottom padding
@@ -2411,9 +2499,7 @@ function renderErrorBlock(block: RenderBlock, columns: number, sanitizedContent:
   }
 
   if (content) {
-    for (const line of content.split("\n")) {
-      rows.push(...wrapSegments(parseMarkdownLine(line), innerWidth));
-    }
+    rows.push(...regionToRows(splitContentRegions(content), innerWidth));
   }
 
   rows.push([]); // bottom padding
@@ -2525,6 +2611,19 @@ function renderBlockRow(segments: StyledSegment[], theme: BlockTheme, columns: n
   return `${base}  ${content}${RESET}${bg(theme.bg)}${fg(theme.fg)}${" ".repeat(rightPadding)}${RESET}`;
 }
 
+// Syntax-highlight token colors (chosen for readability on dark backgrounds).
+const syntaxColors: Partial<Record<SegmentStyle, number>> = {
+  "sh-keyword": 204,   // soft red
+  "sh-string": 151,    // pale green
+  "sh-number": 179,    // tan / gold
+  "sh-comment": 245,   // gray (dim)
+  "sh-type": 81,       // cyan
+  "sh-function": 117,  // light blue
+  "sh-operator": 186,  // light yellow
+  "sh-punctuation": 250, // light gray
+  "sh-property": 187,  // pale lavender
+};
+
 function renderSegment(segment: StyledSegment, theme: BlockTheme) {
   if (!segment.text) {
     return "";
@@ -2541,8 +2640,13 @@ function renderSegment(segment: StyledSegment, theme: BlockTheme) {
       return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${ITALIC}${segment.text}`;
     case "code":
       return `${RESET}${bg(theme.bg)}${fg(118)}${segment.text}`;
-    default:
+    default: {
+      const syntaxColor = syntaxColors[segment.style];
+      if (syntaxColor !== undefined) {
+        return `${RESET}${bg(theme.bg)}${fg(syntaxColor)}${segment.text}`;
+      }
       return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${segment.text}`;
+    }
   }
 }
 
