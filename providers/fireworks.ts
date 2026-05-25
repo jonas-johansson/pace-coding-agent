@@ -35,7 +35,7 @@ type OaiContentPart =
 type OaiMessage =
   | { role: "system"; content: string }
   | { role: "user"; content: string | OaiContentPart[] }
-  | { role: "assistant"; content?: string | null; tool_calls?: OaiToolCall[] }
+  | { role: "assistant"; content?: string | null; reasoning_content?: string | null; tool_calls?: OaiToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
 type OaiToolCall = {
@@ -56,6 +56,7 @@ type OaiTool = {
 type OaiStreamDelta = {
   role?: string;
   content?: string | null;
+  reasoning_content?: string | null;
   tool_calls?: Array<{
     index: number;
     id?: string;
@@ -83,6 +84,26 @@ type OaiStreamChunk = {
     };
   } | null;
 };
+
+// ── Provider metadata ────────────────────────────────────────────────────────
+
+/**
+ * Shape of the `providerMetadata` stored on AssistantMessages originating
+ * from this provider. Captures `reasoning_content` so it can be replayed on
+ * subsequent turns — the model needs its prior reasoning for continuity.
+ */
+type FireworksMetadata = {
+  provider: "fireworks";
+  reasoningContent?: string;
+};
+
+function isFireworksMetadata(v: unknown): v is FireworksMetadata {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    (v as Record<string, unknown>).provider === "fireworks"
+  );
+}
 
 // ── Message translation ─────────────────────────────────────────────────────
 
@@ -162,9 +183,15 @@ function toOaiMessages(system: string, messages: ProviderMessage[]): OaiMessage[
         }
       }
 
+      // Replay reasoning_content from providerMetadata so the model can
+      // reference its prior chain-of-thought across tool-calling turns.
+      const meta = msg.providerMetadata;
+      const reasoning = isFireworksMetadata(meta) ? meta.reasoningContent : undefined;
+
       const assistantMsg: OaiMessage = {
         role: "assistant",
         content: textParts.length > 0 ? textParts.join("\n") : null,
+        ...(reasoning && { reasoning_content: reasoning }),
         ...(toolCalls.length > 0 && { tool_calls: toolCalls }),
       };
       result.push(assistantMsg);
@@ -314,6 +341,7 @@ class FireworksStream implements ProviderStream {
   // Accumulated state built up during iteration, consumed by finalMessage().
   private finishReason: string | null = null;
   private fullTextContent = "";
+  private fullReasoningContent = "";
   private completedToolCalls: PendingToolCall[] = [];
   private pendingToolCalls = new Map<number, PendingToolCall>();
   private usage: UsageInfo = {
@@ -360,6 +388,20 @@ class FireworksStream implements ProviderStream {
       }
 
       const delta = choice.delta;
+
+      // ── Reasoning content (thinking) ──
+      // Kimi K2 emits its chain-of-thought in `reasoning_content` rather
+      // than `content`. Surface it as regular text events so the TUI shows
+      // the model's reasoning between tool calls.
+      if (delta.reasoning_content != null && delta.reasoning_content !== "") {
+        if (!inTextBlock) {
+          inTextBlock = true;
+          yield { type: "text_start", text: delta.reasoning_content };
+        } else {
+          yield { type: "text_delta", text: delta.reasoning_content };
+        }
+        this.fullReasoningContent += delta.reasoning_content;
+      }
 
       // ── Text content ──
       if (delta.content != null && delta.content !== "") {
@@ -463,10 +505,15 @@ class FireworksStream implements ProviderStream {
     const stopReason: "end_turn" | "tool_use" =
       this.finishReason === "tool_calls" ? "tool_use" : "end_turn";
 
+    const metadata: FireworksMetadata | undefined = this.fullReasoningContent
+      ? { provider: "fireworks", reasoningContent: this.fullReasoningContent }
+      : undefined;
+
     return {
       content,
       stopReason,
       usage: this.usage,
+      ...(metadata && { providerMetadata: metadata }),
     };
   }
 }
