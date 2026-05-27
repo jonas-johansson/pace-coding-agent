@@ -146,7 +146,7 @@ export interface Provider {
 
 export type ModelConfig = {
   id: string;
-  provider: "anthropic" | "opencode-zen" | "openai" | "fireworks";
+  provider: "anthropic" | "opencode-zen" | "openai" | "fireworks" | "lmstudio";
   contextWindow: number;
   maxOutputTokens: number;
   supportsImages: boolean;
@@ -237,6 +237,32 @@ export const MODELS: Record<string, ModelConfig> = {
       outputPerMTok: 30.00,
     },
   },
+  "gemma-4-26b": {
+    id: "google/gemma-4-26b-a4b",
+    provider: "lmstudio",
+    contextWindow: 32_768,
+    maxOutputTokens: 8_192,
+    supportsImages: true,
+    pricing: {
+      inputPerMTok: 0,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0,
+      outputPerMTok: 0,
+    },
+  },
+  "qwen-3.6-35b": {
+    id: "qwen/qwen3.6-35b-a3b",
+    provider: "lmstudio",
+    contextWindow: 32_768,
+    maxOutputTokens: 8_192,
+    supportsImages: true,
+    pricing: {
+      inputPerMTok: 0,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0,
+      outputPerMTok: 0,
+    },
+  },
 };
 
 export const MODEL_ALIASES: Record<string, string> = {
@@ -249,6 +275,8 @@ export const MODEL_ALIASES: Record<string, string> = {
   "k2.6-fw": "kimi-k2.6-fw",
   "gpt5.5": "gpt-5.5",
   "5.5": "gpt-5.5",
+  gemma: "gemma-4-26b",
+  qwen: "qwen-3.6-35b",
 };
 
 export const AVAILABLE_MODEL_IDS = Object.keys(MODELS);

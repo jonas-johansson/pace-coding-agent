@@ -43,6 +43,7 @@ import { AnthropicProvider } from "./providers/anthropic";
 import { OpenCodeZenProvider } from "./providers/opencode-zen";
 import { OpenAIProvider } from "./providers/openai";
 import { FireworksProvider } from "./providers/fireworks";
+import { LmStudioProvider } from "./providers/lmstudio";
 import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
 import { sendDesktopNotification } from "./notify";
 import { onEvent } from "./events";
@@ -97,6 +98,7 @@ let anthropicProvider: AnthropicProvider | undefined;
 let openCodeZenProvider: OpenCodeZenProvider | undefined;
 let openAIProvider: OpenAIProvider | undefined;
 let fireworksProvider: FireworksProvider | undefined;
+let lmStudioProvider: LmStudioProvider | undefined;
 
 function getProvider(config: ModelConfig): Provider {
   switch (config.provider) {
@@ -112,6 +114,9 @@ function getProvider(config: ModelConfig): Provider {
     case "fireworks":
       if (!fireworksProvider) fireworksProvider = new FireworksProvider();
       return fireworksProvider;
+    case "lmstudio":
+      if (!lmStudioProvider) lmStudioProvider = new LmStudioProvider();
+      return lmStudioProvider;
   }
 }
 
