@@ -15,7 +15,15 @@ import {
   truncateUtf8Suffix,
 } from "./output";
 
-const BASH_DEFAULT_TIMEOUT = 10_000;
+const BASH_DEFAULT_TIMEOUT = 30_000;
+const BASH_SIGKILL_GRACE_MS = 2_000;
+const BASH_FORCE_RETURN_GRACE_MS = 1_000;
+
+type ProcessResult = {
+  code: number | null;
+  error?: Error;
+  forceReturned?: boolean;
+};
 
 export const bashTool = defineTool({
   name: "bash",
@@ -46,10 +54,17 @@ export const bashTool = defineTool({
       let previewHead = "";
       let previewTail = "";
       let outputBytes = 0;
-      let killed = false;
-      let killSignal: string | null = null;
+      let killSignal: NodeJS.Signals | null = null;
+      let timedOut = false;
+      let captureOutput = true;
+      let settled = false;
+      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+      let sigkillTimer: ReturnType<typeof setTimeout> | undefined;
+      let forceReturnTimer: ReturnType<typeof setTimeout> | undefined;
+      let resolveProcess: ((result: ProcessResult) => void) | undefined;
 
       const captureChunk = (chunk: string, streamName: "stdout" | "stderr") => {
+        if (!captureOutput) return;
         fullOutputStream?.write(chunk);
         outputBytes += Buffer.byteLength(chunk, "utf8");
 
@@ -73,36 +88,73 @@ export const bashTool = defineTool({
       });
 
       // Kill the entire process group so children are also terminated
-      const killTree = () => {
-        killed = true;
+      const killTree = (signalToSend: NodeJS.Signals) => {
+        killSignal = signalToSend;
         if (child.pid) {
-          try { process.kill(-child.pid, "SIGTERM"); } catch {}
+          try { process.kill(-child.pid, signalToSend); } catch {}
         }
-        child.kill("SIGTERM");
+        child.kill(signalToSend);
+      };
+
+      const forceReturn = () => {
+        if (settled) return;
+        captureOutput = false;
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.unref();
+        resolveProcess?.({ code: null, forceReturned: true });
+      };
+
+      const scheduleKillEscalation = () => {
+        if (sigkillTimer || forceReturnTimer) return;
+        sigkillTimer = setTimeout(() => {
+          killTree("SIGKILL");
+        }, BASH_SIGKILL_GRACE_MS);
+        forceReturnTimer = setTimeout(() => {
+          forceReturn();
+        }, BASH_SIGKILL_GRACE_MS + BASH_FORCE_RETURN_GRACE_MS);
       };
 
       // Set up timeout
-      const timer = setTimeout(() => {
-        killSignal = "SIGTERM";
-        killTree();
+      timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        killTree("SIGTERM");
+        scheduleKillEscalation();
       }, timeoutMs);
 
       // Set up abort signal
+      let onAbort: (() => void) | undefined;
       if (signal) {
-        const onAbort = () => { killTree(); };
+        onAbort = () => {
+          killTree("SIGTERM");
+          scheduleKillEscalation();
+        };
         signal.addEventListener("abort", onAbort, { once: true });
-        child.on("exit", () => signal.removeEventListener("abort", onAbort));
       }
 
       // Wait for the process to exit
-      const code = await new Promise<number | null>((resolve, reject) => {
-        child.on("error", reject);
-        child.on("close", (exitCode) => resolve(exitCode));
-      });
+      const processResult = await new Promise<ProcessResult>((resolve) => {
+        resolveProcess = (result) => {
+          if (settled) return;
+          settled = true;
+          resolve(result);
+        };
 
-      clearTimeout(timer);
+        child.on("error", (error) => resolveProcess?.({ code: null, error }));
+        child.on("close", (exitCode) => resolveProcess?.({ code: exitCode }));
+      });
+      const { code } = processResult;
+
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      if (sigkillTimer) clearTimeout(sigkillTimer);
+      if (forceReturnTimer) clearTimeout(forceReturnTimer);
+      if (signal && onAbort) signal.removeEventListener("abort", onAbort);
       if (fullOutputStream) {
         await finishWriteStream(fullOutputStream);
+      }
+
+      if (processResult.error) {
+        throw processResult.error;
       }
 
       if (signal?.aborted) {
@@ -118,10 +170,16 @@ export const bashTool = defineTool({
         ? buildTruncatedToolOutputFromParts(previewHead, previewTail, outputBytes, fullOutputPath)
         : [stdout, stderr].filter(Boolean).join("\n");
 
-      if (killed && killSignal === "SIGTERM") {
+      if (timedOut) {
+        const forcedMessage = processResult.forceReturned
+          ? " Process did not exit after SIGKILL; stopped waiting."
+          : killSignal === "SIGKILL"
+            ? " Sent SIGKILL after SIGTERM."
+            : "";
+        const timeoutMessage = `Command timed out after ${Math.floor(timeoutMs / 1000)} seconds.${forcedMessage}`;
         const message = bashOutput
-          ? `Command timed out after ${Math.floor(timeoutMs / 1000)} seconds. Partial output:\n${bashOutput}`
-          : `Command timed out after ${Math.floor(timeoutMs / 1000)} seconds.`;
+          ? `${timeoutMessage} Partial output:\n${bashOutput}`
+          : timeoutMessage;
         return {
           content: [{ type: "text", text: `Error: ${message}` }],
           is_error: true,
@@ -132,6 +190,7 @@ export const bashTool = defineTool({
         const message = [bashOutput, `Command exited with code ${code}`].filter(Boolean).join("\n");
         return {
           content: [{ type: "text", text: `Error: ${message}` }],
+          is_error: true,
         };
       }
 
@@ -143,6 +202,7 @@ export const bashTool = defineTool({
       const message = error instanceof Error ? error.message : String(error);
       return {
         content: [{ type: "text", text: `Error: ${message}` }],
+        is_error: true,
       };
     }
   }
