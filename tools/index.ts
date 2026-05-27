@@ -15,7 +15,7 @@ const builtInTools: ToolDescriptor[] = [
   writeTool,
   editTool,
   bashTool,
-  toolComposerTool,
+  //toolComposerTool,
   webFetchTool,
   webSearchTool,
   skillTool,
