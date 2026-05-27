@@ -694,7 +694,9 @@ async function executeToolUseBlock(
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
     const rawToolOutput = await toolToExecute.execute(inputParseResult.data, signal);
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-    const toolOutput = await truncateToolOutputIfNeeded(rawToolOutput, contentBlock.name, contentBlock.id);
+    const toolOutput = toolToExecute.truncateOutput === false
+      ? rawToolOutput
+      : await truncateToolOutputIfNeeded(rawToolOutput, contentBlock.name, contentBlock.id);
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
     const showContent = toolToExecute.showContent !== false || toolOutput.is_error;
     tui.updateBlock(blockId, {

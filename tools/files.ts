@@ -34,6 +34,7 @@ export const readTool = defineTool({
     return `read: ${pathPart}`;
   },
   showContent: false,
+  truncateOutput: false,
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
     const filePath = expandHomePath(input.path);

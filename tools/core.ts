@@ -39,6 +39,11 @@ export type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
    * verbatim. Errors are always shown regardless of this flag. Defaults to true.
    */
   showContent?: boolean;
+  /**
+   * When false, the generic tool-result truncation pass is skipped and the
+   * tool's output is sent to the model verbatim. Defaults to true.
+   */
+  truncateOutput?: boolean;
 }
 
 export const tools: ToolDescriptor[] = [];
