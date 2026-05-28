@@ -1,4 +1,4 @@
-type BlockRole = "user" | "assistant" | "tool" | "error";
+type BlockRole = "user" | "assistant" | "reasoning" | "tool" | "error";
 
 export type BlockState = "running" | "done" | "error";
 
@@ -11,7 +11,7 @@ export type RenderBlock = {
   state?: BlockState;
 };
 
-export type BlockPatch = Partial<Pick<RenderBlock, "title" | "content" | "state">>;
+export type BlockPatch = Partial<Pick<RenderBlock, "title" | "content" | "state" | "collapsed">>;
 
 export type ContextInfo = {
   usedTokens: number;
@@ -132,6 +132,7 @@ const PANEL_BG = 235;
 const themes: Record<BlockRole, BlockTheme> = {
   user: { fg: 231, bg: 24, accent: 117, bold: 230 },
   assistant: { fg: 255, bg: CANVAS_BG, accent: 221, bold: 215 },
+  reasoning: { fg: 245, bg: CANVAS_BG, accent: 179, bold: 179 },
   tool: { fg: 252, bg: PANEL_BG, accent: 117, bold: 230 },
   error: { fg: 231, bg: 88, accent: 217, bold: 223 },
 };
@@ -266,7 +267,7 @@ export class Tui {
     this.blocks.push({
       id,
       ...block,
-      collapsed: block.collapsed ?? (block.role === "tool" ? true : undefined),
+      collapsed: block.collapsed ?? (block.role === "tool" || block.role === "reasoning" ? true : undefined),
     });
     this.requestRender();
     return id;
@@ -284,6 +285,7 @@ export class Tui {
       if (patch.title !== undefined) block.title = patch.title;
       if (patch.content !== undefined) block.content = patch.content;
       if (patch.state !== undefined) block.state = patch.state;
+      if (patch.collapsed !== undefined) block.collapsed = patch.collapsed;
     }
     this.requestRender();
   }
@@ -366,7 +368,7 @@ export class Tui {
     if (!block) {
       return;
     }
-    if (block.role !== "tool") {
+    if (block.role !== "tool" && block.role !== "reasoning") {
       return;
     }
     block.collapsed = !block.collapsed;
@@ -1662,7 +1664,7 @@ export class Tui {
     type VisualType = "user" | "assistant" | "inline-tool" | "panel" | "error";
     const visualType = (b: RenderBlock): VisualType => {
       if (b.role === "user") return "user";
-      if (b.role === "assistant") return "assistant";
+      if (b.role === "assistant" || b.role === "reasoning") return "assistant";
       if (b.role === "error") return "error";
       // tool
       return isInlineTool(b) ? "inline-tool" : "panel";
@@ -2302,6 +2304,11 @@ function renderBlock(block: RenderBlock, columns: number, spinnerFrame: string) 
     return renderAssistantBlock(block, columns, sanitized);
   }
 
+  // ── Reasoning blocks: muted, collapsible reasoning on the canvas ──
+  if (block.role === "reasoning") {
+    return renderReasoningBlock(block, columns, sanitized);
+  }
+
   // ── Tool blocks ──
   if (block.role === "tool") {
     const trimmed = sanitized.replace(/^\n+/, "").replace(/\n+$/, "");
@@ -2446,6 +2453,35 @@ function renderAssistantBlock(block: RenderBlock, columns: number, sanitizedCont
   }
 
   return result;
+}
+
+/** Render model reasoning as a muted, collapsible reasoning line. */
+function renderReasoningBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
+  const theme = themes.reasoning;
+  const innerWidth = Math.max(1, columns - 4);
+  const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
+  const collapsed = block.collapsed === true;
+  const title = block.title ?? "Reasoning";
+
+  if (!content || collapsed) {
+    return [renderBlockRow(reasoningTitleSegments(title), theme, columns)];
+  }
+
+  const continuousContent = content.replace(/\s*\n\s*/g, " ");
+  const rows = wrapSegments(
+    [
+      { text: title, style: "title" },
+      { text: ": ", style: "title" },
+      { text: continuousContent, style: "normal" },
+    ],
+    innerWidth,
+  );
+
+  return rows.map((row) => renderBlockRow(row, theme, columns));
+}
+
+function reasoningTitleSegments(title: string): StyledSegment[] {
+  return [{ text: title, style: "title" }];
 }
 
 /** Render a tool block as a single inline line: `title  ✓` */

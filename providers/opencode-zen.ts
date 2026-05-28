@@ -332,8 +332,8 @@ class OpenCodeZenStream implements ProviderStream {
   async *[Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
     // Track which tool call stream IDs have already emitted a "tool_use_start".
     const startedTools = new Set<string>();
-    // Track if we're in a text block to emit block_stop when transitioning.
-    let inTextBlock = false;
+    // Track any open assistant text/reasoning block so transitions are explicit.
+    let openBlock: "text" | "reasoning" | undefined;
 
     for await (const line of parseSseLines(this.reader)) {
       let chunk: OaiStreamChunk;
@@ -363,23 +363,33 @@ class OpenCodeZenStream implements ProviderStream {
       const delta = choice.delta;
 
       // ── Reasoning content (thinking) ──
-      // Kimi K2 emits its chain-of-thought in `reasoning_content` rather
-      // than `content`. Surface it as regular text events so the TUI shows
-      // the model's reasoning between tool calls.
+      // Kimi K2 emits thinking content in `reasoning_content` rather than
+      // `content`. Surface it with dedicated events so the UI can make clear
+      // that it is reasoning, not final answer text.
       if (delta.reasoning_content != null && delta.reasoning_content !== "") {
-        if (!inTextBlock) {
-          inTextBlock = true;
-          yield { type: "text_start", text: delta.reasoning_content };
+        if (openBlock === "text") {
+          yield { type: "block_stop" };
+          openBlock = undefined;
+        }
+
+        if (openBlock !== "reasoning") {
+          openBlock = "reasoning";
+          yield { type: "reasoning_start", text: delta.reasoning_content };
         } else {
-          yield { type: "text_delta", text: delta.reasoning_content };
+          yield { type: "reasoning_delta", text: delta.reasoning_content };
         }
         this.fullReasoningContent += delta.reasoning_content;
       }
 
       // ── Text content ──
       if (delta.content != null && delta.content !== "") {
-        if (!inTextBlock) {
-          inTextBlock = true;
+        if (openBlock === "reasoning") {
+          yield { type: "block_stop" };
+          openBlock = undefined;
+        }
+
+        if (openBlock !== "text") {
+          openBlock = "text";
           yield { type: "text_start", text: delta.content };
         } else {
           yield { type: "text_delta", text: delta.content };
@@ -389,9 +399,9 @@ class OpenCodeZenStream implements ProviderStream {
 
       // ── Tool calls ──
       if (delta.tool_calls) {
-        // If we were in a text block, close it before starting tool calls.
-        if (inTextBlock) {
-          inTextBlock = false;
+        // If we were in an assistant text/reasoning block, close it before starting tool calls.
+        if (openBlock) {
+          openBlock = undefined;
           yield { type: "block_stop" };
         }
 
@@ -427,8 +437,8 @@ class OpenCodeZenStream implements ProviderStream {
       }
     }
 
-    // Close any open text block
-    if (inTextBlock) {
+    // Close any open assistant text/reasoning block.
+    if (openBlock) {
       yield { type: "block_stop" };
     }
 

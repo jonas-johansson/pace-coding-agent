@@ -931,6 +931,20 @@ async function prompt(
 
       let currentTextBlockId: number | undefined;
       let accText = "";
+      let currentReasoningBlockId: number | undefined;
+      let accReasoning = "";
+      const finishReasoningBlock = () => {
+        if (currentReasoningBlockId === undefined) {
+          return;
+        }
+
+        tui.updateBlock(currentReasoningBlockId, {
+          title: "Reasoning",
+          collapsed: true,
+        });
+        currentReasoningBlockId = undefined;
+        accReasoning = "";
+      };
       const streamingTools = new Map<string, { name: string; inputJson: string }>();
       const toolBlocks = new Map<string, number>();
       currentToolBlocks = toolBlocks;
@@ -938,6 +952,7 @@ async function prompt(
       for await (const event of stream) {
         switch (event.type) {
           case "text_start": {
+            finishReasoningBlock();
             accText = event.text;
             currentTextBlockId = tui.addBlock({
               role: "assistant",
@@ -948,6 +963,7 @@ async function prompt(
           }
 
           case "text_delta": {
+            finishReasoningBlock();
             accText += event.text;
             if (currentTextBlockId === undefined) {
               currentTextBlockId = tui.addBlock({
@@ -961,10 +977,43 @@ async function prompt(
             break;
           }
 
+          case "reasoning_start": {
+            currentTextBlockId = undefined;
+            accText = "";
+            accReasoning = event.text;
+            currentReasoningBlockId = tui.addBlock({
+              role: "reasoning",
+              title: "Reasoning",
+              content: accReasoning,
+              collapsed: false,
+            });
+            tui.setStatus("Thinking");
+            break;
+          }
+
+          case "reasoning_delta": {
+            currentTextBlockId = undefined;
+            accText = "";
+            accReasoning += event.text;
+            if (currentReasoningBlockId === undefined) {
+              currentReasoningBlockId = tui.addBlock({
+                role: "reasoning",
+                title: "Reasoning",
+                content: accReasoning,
+                collapsed: false,
+              });
+            } else {
+              tui.updateBlock(currentReasoningBlockId, accReasoning);
+            }
+            tui.setStatus("Thinking");
+            break;
+          }
+
           case "tool_use_start": {
             streamingTools.set(event.id, { name: event.name, inputJson: "" });
             currentTextBlockId = undefined;
             accText = "";
+            finishReasoningBlock();
             ensureToolBlock(toolBlocks, event.id, event.name);
             tui.setStatus(`Preparing tool: ${event.name}`);
             break;
@@ -984,6 +1033,7 @@ async function prompt(
             if (event.id) {
               streamingTools.delete(event.id);
             } else {
+              finishReasoningBlock();
               currentTextBlockId = undefined;
               accText = "";
             }

@@ -80,6 +80,16 @@ export type StreamTextDelta = {
   text: string;
 };
 
+export type StreamReasoningStart = {
+  type: "reasoning_start";
+  text: string;
+};
+
+export type StreamReasoningDelta = {
+  type: "reasoning_delta";
+  text: string;
+};
+
 export type StreamToolUseStart = {
   type: "tool_use_start";
   id: string;
@@ -100,6 +110,8 @@ export type StreamBlockStop = {
 export type StreamEvent =
   | StreamTextStart
   | StreamTextDelta
+  | StreamReasoningStart
+  | StreamReasoningDelta
   | StreamToolUseStart
   | StreamToolInputDelta
   | StreamBlockStop;
