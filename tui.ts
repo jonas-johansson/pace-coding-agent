@@ -3544,22 +3544,7 @@ function formatContextInfo(info: ContextInfo): string {
   const percent = info.contextWindow > 0
     ? Math.round((info.usedTokens / info.contextWindow) * 100)
     : 0;
-  let result = `${used} (${percent}%)`;
-
-  const cacheRead = info.cacheReadTokens ?? 0;
-  const cacheCreation = info.cacheCreationTokens ?? 0;
-  if (cacheRead > 0 || cacheCreation > 0) {
-    if (cacheRead > 0) {
-      const cachePercent = info.usedTokens > 0
-        ? Math.round((cacheRead / info.usedTokens) * 100)
-        : 0;
-      result += ` (${cachePercent}% cache hit)`;
-    } else {
-      result += ` (new)`;
-    }
-  }
-
-  return result;
+  return `${used} (${percent}%)`;
 }
 
 function formatCost(cost: number): string {
