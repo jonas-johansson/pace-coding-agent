@@ -1154,11 +1154,11 @@ async function main() {
     // Non-fatal — hand-rolled highlighting stays active.
   });
 
-  tui.addBlock({
-    role: "assistant",
-    title: "Example table below",
-    content: exampleTable
-  });
+  // tui.addBlock({
+  //   role: "assistant",
+  //   title: "Example table below",
+  //   content: exampleTable
+  // });
 
   onEvent("rate-limit-retry", (event) => {
     const seconds = (event.waitMs / 1000).toFixed(1);
