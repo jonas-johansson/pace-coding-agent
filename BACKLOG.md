@@ -1,3 +1,55 @@
+Sessions
+
+Undo
+
+
+
+
+bash: /bin/ls -1                                                                      ✗
+
+Error: Command timed out after 30 seconds. Process did not exit after SIGKILL; stopped
+waiting.
+
+
+
+
+Remove cache hit info from status bar
+
+
+
+
+
+
+
+Change tool output truncation.
+[Tool output truncated. Full output saved to .agento/tool-outputs/2026-05-28T07-39-34-853Z-bash-11271-9kp938.txt. Omitted
+10.3 KiB. Showing the beginning and end of the output.]
+Finish with truncation and tell the agent to use the 'read' tool to read the full file.
+
+
+
+
+
+
+
+
+
+Table rendering:
+
+| Service | What it does |
+|---|---|
+| systemd-journald | Logging infrastructure (journalctl). |
+| systemd-logind | Manages user logins, sessions, and seat assignments. |
+| systemd-networkd | Low-level network configuration and management. |
+| systemd-resolved | DNS resolution (the local stub resolver). |
+| systemd-timesyncd | Keeps your system clock synchronized via NTP. |
+| systemd-udevd | Manages hardware devices as they are plugged/unplugged. |
+| dbus-broker / dbus-daemon | Inter-process communication bus (apps talk to each other). |
+| polkit / polkit-gnome | Authorization framework (who can perform privileged actions). |
+
+
+
+
 Syntax highlighting for markdown code blocks
 
 Come up with a name for this coding agent: boom, wing, cush, cuz, yea, pax, snow
