@@ -1086,6 +1086,14 @@ async function prompt(
   }
 }
 
+const exampleTable = `| Command | Description |
+|---|---|
+| /new | Start a new conversation, clearing all history and context. |
+| /model <model-id> | Switch to a different model. Use without arguments to list available models. |
+| /skills | List discovered skills available in the current directory. |
+| /mcp | List connected MCP servers and their tools. |
+| /skill:<name> [args] | Run a discovered skill with optional arguments. Use /skills to see available skills.`;
+
 async function main() {
   tui.start();
   updateContextInfo();
@@ -1094,6 +1102,12 @@ async function main() {
   // active until the promise resolves, then Shiki takes over automatically.
   initHighlighter().catch(() => {
     // Non-fatal — hand-rolled highlighting stays active.
+  });
+
+  tui.addBlock({
+    role: "assistant",
+    title: "Example table below",
+    content: exampleTable
   });
 
   onEvent("rate-limit-retry", (event) => {
