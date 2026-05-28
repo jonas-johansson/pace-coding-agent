@@ -13,18 +13,6 @@ waiting.
 
 
 
-Remove cache hit info from status bar
-
-
-
-
-
-
-
-Change tool output truncation.
-[Tool output truncated. Full output saved to .agento/tool-outputs/2026-05-28T07-39-34-853Z-bash-11271-9kp938.txt. Omitted
-10.3 KiB. Showing the beginning and end of the output.]
-Finish with truncation and tell the agent to use the 'read' tool to read the full file.
 
 
 
@@ -56,4 +44,15 @@ at Anthropic.makeRequest
 (/home/jonas/dev/code-agent/node_modules/.pnpm/@anthropic-ai+sdk@0.94.0/node_modules/@anthropic-ai/sdk/src/client.ts:1064:24)
 at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
 
+
+
+
+
+Render Reasoning text with markdown. Example:
+
+Reasoning (arrow down symbol)
+
+This is some very interesting reasoning text right here. We'll do it in this order:
+1. Say hey
+2. Say bye
 
