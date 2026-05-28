@@ -71,6 +71,7 @@ export const webFetchTool = defineTool({
       .optional()
       .describe("Request timeout in seconds (max 120). Defaults to 30."),
   }),
+  showContent: false,
   titleFormatter: (input) => `web_fetch: ${input.url ?? ""}`,
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
