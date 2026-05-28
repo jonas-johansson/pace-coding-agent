@@ -39,6 +39,7 @@ type SegmentStyle =
   | "code"
   | "heading"
   | "title"
+  | "tableBorder"
   | "sh-raw"
   | "sh-keyword"
   | "sh-string"
@@ -67,6 +68,20 @@ type StyledSegment = {
   color?: string;
   /** FontStyle bitmask — only used when style === "sh-raw". Bold=2, Italic=1. */
   fontStyle?: number;
+};
+
+type TableAlignment = "left" | "center" | "right";
+
+type MarkdownTable = {
+  header: string[];
+  alignments: TableAlignment[];
+  rows: string[][];
+  rawLines: string[];
+};
+
+type ParsedMarkdownTable = {
+  table: MarkdownTable;
+  nextIndex: number;
 };
 
 type BlockTheme = {
@@ -2367,9 +2382,7 @@ function regionToRows(regions: ContentRegion[], innerWidth: number): StyledSegme
 
   for (const region of regions) {
     if (region.kind === "markdown") {
-      for (const line of region.lines) {
-        rows.push(...wrapSegments(parseMarkdownLine(line), innerWidth));
-      }
+      rows.push(...renderMarkdownRows(region.lines.join("\n"), innerWidth));
     } else {
       // Code region — tokenize and wrap each line.
       const tokenized = tokenizeCode(region.lines, region.language);
@@ -2652,6 +2665,8 @@ function renderSegment(segment: StyledSegment, theme: BlockTheme) {
       return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${ITALIC}${segment.text}`;
     case "code":
       return `${RESET}${bg(theme.bg)}${fg(118)}${segment.text}`;
+    case "tableBorder":
+      return `${RESET}${bg(theme.bg)}${fg(245)}${segment.text}`;
     case "sh-raw": {
       const ansiColor = segment.color ? hexToAnsi256(segment.color) : theme.fg;
       const bold = segment.fontStyle && (segment.fontStyle & 2) ? BOLD : "";
@@ -2666,6 +2681,291 @@ function renderSegment(segment: StyledSegment, theme: BlockTheme) {
       return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${segment.text}`;
     }
   }
+}
+
+function renderMarkdownRows(content: string, width: number) {
+  const lines = content.split("\n");
+  const rows: StyledSegment[][] = [];
+  let inFencedCodeBlock = false;
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    if (isMarkdownFenceLine(line)) {
+      inFencedCodeBlock = !inFencedCodeBlock;
+      rows.push(...renderMarkdownLine(line, width));
+      index += 1;
+      continue;
+    }
+
+    if (!inFencedCodeBlock) {
+      const parsedTable = parseMarkdownTableAt(lines, index);
+      if (parsedTable) {
+        rows.push(...renderMarkdownTableRows(parsedTable.table, width));
+        index = parsedTable.nextIndex;
+        continue;
+      }
+    }
+
+    rows.push(...renderMarkdownLine(line, width));
+    index += 1;
+  }
+
+  return rows;
+}
+
+function renderMarkdownLine(line: string, width: number) {
+  return wrapSegments(parseMarkdownLine(line), width);
+}
+
+function renderMarkdownLines(lines: string[], width: number) {
+  return lines.flatMap((line) => renderMarkdownLine(line, width));
+}
+
+function parseMarkdownTableAt(lines: string[], index: number): ParsedMarkdownTable | undefined {
+  const line = lines[index];
+  const nextLine = lines[index + 1];
+  const alignments = nextLine === undefined ? undefined : parseTableSeparator(nextLine);
+  if (!isTableCandidateLine(line) || !alignments) {
+    return undefined;
+  }
+
+  const header = splitTableRow(line);
+  const rows: string[][] = [];
+  const rawLines = [line, nextLine];
+  let nextIndex = index + 2;
+
+  while (nextIndex < lines.length && isTableCandidateLine(lines[nextIndex]) && !parseTableSeparator(lines[nextIndex])) {
+    rows.push(splitTableRow(lines[nextIndex]));
+    rawLines.push(lines[nextIndex]);
+    nextIndex += 1;
+  }
+
+  return { table: { header, alignments, rows, rawLines }, nextIndex };
+}
+
+function isMarkdownFenceLine(line: string) {
+  return /^\s*(```|~~~)/.test(line);
+}
+
+function isTableCandidateLine(line: string) {
+  if (!line.includes("|")) {
+    return false;
+  }
+  return splitTableRow(line).length >= 2;
+}
+
+function parseTableSeparator(line: string): TableAlignment[] | undefined {
+  if (!line.includes("|")) {
+    return undefined;
+  }
+
+  const cells = splitTableRow(line);
+  if (cells.length < 2) {
+    return undefined;
+  }
+
+  const alignments: TableAlignment[] = [];
+  for (const cell of cells) {
+    const marker = cell.trim();
+    if (!/^:?-{3,}:?$/.test(marker)) {
+      return undefined;
+    }
+    if (marker.startsWith(":") && marker.endsWith(":")) {
+      alignments.push("center");
+    } else if (marker.endsWith(":")) {
+      alignments.push("right");
+    } else {
+      alignments.push("left");
+    }
+  }
+
+  return alignments;
+}
+
+function splitTableRow(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let inCode = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === "\\" && line[index + 1] === "|") {
+      current += "|";
+      index += 1;
+      continue;
+    }
+    if (char === "`") {
+      inCode = !inCode;
+      current += char;
+      continue;
+    }
+    if (char === "|" && !inCode) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current.trim());
+
+  const trimmed = line.trim();
+  if (trimmed.startsWith("|") && cells[0] === "") {
+    cells.shift();
+  }
+  if (trimmed.endsWith("|") && cells[cells.length - 1] === "") {
+    cells.pop();
+  }
+
+  return cells;
+}
+
+function renderMarkdownTableRows(table: MarkdownTable, width: number) {
+  const normalized = normalizeMarkdownTable(table);
+  const widths = computeTableColumnWidths(normalized.header, normalized.rows, width);
+  if (!widths) {
+    return renderMarkdownLines(table.rawLines, width);
+  }
+
+  const rows: StyledSegment[][] = [];
+  rows.push(renderTableRule(widths));
+  rows.push(...renderTableDataRow(normalized.header, widths, normalized.alignments, true));
+  rows.push(renderTableRule(widths));
+  for (const row of normalized.rows) {
+    rows.push(...renderTableDataRow(row, widths, normalized.alignments, false));
+  }
+  rows.push(renderTableRule(widths));
+  return rows;
+}
+
+function normalizeMarkdownTable(table: MarkdownTable) {
+  const columnCount = Math.max(
+    table.header.length,
+    table.alignments.length,
+    ...table.rows.map((row) => row.length),
+  );
+  const normalizeRow = (row: string[]) => {
+    const normalized = row.slice(0, columnCount);
+    while (normalized.length < columnCount) {
+      normalized.push("");
+    }
+    return normalized;
+  };
+  const alignments = table.alignments.slice(0, columnCount);
+  while (alignments.length < columnCount) {
+    alignments.push("left");
+  }
+  return {
+    header: normalizeRow(table.header),
+    alignments,
+    rows: table.rows.map(normalizeRow),
+  };
+}
+
+function computeTableColumnWidths(header: string[], rows: string[][], innerWidth: number) {
+  const columnCount = header.length;
+  if (columnCount === 0) {
+    return undefined;
+  }
+
+  const borderAndPaddingWidth = columnCount * 3 + 1;
+  const minimumContentWidth = columnCount;
+  if (innerWidth < borderAndPaddingWidth + minimumContentWidth) {
+    return undefined;
+  }
+
+  const widths = Array.from({ length: columnCount }, (_, columnIndex) =>
+    Math.max(
+      1,
+      measureTableCell(header[columnIndex] ?? ""),
+      ...rows.map((row) => measureTableCell(row[columnIndex] ?? "")),
+    ),
+  );
+
+  const maxTotalCellWidth = innerWidth - borderAndPaddingWidth;
+  while (sumNumbers(widths) > maxTotalCellWidth) {
+    let widestIndex = 0;
+    for (let index = 1; index < widths.length; index += 1) {
+      if (widths[index] > widths[widestIndex]) {
+        widestIndex = index;
+      }
+    }
+    if (widths[widestIndex] <= 1) {
+      return undefined;
+    }
+    widths[widestIndex] -= 1;
+  }
+
+  return widths;
+}
+
+function measureTableCell(cell: string) {
+  return parseMarkdownLine(cell).reduce((total, segment) => total + displayWidth(segment.text), 0);
+}
+
+function renderTableRule(widths: number[]): StyledSegment[] {
+  return [{ text: `|${widths.map((width) => "-".repeat(width + 2)).join("|")}|`, style: "tableBorder" }];
+}
+
+function renderTableDataRow(cells: string[], widths: number[], alignments: TableAlignment[], isHeader: boolean) {
+  const wrappedCells = cells.map((cell, index) => {
+    const parsed = parseMarkdownLine(cell);
+    const segments = isHeader ? emphasizeTableHeader(parsed) : parsed;
+    return wrapSegments(segments, widths[index]);
+  });
+  const height = Math.max(1, ...wrappedCells.map((rows) => rows.length));
+  const result: StyledSegment[][] = [];
+
+  for (let rowIndex = 0; rowIndex < height; rowIndex += 1) {
+    const row: StyledSegment[] = [{ text: "|", style: "tableBorder" }];
+    for (let columnIndex = 0; columnIndex < widths.length; columnIndex += 1) {
+      const cellRow = wrappedCells[columnIndex][rowIndex] ?? [];
+      row.push({ text: " ", style: "normal" });
+      row.push(...alignTableSegments(cellRow, widths[columnIndex], alignments[columnIndex]));
+      row.push({ text: " ", style: "normal" });
+      row.push({ text: "|", style: "tableBorder" });
+    }
+    result.push(row);
+  }
+
+  return result;
+}
+
+function emphasizeTableHeader(segments: StyledSegment[]) {
+  return segments.map((segment) => {
+    if (segment.style === "normal" || segment.style === "italic") {
+      return { ...segment, style: "bold" as const };
+    }
+    return segment;
+  });
+}
+
+function alignTableSegments(segments: StyledSegment[], width: number, alignment: TableAlignment) {
+  const visible = segments.reduce((total, segment) => total + displayWidth(segment.text), 0);
+  const padding = Math.max(0, width - visible);
+  let leftPadding = 0;
+  let rightPadding = padding;
+  if (alignment === "right") {
+    leftPadding = padding;
+    rightPadding = 0;
+  } else if (alignment === "center") {
+    leftPadding = Math.floor(padding / 2);
+    rightPadding = padding - leftPadding;
+  }
+
+  const result: StyledSegment[] = [];
+  if (leftPadding > 0) {
+    result.push({ text: " ".repeat(leftPadding), style: "normal" });
+  }
+  result.push(...segments);
+  if (rightPadding > 0) {
+    result.push({ text: " ".repeat(rightPadding), style: "normal" });
+  }
+  return result;
+}
+
+function sumNumbers(values: number[]) {
+  return values.reduce((total, value) => total + value, 0);
 }
 
 function parseMarkdownLine(line: string): StyledSegment[] {
