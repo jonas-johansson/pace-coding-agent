@@ -231,6 +231,7 @@ export class OpenAIProvider implements Provider {
         max_output_tokens: params.maxTokens,
         parallel_tool_calls: true,
         store: false,
+        reasoning: { summary: "auto" },
         include: ["reasoning.encrypted_content"],
       },
       { signal: params.signal },
@@ -276,15 +277,49 @@ class OpenAIStream implements ProviderStream {
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
-    let inTextBlock = false;
     const startedTools = new Set<string>();
+    // Track any open assistant text/reasoning block so transitions are explicit.
+    let openBlock: "text" | "reasoning" | undefined;
 
     for await (const event of this.inner as AsyncIterable<ResponseStreamEvent>) {
       switch (event.type) {
+        // ── Reasoning output ──
+        // GPT-5.5 streams reasoning separately from final answer text. Surface both
+        // raw reasoning-text deltas and reasoning-summary deltas through the common
+        // provider reasoning events so the TUI can render them as thinking blocks.
+        case "response.reasoning_text.delta":
+        case "response.reasoning_summary_text.delta": {
+          if (event.delta === "") {
+            break;
+          }
+
+          if (openBlock === "text") {
+            openBlock = undefined;
+            yield { type: "block_stop" };
+          }
+
+          if (openBlock !== "reasoning") {
+            openBlock = "reasoning";
+            yield { type: "reasoning_start", text: event.delta };
+          } else {
+            yield { type: "reasoning_delta", text: event.delta };
+          }
+          break;
+        }
+
         // ── Text output ──
         case "response.output_text.delta": {
-          if (!inTextBlock) {
-            inTextBlock = true;
+          if (event.delta === "") {
+            break;
+          }
+
+          if (openBlock === "reasoning") {
+            openBlock = undefined;
+            yield { type: "block_stop" };
+          }
+
+          if (openBlock !== "text") {
+            openBlock = "text";
             yield { type: "text_start", text: event.delta };
           } else {
             yield { type: "text_delta", text: event.delta };
@@ -296,9 +331,9 @@ class OpenAIStream implements ProviderStream {
         // ── Function call started ──
         case "response.output_item.added": {
           if (event.item.type === "function_call") {
-            // Close any open text block
-            if (inTextBlock) {
-              inTextBlock = false;
+            // Close any open text/reasoning block before starting tool calls.
+            if (openBlock) {
+              openBlock = undefined;
               yield { type: "block_stop" };
             }
 
@@ -354,10 +389,25 @@ class OpenAIStream implements ProviderStream {
           break;
         }
 
-        // ── Text content part done ──
+        // ── Text/reasoning content part done ──
         case "response.content_part.done": {
-          if (inTextBlock) {
-            inTextBlock = false;
+          if (event.part.type === "reasoning_text") {
+            if (openBlock === "reasoning") {
+              openBlock = undefined;
+              yield { type: "block_stop" };
+            }
+          } else if (openBlock === "text") {
+            openBlock = undefined;
+            yield { type: "block_stop" };
+          }
+          break;
+        }
+
+        // ── Reasoning content/summary done ──
+        case "response.reasoning_text.done":
+        case "response.reasoning_summary_text.done": {
+          if (openBlock === "reasoning") {
+            openBlock = undefined;
             yield { type: "block_stop" };
           }
           break;
@@ -382,8 +432,8 @@ class OpenAIStream implements ProviderStream {
       }
     }
 
-    // Close any still-open text block
-    if (inTextBlock) {
+    // Close any still-open text/reasoning block.
+    if (openBlock) {
       yield { type: "block_stop" };
     }
 
