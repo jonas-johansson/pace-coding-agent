@@ -15,6 +15,49 @@ import type {
   UsageInfo,
 } from "../provider";
 
+// ── Provider metadata ────────────────────────────────────────────────────────
+
+/**
+ * Shape of the `providerMetadata` stored on AssistantMessages originating from
+ * this provider. Captures raw Anthropic content blocks so thinking blocks (and
+ * their signatures) can be replayed verbatim on subsequent turns, which is
+ * required for extended-thinking continuity around tool use.
+ */
+type AnthropicMetadata = {
+  provider: "anthropic";
+  contentBlocks: Anthropic.ContentBlock[];
+};
+
+function isAnthropicMetadata(v: unknown): v is AnthropicMetadata {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    (v as Record<string, unknown>).provider === "anthropic" &&
+    Array.isArray((v as Record<string, unknown>).contentBlocks)
+  );
+}
+
+function toAnthropicContentBlockParam(block: Anthropic.ContentBlock): Anthropic.ContentBlockParam | undefined {
+  if (block.type === "text") {
+    return { type: "text", text: block.text };
+  }
+  if (block.type === "thinking") {
+    return { type: "thinking", thinking: block.thinking, signature: block.signature };
+  }
+  if (block.type === "redacted_thinking") {
+    return { type: "redacted_thinking", data: block.data };
+  }
+  if (block.type === "tool_use") {
+    return {
+      type: "tool_use",
+      id: block.id,
+      name: block.name,
+      input: block.input as Record<string, unknown>,
+    };
+  }
+  return undefined;
+}
+
 // ── Message translation ─────────────────────────────────────────────────────
 
 function toAnthropicMessages(messages: ProviderMessage[]): Anthropic.MessageParam[] {
@@ -45,7 +88,15 @@ function toAnthropicMessages(messages: ProviderMessage[]): Anthropic.MessagePara
       return { role: "user", content };
     }
 
-    // assistant
+    // assistant — prefer raw Anthropic content if available so thinking blocks
+    // and signatures are preserved across tool-calling turns.
+    if (isAnthropicMetadata(msg.providerMetadata)) {
+      const content = msg.providerMetadata.contentBlocks
+        .map(toAnthropicContentBlockParam)
+        .filter((block): block is Anthropic.ContentBlockParam => block !== undefined);
+      return { role: "assistant", content };
+    }
+
     const content: Anthropic.ContentBlockParam[] = msg.content.map((block) => {
       if (block.type === "text") {
         return { type: "text" as const, text: block.text };
@@ -116,6 +167,7 @@ export class AnthropicProvider implements Provider {
         messages: toAnthropicMessages(params.messages),
         tools: toAnthropicTools(params.tools),
         cache_control: { type: "ephemeral" },
+        thinking: { type: "adaptive", display: "summarized" },
       },
       { signal: params.signal },
     );
@@ -128,7 +180,7 @@ export class AnthropicProvider implements Provider {
 
 class AnthropicStream implements ProviderStream {
   private innerStream: ReturnType<Anthropic["messages"]["stream"]>;
-  private currentToolUseId: string | undefined;
+  private currentBlock: { type: "text" | "thinking" | "tool_use"; toolUseId?: string } | undefined;
 
   constructor(inner: ReturnType<Anthropic["messages"]["stream"]>) {
     this.innerStream = inner;
@@ -146,11 +198,15 @@ class AnthropicStream implements ProviderStream {
       case "content_block_start": {
         const block = event.content_block;
         if (block.type === "text") {
-          this.currentToolUseId = undefined;
+          this.currentBlock = { type: "text" };
           return { type: "text_start", text: block.text ?? "" };
         }
+        if (block.type === "thinking") {
+          this.currentBlock = { type: "thinking" };
+          return { type: "reasoning_start", text: block.thinking ?? "" };
+        }
         if (block.type === "tool_use") {
-          this.currentToolUseId = block.id;
+          this.currentBlock = { type: "tool_use", toolUseId: block.id };
           return { type: "tool_use_start", id: block.id, name: block.name };
         }
         return null;
@@ -161,17 +217,22 @@ class AnthropicStream implements ProviderStream {
         if (delta.type === "text_delta") {
           return { type: "text_delta", text: delta.text };
         }
+        if (delta.type === "thinking_delta") {
+          return { type: "reasoning_delta", text: delta.thinking };
+        }
         if (delta.type === "input_json_delta") {
-          if (!this.currentToolUseId) return null;
-          return { type: "tool_input_delta", id: this.currentToolUseId, partialJson: delta.partial_json };
+          if (this.currentBlock?.type !== "tool_use" || !this.currentBlock.toolUseId) return null;
+          return { type: "tool_input_delta", id: this.currentBlock.toolUseId, partialJson: delta.partial_json };
         }
         return null;
       }
 
       case "content_block_stop": {
-        const id = this.currentToolUseId;
-        this.currentToolUseId = undefined;
-        return id ? { type: "block_stop", id } : { type: "block_stop" };
+        const currentBlock = this.currentBlock;
+        this.currentBlock = undefined;
+        return currentBlock?.type === "tool_use" && currentBlock.toolUseId
+          ? { type: "block_stop", id: currentBlock.toolUseId }
+          : { type: "block_stop" };
       }
 
       default:
@@ -195,10 +256,16 @@ class AnthropicStream implements ProviderStream {
     const stopReason: "end_turn" | "tool_use" =
       response.stop_reason === "tool_use" ? "tool_use" : "end_turn";
 
+    const metadata: AnthropicMetadata = {
+      provider: "anthropic",
+      contentBlocks: response.content,
+    };
+
     return {
       content: fromAnthropicContent(response.content),
       stopReason,
       usage,
+      providerMetadata: metadata,
     };
   }
 }
