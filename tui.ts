@@ -2464,24 +2464,17 @@ function renderReasoningBlock(block: RenderBlock, columns: number, sanitizedCont
   const title = block.title ?? "Reasoning";
 
   if (!content || collapsed) {
-    return [renderBlockRow(reasoningTitleSegments(title), theme, columns)];
+    return [renderBlockRow(reasoningTitleSegments(title, "collapsed"), theme, columns)];
   }
 
-  const continuousContent = content.replace(/\s*\n\s*/g, " ");
-  const rows = wrapSegments(
-    [
-      { text: title, style: "title" },
-      { text: ": ", style: "title" },
-      { text: continuousContent, style: "normal" },
-    ],
-    innerWidth,
-  );
+  const rows: StyledSegment[][] = [reasoningTitleSegments(title, "expanded"), []];
+  rows.push(...regionToRows(splitContentRegions(content), innerWidth));
 
   return rows.map((row) => renderBlockRow(row, theme, columns));
 }
 
-function reasoningTitleSegments(title: string): StyledSegment[] {
-  return [{ text: `${title} →`, style: "title" }];
+function reasoningTitleSegments(title: string, state: "collapsed" | "expanded"): StyledSegment[] {
+  return [{ text: `${title}${state === "expanded" ? ":" : " →"}`, style: "title" }];
 }
 
 /** Render a tool block as a single inline line: `title  ✓` */
