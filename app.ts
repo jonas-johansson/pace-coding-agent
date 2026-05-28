@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve, extname } from "path";
 import { Tui } from "./tui";
+import { resetSession } from "./session";
 import { initHighlighter } from "./syntax";
 import {
   tools,
@@ -326,6 +327,7 @@ async function handleCommand(command: string): Promise<boolean> {
       accumulatedCost = 0;
       pendingImages = [];
       clipboardCounter = 0;
+      resetSession();
       tui.setImageCount(0);
       tui.clearBlocks();
       updateContextInfo();

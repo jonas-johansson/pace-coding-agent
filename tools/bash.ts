@@ -6,13 +6,11 @@ import { defineTool, isAbortError, throwIfAborted, type ToolOutput } from "./cor
 import {
   TOOL_OUTPUT_TRUNCATION_BYTES,
   TOOL_OUTPUT_TRUNCATION_HEAD_BYTES,
-  TOOL_OUTPUT_TRUNCATION_TAIL_BYTES,
-  buildTruncatedToolOutputFromParts,
+  buildTruncatedToolOutputFromHead,
   createToolOutputPath,
   finishWriteStream,
   shouldPersistLargeToolOutput,
   truncateUtf8Prefix,
-  truncateUtf8Suffix,
 } from "./output";
 
 const BASH_DEFAULT_TIMEOUT = 30_000;
@@ -52,7 +50,6 @@ export const bashTool = defineTool({
       let stdout = "";
       let stderr = "";
       let previewHead = "";
-      let previewTail = "";
       let outputBytes = 0;
       let killSignal: NodeJS.Signals | null = null;
       let timedOut = false;
@@ -70,7 +67,6 @@ export const bashTool = defineTool({
 
         if (shouldPersistLargeOutput) {
           previewHead = truncateUtf8Prefix(previewHead + chunk, TOOL_OUTPUT_TRUNCATION_HEAD_BYTES);
-          previewTail = truncateUtf8Suffix(previewTail + chunk, TOOL_OUTPUT_TRUNCATION_TAIL_BYTES);
         }
 
         if (!shouldPersistLargeOutput || outputBytes <= TOOL_OUTPUT_TRUNCATION_BYTES) {
@@ -167,7 +163,7 @@ export const bashTool = defineTool({
       }
 
       const bashOutput = outputWasTruncated && fullOutputPath
-        ? buildTruncatedToolOutputFromParts(previewHead, previewTail, outputBytes, fullOutputPath)
+        ? buildTruncatedToolOutputFromHead(previewHead, outputBytes, fullOutputPath)
         : [stdout, stderr].filter(Boolean).join("\n");
 
       if (timedOut) {

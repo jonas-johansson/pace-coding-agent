@@ -1,11 +1,12 @@
 import { createWriteStream, type WriteStream } from "fs";
 import { mkdir, writeFile } from "fs/promises";
+import { homedir } from "os";
+import { join } from "path";
+import { getSessionId } from "../session";
 import { formatToolResultBody, type ToolOutput } from "./core";
 
-export const TOOL_OUTPUT_TRUNCATION_BYTES = 4 * 1024;
-export const TOOL_OUTPUT_TRUNCATION_HEAD_BYTES = 3 * 1024;
-export const TOOL_OUTPUT_TRUNCATION_TAIL_BYTES = 1 * 1024;
-const TOOL_OUTPUT_DIR = ".agento/tool-outputs";
+export const TOOL_OUTPUT_TRUNCATION_BYTES = 5 * 1024;
+export const TOOL_OUTPUT_TRUNCATION_HEAD_BYTES = TOOL_OUTPUT_TRUNCATION_BYTES;
 let toolOutputTruncationSuppressionDepth = 0;
 
 export function shouldPersistLargeToolOutput() {
@@ -45,8 +46,13 @@ export async function truncateToolOutputIfNeeded(
 }
 
 export async function createToolOutputPath(toolName: string, toolUseId?: string): Promise<string> {
-  await mkdir(TOOL_OUTPUT_DIR, { recursive: true });
-  return `${TOOL_OUTPUT_DIR}/${makeToolOutputFilename(toolName, toolUseId)}`;
+  const outputDir = getToolOutputDir();
+  await mkdir(outputDir, { recursive: true });
+  return join(outputDir, makeToolOutputFilename(toolName, toolUseId));
+}
+
+function getToolOutputDir(): string {
+  return join(homedir(), ".agento", "tool-outputs", getSessionId());
 }
 
 function makeToolOutputFilename(toolName: string, toolUseId?: string): string {
@@ -58,33 +64,40 @@ function makeToolOutputFilename(toolName: string, toolUseId?: string): string {
 }
 
 function buildTruncatedToolOutputText(fullText: string, fullBytes: number, outputPath: string): string {
-  const marker = buildToolOutputTruncationMarker(fullBytes, outputPath);
-  const markerBytes = Buffer.byteLength(marker, "utf8");
-  const availableBytes = Math.max(0, TOOL_OUTPUT_TRUNCATION_BYTES - markerBytes);
-  const headBytes = Math.min(TOOL_OUTPUT_TRUNCATION_HEAD_BYTES, Math.floor(availableBytes * 0.75));
-  const tailBytes = Math.max(0, availableBytes - headBytes);
-  return truncateUtf8Prefix(fullText, headBytes) + marker + truncateUtf8Suffix(fullText, tailBytes);
+  return buildTruncatedToolOutputFromHead(fullText, fullBytes, outputPath);
 }
 
-export function buildTruncatedToolOutputFromParts(
+export function buildTruncatedToolOutputFromHead(
   headText: string,
-  tailText: string,
   fullBytes: number,
   outputPath: string,
 ): string {
-  const marker = buildToolOutputTruncationMarker(fullBytes, outputPath);
-  const markerBytes = Buffer.byteLength(marker, "utf8");
-  const availableBytes = Math.max(0, TOOL_OUTPUT_TRUNCATION_BYTES - markerBytes);
-  const headBytes = Math.min(TOOL_OUTPUT_TRUNCATION_HEAD_BYTES, Math.floor(availableBytes * 0.75));
-  const tailBytes = Math.max(0, availableBytes - headBytes);
-  return `${truncateUtf8Prefix(headText, headBytes)}${marker}${truncateUtf8Suffix(tailText, tailBytes)}`;
+  const headBytes = chooseTruncatedHeadBytes(fullBytes, outputPath);
+  const omittedBytes = Math.max(0, fullBytes - headBytes);
+  const marker = buildToolOutputTruncationMarker(omittedBytes, outputPath);
+  return `${truncateUtf8Prefix(headText, headBytes)}${marker}`;
 }
 
-function buildToolOutputTruncationMarker(fullBytes: number, outputPath: string): string {
+function chooseTruncatedHeadBytes(fullBytes: number, outputPath: string): number {
+  let headBytes = TOOL_OUTPUT_TRUNCATION_HEAD_BYTES;
+
+  for (let i = 0; i < 3; i++) {
+    const omittedBytes = Math.max(0, fullBytes - headBytes);
+    const markerBytes = Buffer.byteLength(buildToolOutputTruncationMarker(omittedBytes, outputPath), "utf8");
+    const availableBytes = Math.max(0, TOOL_OUTPUT_TRUNCATION_BYTES - markerBytes);
+    const nextHeadBytes = Math.min(TOOL_OUTPUT_TRUNCATION_HEAD_BYTES, availableBytes);
+    if (nextHeadBytes === headBytes) break;
+    headBytes = nextHeadBytes;
+  }
+
+  return headBytes;
+}
+
+function buildToolOutputTruncationMarker(omittedBytes: number, outputPath: string): string {
   return (
     `\n\n[Tool output truncated. Full output saved to ${outputPath}. ` +
-    `Omitted ${formatByteCount(Math.max(0, fullBytes - TOOL_OUTPUT_TRUNCATION_BYTES))}. ` +
-    `Showing the beginning and end of the output.]\n\n`
+    `Omitted ${formatByteCount(omittedBytes)}. ` +
+    `Use the 'read' tool to read the full untruncated output.]\n`
   );
 }
 
@@ -113,35 +126,10 @@ export function truncateUtf8Prefix(text: string, maxBytes: number): string {
   return trimDanglingHighSurrogate(text.slice(0, low));
 }
 
-export function truncateUtf8Suffix(text: string, maxBytes: number): string {
-  if (maxBytes <= 0) return "";
-  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
-
-  let low = 0;
-  let high = text.length;
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    const suffix = text.slice(text.length - mid);
-    if (Buffer.byteLength(suffix, "utf8") <= maxBytes) {
-      low = mid;
-    } else {
-      high = mid - 1;
-    }
-  }
-
-  return trimDanglingLowSurrogate(text.slice(text.length - low));
-}
-
 function trimDanglingHighSurrogate(text: string): string {
   if (text.length === 0) return text;
   const code = text.charCodeAt(text.length - 1);
   return code >= 0xd800 && code <= 0xdbff ? text.slice(0, -1) : text;
-}
-
-function trimDanglingLowSurrogate(text: string): string {
-  if (text.length === 0) return text;
-  const code = text.charCodeAt(0);
-  return code >= 0xdc00 && code <= 0xdfff ? text.slice(1) : text;
 }
 
 export function finishWriteStream(stream: WriteStream): Promise<void> {
