@@ -31,28 +31,9 @@ Finish with truncation and tell the agent to use the 'read' tool to read the ful
 
 
 
-
-
-
-Table rendering:
-
-| Service | What it does |
-|---|---|
-| systemd-journald | Logging infrastructure (journalctl). |
-| systemd-logind | Manages user logins, sessions, and seat assignments. |
-| systemd-networkd | Low-level network configuration and management. |
-| systemd-resolved | DNS resolution (the local stub resolver). |
-| systemd-timesyncd | Keeps your system clock synchronized via NTP. |
-| systemd-udevd | Manages hardware devices as they are plugged/unplugged. |
-| dbus-broker / dbus-daemon | Inter-process communication bus (apps talk to each other). |
-| polkit / polkit-gnome | Authorization framework (who can perform privileged actions). |
-
-
-
-
 Syntax highlighting for markdown code blocks
 
-Come up with a name for this coding agent: boom, wing, cush, cuz, yea, pax, snow
+Come up with a name for this coding agent: boom, wing, cush, cuz, yea, pax, snow, sup
 
 Tell agents to only use tool_composer to chain tool calls together because sometimes I see agents use it to run scripts.
 
