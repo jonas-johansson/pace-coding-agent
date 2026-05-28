@@ -2481,7 +2481,7 @@ function renderReasoningBlock(block: RenderBlock, columns: number, sanitizedCont
 }
 
 function reasoningTitleSegments(title: string): StyledSegment[] {
-  return [{ text: title, style: "title" }];
+  return [{ text: `${title} →`, style: "title" }];
 }
 
 /** Render a tool block as a single inline line: `title  ✓` */
