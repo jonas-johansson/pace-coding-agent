@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>How Coding Agents Handle Sessions: Pi, Claude Code, and OpenCode</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0b1020;
+      --panel: #121a33;
+      --panel-2: #182342;
+      --text: #eef3ff;
+      --muted: #aebbd7;
+      --line: #2a3a66;
+      --accent: #7dd3fc;
+      --accent-2: #c084fc;
+      --good: #86efac;
+      --warn: #fde68a;
+      --bad: #fca5a5;
+      --code: #08111f;
+      --shadow: 0 18px 50px rgba(0,0,0,.28);
+      --radius: 18px;
+      --max: 1180px;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f6f8ff;
+        --panel: #ffffff;
+        --panel-2: #eef4ff;
+        --text: #172033;
+        --muted: #526078;
+        --line: #d8e1f2;
+        --accent: #0284c7;
+        --accent-2: #7c3aed;
+        --good: #15803d;
+        --warn: #a16207;
+        --bad: #b91c1c;
+        --code: #f1f5f9;
+        --shadow: 0 18px 50px rgba(31,41,55,.12);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(125, 211, 252, .22), transparent 32rem),
+        radial-gradient(circle at top right, rgba(192, 132, 252, .18), transparent 32rem),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.58;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    code {
+      background: color-mix(in srgb, var(--code) 88%, var(--accent) 12%);
+      border: 1px solid var(--line);
+      border-radius: .45rem;
+      padding: .08rem .32rem;
+      font-size: .92em;
+    }
+    pre {
+      margin: 1rem 0 0;
+      padding: 1rem;
+      overflow-x: auto;
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      color: var(--text);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+    }
+    pre code { background: transparent; border: 0; padding: 0; }
+
+    .wrap { width: min(var(--max), calc(100% - 2rem)); margin: 0 auto; }
+    .hero { padding: 4.5rem 0 2rem; }
+    .eyebrow {
+      display: inline-flex;
+      gap: .5rem;
+      align-items: center;
+      color: var(--accent);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      font-size: .78rem;
+      margin-bottom: 1rem;
+    }
+    .eyebrow::before {
+      content: "";
+      width: .7rem;
+      height: .7rem;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      box-shadow: 0 0 24px var(--accent);
+    }
+    h1, h2, h3 { line-height: 1.12; margin: 0; }
+    h1 { font-size: clamp(2.4rem, 6vw, 5.2rem); max-width: 12ch; letter-spacing: -.06em; }
+    .subtitle { max-width: 70ch; margin: 1.2rem 0 0; font-size: clamp(1.04rem, 1.7vw, 1.28rem); color: var(--muted); }
+    .hero-grid { display: grid; grid-template-columns: 1.08fr .92fr; gap: 1.2rem; align-items: stretch; margin-top: 2rem; }
+    .card {
+      background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 96%, white 4%), var(--panel));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.35rem;
+      box-shadow: var(--shadow);
+    }
+    .toc { position: sticky; top: 1rem; }
+    .toc h2 { font-size: .95rem; margin-bottom: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+    .toc a { display: block; padding: .42rem 0; color: var(--text); border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+    .toc a span { color: var(--muted); margin-right: .45rem; }
+
+    section { padding: 2rem 0; }
+    section h2 { font-size: clamp(1.7rem, 3vw, 2.5rem); margin-bottom: 1rem; letter-spacing: -.035em; }
+    section h3 { font-size: 1.18rem; margin: 1.4rem 0 .45rem; color: color-mix(in srgb, var(--text) 92%, var(--accent) 8%); }
+    .lead { color: var(--muted); max-width: 82ch; }
+    .grid { display: grid; gap: 1rem; }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: .25rem .65rem;
+      color: var(--muted);
+      background: color-mix(in srgb, var(--panel-2) 75%, transparent);
+      font-size: .86rem;
+      margin: .18rem .18rem .18rem 0;
+    }
+    .agent-title { display: flex; align-items: center; gap: .75rem; margin-bottom: .8rem; }
+    .badge {
+      width: 2.4rem;
+      height: 2.4rem;
+      border-radius: .85rem;
+      display: grid;
+      place-items: center;
+      color: #06111f;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    }
+    .agent-title h3 { margin: 0; font-size: 1.35rem; }
+    .muted { color: var(--muted); }
+    ul { padding-left: 1.2rem; margin: .65rem 0 0; }
+    li { margin: .35rem 0; }
+
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow); }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    th, td { text-align: left; vertical-align: top; padding: .9rem .95rem; border-bottom: 1px solid var(--line); }
+    th { color: var(--text); background: var(--panel-2); font-size: .9rem; }
+    td { color: color-mix(in srgb, var(--text) 88%, var(--muted) 12%); }
+    tr:last-child td { border-bottom: 0; }
+
+    .flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .9rem; margin-top: 1rem; }
+    .step { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 1rem; }
+    .step strong { display: block; color: var(--accent); margin-bottom: .25rem; }
+    .step:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      right: -.7rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      z-index: 2;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: color-mix(in srgb, var(--panel-2) 80%, transparent);
+      padding: 1rem 1.1rem;
+      border-radius: 0 14px 14px 0;
+      margin: 1rem 0;
+    }
+    .callout strong { color: var(--accent); }
+
+    .compare-card strong { color: var(--accent); }
+    .small { font-size: .92rem; }
+    .footer { padding: 2.5rem 0 4rem; color: var(--muted); }
+
+    @media (max-width: 900px) {
+      .hero-grid, .grid-3, .grid-2, .flow { grid-template-columns: 1fr; }
+      .toc { position: static; }
+      .step::after { display: none; }
+      h1 { max-width: none; }
+    }
+
+    @media print {
+      body { background: white; color: black; }
+      .card, .table-wrap, .step { box-shadow: none; }
+      .toc { position: static; }
+      a { color: black; text-decoration: underline; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <div class="eyebrow">Session management explainer</div>
+      <h1>How coding agents remember work</h1>
+      <p class="subtitle">A single-page explainer comparing Pi, Claude Code, and OpenCode: how they save, load, replay, branch, switch models, run shell commands, and represent user/assistant/tool messages.</p>
+      <div class="hero-grid">
+        <div class="card">
+          <h2 style="font-size:1.25rem;margin-bottom:.75rem">The big idea</h2>
+          <p class="muted">A coding-agent “session” is more than chat history. It is an execution log: prompts, assistant output, tool calls, shell results, file changes, token/cost metadata, model choices, compaction summaries, and branch/rollback state.</p>
+          <div>
+            <span class="pill">save/resume</span>
+            <span class="pill">JSONL vs SQLite</span>
+            <span class="pill">branch/replay</span>
+            <span class="pill">provider/model state</span>
+            <span class="pill">tool calls</span>
+            <span class="pill">! shell commands</span>
+          </div>
+        </div>
+        <nav class="card toc" aria-label="Table of contents">
+          <h2>Contents</h2>
+          <a href="#snapshot"><span>01</span>Snapshot</a>
+          <a href="#pi"><span>02</span>Pi</a>
+          <a href="#claude"><span>03</span>Claude Code</a>
+          <a href="#opencode"><span>04</span>OpenCode</a>
+          <a href="#patterns"><span>05</span>Patterns</a>
+          <a href="#recommendations"><span>06</span>Recommendations</a>
+          <a href="#sources"><span>07</span>Sources</a>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="snapshot">
+      <div class="wrap">
+        <h2>01. Snapshot comparison</h2>
+        <p class="lead">The three agents converge on continuous local persistence and resumable conversations, but they choose different storage and replay models.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Area</th>
+                <th>Pi</th>
+                <th>Claude Code</th>
+                <th>OpenCode</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Storage</strong></td>
+                <td>JSONL file per session, organized by working directory.</td>
+                <td>JSONL transcript per project/session under <code>~/.claude/projects</code>.</td>
+                <td>SQLite-backed project/session/message storage under app data.</td>
+              </tr>
+              <tr>
+                <td><strong>Resume</strong></td>
+                <td><code>pi -c</code>, <code>pi -r</code>, <code>--session</code>, <code>/resume</code>.</td>
+                <td><code>claude --continue</code>, <code>--resume</code>, <code>/resume</code>, <code>--from-pr</code>.</td>
+                <td><code>opencode -c</code>, <code>--session</code>, <code>/sessions</code>, <code>opencode session list</code>.</td>
+              </tr>
+              <tr>
+                <td><strong>Replay/branching</strong></td>
+                <td>Best native tree: <code>id</code>/<code>parentId</code>, <code>/tree</code>, <code>/fork</code>, <code>/clone</code>.</td>
+                <td>Session branches via <code>/branch</code> or <code>--fork-session</code>; checkpoint rewind.</td>
+                <td>Fork/child sessions and compaction sessions; undo/redo for message/file state.</td>
+              </tr>
+              <tr>
+                <td><strong>Model state</strong></td>
+                <td>Multi-provider; model and thinking changes persisted as entries.</td>
+                <td>Claude model aliases/settings; resumed sessions keep saved model.</td>
+                <td>75+ providers; session model plus assistant provider/model metadata.</td>
+              </tr>
+              <tr>
+                <td><strong>Shell</strong></td>
+                <td><code>!command</code> sends output to model; <code>!!command</code> excludes it.</td>
+                <td>Permissioned Bash tool; public issue references <code>! &lt;command&gt;</code> in recent builds.</td>
+                <td><code>!command</code> runs shell and adds output as a tool result.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="pi">
+      <div class="wrap">
+        <div class="agent-title"><div class="badge">π</div><h2>02. Pi: sessions as editable JSONL trees</h2></div>
+        <div class="grid grid-2">
+          <div class="card">
+            <h3>Storage and loading</h3>
+            <p>Pi auto-saves sessions to <code>~/.pi/agent/sessions/</code>, grouped by working directory. Each session is a JSONL file whose entries form a tree with <code>id</code> and <code>parentId</code>.</p>
+            <pre><code>pi -c                  # continue most recent
+pi -r                  # browse sessions
+pi --session &lt;path|id&gt; # load specific session
+pi --fork &lt;path|id&gt;    # fork to new file
+pi --no-session        # ephemeral mode</code></pre>
+          </div>
+          <div class="card">
+            <h3>Replay model</h3>
+            <p>Pi is the clearest replay design. <code>/tree</code> can jump to any historical entry. Continuing from a previous user turn creates a new branch in the same file; <code>/fork</code> and <code>/clone</code> create separate files.</p>
+            <div class="callout"><strong>Key insight:</strong> Context is rebuilt by walking from the active leaf to the root, then applying compaction, branch-summary, custom-message, model, and thinking-level entries.</div>
+          </div>
+        </div>
+        <div class="grid grid-3" style="margin-top:1rem">
+          <div class="card compare-card">
+            <h3>Message roles</h3>
+            <p><strong>user</strong>, <strong>assistant</strong>, <strong>toolResult</strong>, <strong>bashExecution</strong>, <strong>custom</strong>, <strong>branchSummary</strong>, <strong>compactionSummary</strong>.</p>
+          </div>
+          <div class="card compare-card">
+            <h3>Model switching</h3>
+            <p><code>/model</code>, <code>/scoped-models</code>, Ctrl+P cycling, <code>--provider</code>, <code>--model</code>, <code>--thinking</code>. Model changes are first-class session entries.</p>
+          </div>
+          <div class="card compare-card">
+            <h3>Shell commands</h3>
+            <p><code>!command</code> runs and sends output to context. <code>!!command</code> runs but marks output as excluded from model context.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="claude">
+      <div class="wrap">
+        <div class="agent-title"><div class="badge">C</div><h2>03. Claude Code: project transcripts and branch sessions</h2></div>
+        <div class="grid grid-2">
+          <div class="card">
+            <h3>Storage and loading</h3>
+            <p>Claude Code continuously saves local JSONL transcripts at <code>~/.claude/projects/&lt;project&gt;/&lt;session-id&gt;.jsonl</code>. Each line is a JSON object for a message, tool use, or metadata entry.</p>
+            <pre><code>claude --continue
+claude --resume
+claude --resume &lt;name-or-id&gt;
+claude --from-pr &lt;number&gt;
+/resume</code></pre>
+          </div>
+          <div class="card">
+            <h3>Session picker UX</h3>
+            <p>The picker supports search, preview, rename, branch filtering, widening to worktrees or all projects, and grouped display of forked sessions. Named sessions can be set at startup or during a session.</p>
+            <ul>
+              <li><code>Ctrl+W</code>: all worktrees</li>
+              <li><code>Ctrl+A</code>: all projects</li>
+              <li><code>Ctrl+B</code>: current branch filter</li>
+              <li><code>Space</code>: preview</li>
+            </ul>
+          </div>
+        </div>
+        <div class="grid grid-3" style="margin-top:1rem">
+          <div class="card compare-card">
+            <h3>Branch and rewind</h3>
+            <p><code>/branch</code> creates a new branch session. <code>/rewind</code> can roll conversation/code back to checkpoints or summarize from a selected message.</p>
+          </div>
+          <div class="card compare-card">
+            <h3>Model switching</h3>
+            <p><code>/model</code>, <code>--model</code>, <code>ANTHROPIC_MODEL</code>, and settings. Resumed sessions keep the model saved in the transcript unless retired.</p>
+          </div>
+          <div class="card compare-card">
+            <h3>Bash behavior</h3>
+            <p>The Bash tool is permissioned. Commands have time/output limits; large output is saved to session files with a preview. Long-running commands can run in background.</p>
+          </div>
+        </div>
+        <div class="callout"><strong>Parser caution:</strong> Claude Code documents transcript JSONL location and broad content, but not a stable full public schema. Transcript consumers should be defensive and version-tolerant.</div>
+      </div>
+    </section>
+
+    <section id="opencode">
+      <div class="wrap">
+        <div class="agent-title"><div class="badge">O</div><h2>04. OpenCode: SQLite sessions with normalized messages and parts</h2></div>
+        <div class="grid grid-2">
+          <div class="card">
+            <h3>Storage and loading</h3>
+            <p>OpenCode persists session data, messages, tokens, costs, file changes, and metadata in app/project storage. Current docs place app data under <code>~/.local/share/opencode/</code>; source shows SQLite with migrations and WAL mode.</p>
+            <pre><code>opencode -c
+opencode --session &lt;id&gt;
+opencode --fork
+opencode session list --format json
+opencode export [sessionID]
+opencode import &lt;file-or-share-url&gt;</code></pre>
+          </div>
+          <div class="card">
+            <h3>Compaction lifecycle</h3>
+            <p>OpenCode auto-compacts near context-window limits. It summarizes decisions, technical context, current state, and background, then creates a child session with the summary as initial context.</p>
+            <div class="flow">
+              <div class="step"><strong>Monitor</strong>Track tokens.</div>
+              <div class="step"><strong>Detect</strong>Approach context limit.</div>
+              <div class="step"><strong>Summarize</strong>Create durable summary.</div>
+              <div class="step"><strong>Spawn</strong>Continue in child session.</div>
+            </div>
+          </div>
+        </div>
+        <div class="grid grid-3" style="margin-top:1rem">
+          <div class="card compare-card">
+            <h3>Schema shape</h3>
+            <p>Session table stores parent, title, model, cost, tokens, permissions, revert data. Messages and parts are separate rows with JSON data.</p>
+          </div>
+          <div class="card compare-card">
+            <h3>Message parts</h3>
+            <p>Roles are <code>user</code>/<code>assistant</code>. Parts include text, reasoning, file, source URL, step-start, and tool invocation states.</p>
+          </div>
+          <div class="card compare-card">
+            <h3>Providers</h3>
+            <p>OpenCode uses AI SDK and Models.dev for 75+ providers. <code>/connect</code>, <code>/models</code>, config <code>model</code>, and <code>--model provider/model</code> control selection.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="patterns">
+      <div class="wrap">
+        <h2>05. Cross-agent patterns</h2>
+        <div class="grid grid-2">
+          <div class="card">
+            <h3>What every serious coding-agent session needs</h3>
+            <ul>
+              <li>Durable user and assistant turns.</li>
+              <li>Structured tool calls and tool results.</li>
+              <li>Shell-command output, including truncation/full-output paths.</li>
+              <li>Provider/model/variant and token/cost accounting.</li>
+              <li>File-change metadata for undo, replay, or audit.</li>
+              <li>Compaction summaries and boundaries.</li>
+              <li>Branch/fork/parent metadata.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Storage tradeoffs</h3>
+            <p><strong>JSONL</strong> is transparent, append-friendly, human-inspectable, and easy to share. It is ideal for event sourcing and replay.</p>
+            <p><strong>SQLite</strong> is queryable, transactional, scalable for lists/stats/multi-UI, and better for normalized message parts.</p>
+            <p class="muted">A robust design can use both: append-only event log as source of truth, SQLite as index/cache.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="recommendations">
+      <div class="wrap">
+        <h2>06. Recommended design for an Agento-like agent</h2>
+        <div class="grid grid-3">
+          <div class="card"><h3>1. Event log first</h3><p>Store an append-only, versioned session event log with human-readable exports.</p></div>
+          <div class="card"><h3>2. Explicit tree</h3><p>Use <code>id</code>/<code>parentId</code>, labels, active leaf, fork metadata, and branch summaries.</p></div>
+          <div class="card"><h3>3. Model timeline</h3><p>Persist model/provider/thinking changes as events and stamp assistant outputs with model metadata.</p></div>
+          <div class="card"><h3>4. Structured tools</h3><p>Record call ID, tool name, args, output, errors, duration, truncation, and context inclusion.</p></div>
+          <div class="card"><h3>5. Context vs display</h3><p>Distinguish what the user sees from what the model receives, especially for hidden shell commands.</p></div>
+          <div class="card"><h3>6. Import/export</h3><p>Support machine-readable JSON plus Markdown/HTML, with sanitization for sharing.</p></div>
+        </div>
+        <div class="callout"><strong>Best combined approach:</strong> Pi's explicit replay tree + Claude Code's polished picker/retention controls + OpenCode's queryable SQLite metadata would make a strong session system.</div>
+      </div>
+    </section>
+
+    <section id="sources">
+      <div class="wrap">
+        <h2>07. Sources</h2>
+        <div class="card small">
+          <h3>Pi</h3>
+          <p><a href="https://pi.dev/docs/latest/sessions">Sessions</a> · <a href="https://pi.dev/docs/latest/session-format">Session format</a> · <a href="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/usage.md">Usage</a> · <a href="https://pi.dev/docs/latest/providers">Providers</a></p>
+          <h3>Claude Code</h3>
+          <p><a href="https://code.claude.com/docs/en/sessions">Manage sessions</a> · <a href="https://code.claude.com/docs/en/commands.md">Commands</a> · <a href="https://code.claude.com/docs/en/cli-reference.md">CLI reference</a> · <a href="https://code.claude.com/docs/en/model-config.md">Model configuration</a> · <a href="https://code.claude.com/docs/en/tools-reference.md">Tools reference</a></p>
+          <h3>OpenCode</h3>
+          <p><a href="https://opencode.ai/docs/tui/">TUI</a> · <a href="https://opencode.ai/docs/cli/">CLI</a> · <a href="https://opencode.ai/docs/models/">Models</a> · <a href="https://opencode.ai/docs/providers/">Providers</a> · <a href="https://opencode.ai/docs/troubleshooting/">Storage/troubleshooting</a> · <a href="https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/session.sql.ts">Session SQL source</a> · <a href="https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/message.ts">Message schema source</a></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      <p>Generated as a standalone HTML explainer from the research report <code>session-management-research.md</code>. Date: 2026-05-28.</p>
+    </div>
+  </footer>
+</body>
+</html>
