@@ -243,6 +243,110 @@ only for the live draft; resumed persisted history should not invent running sta
 
 ---
 
+## Implementation plan
+
+Work in small slices and keep each slice type-checking independently with `npm run lint`.
+Commit each slice before moving to the next one.
+
+### Phase 1. Session core model — done
+- Replace the old session-id-only helper with typed session primitives in `session.ts`.
+- Define `Session`, `SessionEntry`, `UserEntry`, `AssistantEntry`, and `ToolResultEntry`.
+- Add `createSession(cwd, currentModelId)` and deterministic `projectKey` generation.
+- Add `getActivePath(session)` with missing-entry and cycle checks.
+- Add `appendEntries(session, entries)` that linearly chains parents from the current
+  `activeEntryId`.
+- Add `undoLastUserTurn(session)`.
+- Add `sessionToProviderMessages(session)` and `entriesToProviderMessages(entries)`, including
+  the consecutive `ToolResultEntry` collapse into one provider `UserMessage`.
+
+### Phase 2. Turn draft/buffer — done
+- Add `TurnDraft` as the mutable in-flight turn buffer.
+- Add entry constructors for user, assistant, and tool-result entries.
+- Add `createTurnDraft`, `appendTurnDraftEntry`, `isTurnDraftEmpty`, and `commitTurnDraft`.
+- Extend provider-message generation so it can include an uncommitted `TurnDraft` during
+  tool-use continuations.
+- Guard `commitTurnDraft` and draft context generation so a draft cannot be committed if the
+  session's active leaf changed underneath it.
+
+### Phase 3. Stabilize provider stop reasons — in progress
+- Preserve provider stop reasons instead of collapsing all non-tool stops to `end_turn`.
+- Map OpenAI-compatible `finish_reason` values: `tool_calls` / `function_call` -> `tool_use`,
+  `length` -> `max_tokens`, `content_filter` -> `content_filter`, `stop` -> `end_turn`.
+- Map Anthropic `stop_reason` values: `tool_use`, `max_tokens`, `end_turn`, and
+  `stop_sequence`.
+- Surface abnormal stops in the TUI so max-token or filtered responses do not look like clean
+  completions.
+- If generation stops while only reasoning text was streamed, reopen/retitle the reasoning
+  block so the user can see it was cut off.
+- Only execute tool calls when the normalized stop reason is `tool_use` and actual tool-use
+  blocks are present.
+
+### Phase 4. Wire app state to in-memory Session — in progress
+- Make `activeSession` the in-memory source of truth instead of `messages: ProviderMessage[]`.
+- On user prompt, create a `TurnDraft` and append the `UserEntry` immediately to the draft.
+- Before each provider call, generate messages from `sessionToProviderMessages(activeSession,
+  turnDraft)`.
+- Append every assistant response and tool result to the same `TurnDraft`.
+- Commit the draft into `activeSession` only after the full user turn ends.
+- On `/new`, create a new session and clear TUI/runtime state.
+- On model changes, update `Session.currentModelId`.
+- Preserve the existing `getSessionId`/`setCurrentSessionId` path so large tool-output files
+  continue to live under the active session id.
+
+### Phase 5. Storage layer
+- Add `saveSession(session)`, `loadSession(projectKey, sessionId)`, and `listSessions(cwd)`.
+- Store files under `~/.agento/sessions/<projectKey>/<sessionId>.json`.
+- Write atomically with temp-file + rename.
+- Validate `version`; for now reject/ignore unknown versions rather than migrating.
+- Listing should scan the project directory and read metadata from each session file.
+- Listing should skip or report corrupt/unreadable files without crashing.
+- After creating or resuming a session, call `setCurrentSessionId(session.id)` so future large
+  tool outputs go into the matching `~/.agento/tool-outputs/<sessionId>` directory.
+
+### Phase 6. Persist turn-end changes
+- Save a fresh session when it is created if we want empty sessions to appear in listings;
+  otherwise save only after the first committed turn.
+- Persist after every successful `commitTurnDraft`.
+- Persist after `/model` changes because `currentModelId` is session state.
+- Persist after `/undo` because it changes `activeEntryId`.
+- Do not persist the mutable draft while streaming.
+- Define exit behavior while a prompt is running: current recommendation is cancel first, then
+  commit a coherent cancellation/tool-error state only if an assistant/tool-use entry already
+  exists.
+
+### Phase 7. TUI projection and resume
+- Add an `entries -> RenderBlock[]` builder for the active path.
+- Rebuild the TUI from session entries on startup/resume, `/undo`, `/new`, and session switch.
+- Reconstruct tool display by pairing assistant `ToolUseBlock`s with matching
+  `ToolResultEntry.toolUseId`s.
+- Derive default collapsed state for old reasoning/tool blocks, then apply in-memory user
+  collapse overrides keyed by stable display keys.
+- Keep live streaming imperative for now; the builder is the resume/switch/undo path.
+
+### Phase 8. User-facing commands
+- Add `/sessions` to list sessions for the current project bucket.
+- Add `/resume <session-id>` to load an existing session and rebuild the TUI.
+- Add `/undo` to call `undoLastUserTurn`, persist, and rebuild the TUI.
+- Decide whether to add aliases such as `/session` or CLI flags later; keep the first version
+  slash-command-only unless there is a concrete need.
+
+### Phase 9. Optional local/session event entries
+- Decide whether UI-only blocks such as `/model` confirmations, `/skills`, `/mcp`, direct
+  `!bash`, startup MCP errors, cancellation notices, and provider-stop warnings should resume
+  visually.
+- If yes, add a local/event entry type instead of forcing those blocks into assistant/user
+  entries.
+- If no, document that these are transient TUI blocks and not part of persisted conversation
+  history.
+
+### Phase 10. Observability tooling
+- Ensure persisted JSON is readable enough to inspect manually.
+- Consider a future `/session-data` or CLI helper that prints the active session file path.
+- Keep provider metadata opaque in the schema; do not try to normalize reasoning signatures or
+  raw output items beyond storing them on `providerMetadata`.
+
+---
+
 ## Open questions
 - Title generation: when/how is `Session.title` set (first user message, model summary,
   manual)?
