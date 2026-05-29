@@ -516,6 +516,11 @@ export class Tui {
         this.exitConfirmPresses = 0;
         this.clearInput();
         this.requestRender();
+      } else if (this.running) {
+        this.exitConfirmPresses = 0;
+        this.options.onEscape?.();
+        this.status = "Cancelling prompt before exit";
+        this.requestRender();
       } else if (this.exitConfirmPresses === 0) {
         this.exitConfirmPresses = 1;
         this.status = "Press Ctrl+C again to exit";

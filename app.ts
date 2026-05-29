@@ -12,6 +12,7 @@ import {
   createTurnDraft,
   createUserEntry,
   isTurnDraftEmpty,
+  saveSession,
   sessionToProviderMessages,
   type ContentBlock as SessionContentBlock,
   type ThinkingBlock,
@@ -875,6 +876,17 @@ async function prompt(
 ) {
   tui.addBlock({ role: "user", content: displayText });
   const turnDraft = createTurnDraft(activeSession);
+  let turnDraftCommitted = false;
+
+  const commitAndSaveTurnDraft = async () => {
+    if (turnDraftCommitted) {
+      return;
+    }
+
+    activeSession = commitTurnDraft(activeSession, turnDraft);
+    turnDraftCommitted = true;
+    await saveSession(activeSession);
+  };
 
   appendTurnDraftEntry(turnDraft, createUserEntry({
     content: contentBlocks && contentBlocks.length > 0
@@ -1143,7 +1155,7 @@ async function prompt(
       break;
     }
 
-    activeSession = commitTurnDraft(activeSession, turnDraft);
+    await commitAndSaveTurnDraft();
   } catch (error: unknown) {
     if (isAbortError(error)) {
       acceptToolResults = false;
@@ -1163,7 +1175,7 @@ async function prompt(
       }
 
       if (anyAssistantMessagePushed && !isTurnDraftEmpty(turnDraft)) {
-        activeSession = commitTurnDraft(activeSession, turnDraft);
+        await commitAndSaveTurnDraft();
       }
 
       tui.addBlock({
@@ -1173,8 +1185,8 @@ async function prompt(
       });
       return;
     }
-    if (!isTurnDraftEmpty(turnDraft)) {
-      activeSession = commitTurnDraft(activeSession, turnDraft);
+    if (!turnDraftCommitted && !isTurnDraftEmpty(turnDraft)) {
+      await commitAndSaveTurnDraft();
     }
     throw error;
   } finally {

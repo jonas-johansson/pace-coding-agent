@@ -299,12 +299,12 @@ Commit each slice before moving to the next one.
 - After creating or resuming a session, call `setCurrentSessionId(session.id)` so future large
   tool outputs go into the matching `~/.agento/tool-outputs/<sessionId>` directory.
 
-### Phase 6. Persist turn-end changes
+### Phase 6. Persist turn-end changes — done
 - Save a fresh session when it is created if we want empty sessions to appear in listings;
   otherwise save only after the first committed turn.
 - Persist after every successful `commitTurnDraft`.
-- Persist after `/model` changes because `currentModelId` is session state.
-- Persist after `/undo` because it changes `activeEntryId`.
+- Do not persist immediately after `/model`; save `currentModelId` on the next turn-end persist.
+- Persist after `/undo` when Phase 8 adds the command because it changes `activeEntryId`.
 - Do not persist the mutable draft while streaming.
 - Define exit behavior while a prompt is running: current recommendation is cancel first, then
   commit a coherent cancellation/tool-error state only if an assistant/tool-use entry already
