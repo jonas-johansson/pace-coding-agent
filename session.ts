@@ -71,6 +71,21 @@ export type Session = {
   entries: SessionEntry[];
 };
 
+export type TurnDraft = {
+  baseActiveEntryId: string | null;
+  entries: SessionEntry[];
+};
+
+type NewEntryFields = Partial<Pick<BaseEntry, "id" | "timestamp">>;
+
+export type CreateUserEntryParams = NewEntryFields & Pick<UserEntry, "content">;
+
+export type CreateAssistantEntryParams = NewEntryFields &
+  Omit<AssistantEntry, keyof BaseEntry | "type">;
+
+export type CreateToolResultEntryParams = NewEntryFields &
+  Omit<ToolResultEntry, keyof BaseEntry | "type">;
+
 let currentSessionId: string = randomUUID();
 
 export function getSessionId(): string {
@@ -105,6 +120,49 @@ export function createSession(cwd: string, currentModelId: string): Session {
     currentModelId,
     activeEntryId: null,
     entries: [],
+  };
+}
+
+export function createUserEntry(params: CreateUserEntryParams): UserEntry {
+  return {
+    ...createBaseEntry(params),
+    type: "user",
+    content: params.content,
+  };
+}
+
+export function createAssistantEntry(params: CreateAssistantEntryParams): AssistantEntry {
+  return {
+    ...createBaseEntry(params),
+    type: "assistant",
+    content: params.content,
+    provider: params.provider,
+    modelId: params.modelId,
+    ...(params.modelVariant !== undefined && { modelVariant: params.modelVariant }),
+    tokensIn: params.tokensIn,
+    tokensOut: params.tokensOut,
+    ...(params.cacheReadTokens !== undefined && { cacheReadTokens: params.cacheReadTokens }),
+    ...(params.cacheCreationTokens !== undefined && { cacheCreationTokens: params.cacheCreationTokens }),
+    cost: params.cost,
+    ...(params.providerMetadata !== undefined && { providerMetadata: params.providerMetadata }),
+  };
+}
+
+export function createToolResultEntry(params: CreateToolResultEntryParams): ToolResultEntry {
+  return {
+    ...createBaseEntry(params),
+    type: "tool_result",
+    toolUseId: params.toolUseId,
+    content: params.content,
+    ...(params.isError && { isError: true }),
+  };
+}
+
+function createBaseEntry(params: NewEntryFields): BaseEntry {
+  return {
+    id: params.id ?? randomUUID(),
+    parentId: null,
+    timestamp: params.timestamp ?? new Date().toISOString(),
   };
 }
 
@@ -169,6 +227,33 @@ export function appendEntries(
   };
 }
 
+export function createTurnDraft(session: Session): TurnDraft {
+  return {
+    baseActiveEntryId: session.activeEntryId,
+    entries: [],
+  };
+}
+
+export function appendTurnDraftEntry(draft: TurnDraft, entry: SessionEntry): void {
+  draft.entries.push(entry);
+}
+
+export function isTurnDraftEmpty(draft: TurnDraft): boolean {
+  return draft.entries.length === 0;
+}
+
+export function commitTurnDraft(
+  session: Session,
+  draft: TurnDraft,
+  updatedAt = new Date().toISOString(),
+): Session {
+  if (session.activeEntryId !== draft.baseActiveEntryId) {
+    throw new Error("Cannot commit turn draft because the session active entry changed");
+  }
+
+  return appendEntries(session, draft.entries, updatedAt);
+}
+
 export function undoLastUserTurn(
   session: Session,
   updatedAt = new Date().toISOString(),
@@ -189,7 +274,18 @@ export function undoLastUserTurn(
   return session;
 }
 
-export function sessionToProviderMessages(session: Session): ProviderMessage[] {
+export function sessionToProviderMessages(session: Session, draft?: TurnDraft): ProviderMessage[] {
+  if (draft && session.activeEntryId !== draft.baseActiveEntryId) {
+    throw new Error("Cannot convert turn draft because the session active entry changed");
+  }
+
+  return entriesToProviderMessages([
+    ...getActivePath(session),
+    ...(draft?.entries ?? []),
+  ]);
+}
+
+export function entriesToProviderMessages(entries: readonly SessionEntry[]): ProviderMessage[] {
   const messages: ProviderMessage[] = [];
   let pendingToolResults: ToolResultContent[] = [];
 
@@ -205,7 +301,7 @@ export function sessionToProviderMessages(session: Session): ProviderMessage[] {
     pendingToolResults = [];
   };
 
-  for (const entry of getActivePath(session)) {
+  for (const entry of entries) {
     if (entry.type === "tool_result") {
       pendingToolResults.push(toProviderToolResult(entry));
       continue;
