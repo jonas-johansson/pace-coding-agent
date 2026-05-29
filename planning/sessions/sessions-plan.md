@@ -26,15 +26,14 @@ When opening the coding agent in a dir then we'll figure out a project identity 
 
 It should be possible to list sessions and resume an existing session by id.
 
+Session data is provider-agnostic, but they need to contain some provider metadata (such as thinking signatures for Claude).
 
-
-
-
+I think it's good to think of session entries as immutable. The session entries conceptually form an append-only timeline. However, while streaming we'll have partial data and the TUI needs to work with that.
 
 ```ts
 type ContentBlock
 {
-    type: "text" | "thinking" | "tool_use" | "tool_result" | "image"; // enum
+    type: "text" | "thinking" | "tool_call" | "image";
 }
 
 type TextContentBlock : ContentBlock // ContentBlock.type = text
@@ -48,18 +47,11 @@ type ThinkingContentBlock : ContentBlock // ContentBlock.type = thinking
     signature: string;
 }
 
-type ToolUseContentBlock : ContentBlock // ContentBlock.type = tool_use
+type ToolCallContentBlock : ContentBlock // ContentBlock.type = tool_call
 {
     id: string // tu_ABCD1234abcd
     name: string // ex: "web_search"
     input // object, ex: { query: "current weather Paris" }
-}
-
-type ToolResultContentBlock : ContentBlock // ContentBlock.type = tool_result
-{
-    toolUseId: string // ex: tu_ABCD1234abcd
-    content // optional array of text/image leaves
-    is_error // optional boolean
 }
 
 type ImageSource
@@ -74,16 +66,17 @@ type ImageContentBlock : ContentBlock // ContentBlock.type = image
     source: ImageSource
 }
 
-type Entry
+type SessionEntry
 {
-    id
-    timestamp // ex: 2026-05-28T13:23:21.176Z
+    id: string; // random uuid
+    parentId: string | null;
+    timestamp: string; // ex: 2026-05-28T13:23:21.176Z
 }
 
-type Message : Entry
+type Message : SessionEntry
 {
-    role // user or assistant
-    content // ContentBlock array
+    role: "user" | "assistant";
+    content: ContentBlock[]; // ContentBlock array
 }
 
 type UserMessage : Message
@@ -92,15 +85,39 @@ type UserMessage : Message
 
 type AssistantMessage : Message
 {
+    provider: string; // ex: openai
+    modelId: string; // ex: gpt-5, claude-opus-4
+    modelVariant?: string; // ex: high, max
+    tokensIn: number;
+    tokensOut: number;
+    cost: number; // cost in USD
 }
 
-type ModelChange : Entry
+type ToolResult : SessionEntry
 {
-    provider: string
-    modelId: string
+    content: ContentBlock[]; // text, images
+    is_error?: boolean; // optional is_error boolean
+}
+
+type Session
+{
+    version: number; // number 1
+    id: string; // random uuid string
+    createdAt: string; // ex: 2026-05-28T13:23:21.176Z
+    updatedAt: string; // ex: 2026-05-28T13:23:21.176Z
+    title?: string;
+    activeEntryId: string;
+    entries: SessionEntry[];
 }
 
 ```
 
 
+## LLM context generation
+
+### Message history
+
+1. Traverse session entries from active entry up the tree.
+2. Filter message entries.
+3. Convert to provider.
 
