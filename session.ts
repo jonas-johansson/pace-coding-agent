@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from "crypto";
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from "fs/promises";
+import { homedir } from "os";
+import { join } from "path";
 import type {
   AssistantMessage,
   ContentBlock as ProviderContentBlock,
@@ -71,6 +74,19 @@ export type Session = {
   entries: SessionEntry[];
 };
 
+export type SessionListItem = {
+  id: string;
+  projectKey: string;
+  cwd: string;
+  createdAt: string;
+  updatedAt: string;
+  currentModelId: string;
+  title?: string;
+  activeEntryId: string | null;
+  entryCount: number;
+  filePath: string;
+};
+
 export type TurnDraft = {
   baseActiveEntryId: string | null;
   entries: SessionEntry[];
@@ -103,6 +119,83 @@ export function setCurrentSessionId(sessionId: string): void {
 
 export function createProjectKey(cwd: string): string {
   return createHash("sha256").update(cwd).digest("base64url").slice(0, 32);
+}
+
+export function getSessionProjectDir(projectKey: string): string {
+  assertSafeStorageSegment(projectKey, "projectKey");
+  return join(homedir(), ".agento", "sessions", projectKey);
+}
+
+export function getSessionFilePath(projectKey: string, sessionId: string): string {
+  assertSafeStorageSegment(projectKey, "projectKey");
+  assertSafeStorageSegment(sessionId, "sessionId");
+  return join(getSessionProjectDir(projectKey), `${sessionId}.json`);
+}
+
+export async function saveSession(session: Session): Promise<void> {
+  if (session.version !== SESSION_SCHEMA_VERSION) {
+    throw new Error(`Unsupported session schema version: ${session.version}`);
+  }
+
+  const projectDir = getSessionProjectDir(session.projectKey);
+  const filePath = getSessionFilePath(session.projectKey, session.id);
+  const tempPath = join(projectDir, `${session.id}.${process.pid}.${randomUUID()}.tmp`);
+
+  await mkdir(projectDir, { recursive: true });
+
+  try {
+    await writeFile(tempPath, `${JSON.stringify(session, null, 2)}\n`, "utf8");
+    await rename(tempPath, filePath);
+  } catch (error) {
+    await unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function loadSession(projectKey: string, sessionId: string): Promise<Session> {
+  const filePath = getSessionFilePath(projectKey, sessionId);
+  const session = parseSessionJson(await readFile(filePath, "utf8"), filePath);
+
+  validateLoadedSession(session, projectKey, sessionId, filePath);
+  setCurrentSessionId(session.id);
+
+  return session;
+}
+
+export async function listSessions(cwd: string): Promise<SessionListItem[]> {
+  const projectKey = createProjectKey(cwd);
+  const projectDir = getSessionProjectDir(projectKey);
+  let dirEntries;
+
+  try {
+    dirEntries = await readdir(projectDir, { withFileTypes: true });
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+
+  const sessions: SessionListItem[] = [];
+
+  for (const dirEntry of dirEntries) {
+    if (!dirEntry.isFile() || !dirEntry.name.endsWith(".json")) {
+      continue;
+    }
+
+    const filePath = join(projectDir, dirEntry.name);
+
+    try {
+      const sessionId = dirEntry.name.slice(0, -".json".length);
+      const session = parseSessionJson(await readFile(filePath, "utf8"), filePath);
+      validateLoadedSession(session, projectKey, sessionId, filePath);
+      sessions.push(toSessionListItem(session, filePath));
+    } catch {
+      // Corrupt or unreadable sessions should not break the session listing.
+    }
+  }
+
+  return sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function createSession(cwd: string, currentModelId: string): Session {
@@ -350,4 +443,204 @@ function isProviderAssistantContentBlock(block: ContentBlock): block is Provider
 
 function isProviderToolResultPart(part: ToolResultPart): part is ProviderToolResultPart {
   return part.type === "text";
+}
+
+function assertSafeStorageSegment(value: string, label: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+    throw new Error(`Invalid ${label} for session storage: ${value}`);
+  }
+}
+
+function parseSessionJson(raw: string, filePath: string): Session {
+  let value: unknown;
+
+  try {
+    value = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Failed to parse session file ${filePath}: ${formatErrorMessage(error)}`);
+  }
+
+  if (isRecord(value) && value.version !== SESSION_SCHEMA_VERSION) {
+    throw new Error(`Unsupported session schema version in ${filePath}: ${String(value.version)}`);
+  }
+
+  if (!isSession(value)) {
+    throw new Error(`Invalid session file ${filePath}`);
+  }
+
+  return value;
+}
+
+function validateLoadedSession(
+  session: Session,
+  projectKey: string,
+  sessionId: string,
+  filePath: string,
+): void {
+  if (session.projectKey !== projectKey) {
+    throw new Error(`Session file ${filePath} belongs to project ${session.projectKey}, not ${projectKey}`);
+  }
+
+  if (session.id !== sessionId) {
+    throw new Error(`Session file ${filePath} contains session ${session.id}, not ${sessionId}`);
+  }
+
+  getActivePath(session);
+}
+
+function toSessionListItem(session: Session, filePath: string): SessionListItem {
+  return {
+    id: session.id,
+    projectKey: session.projectKey,
+    cwd: session.cwd,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    currentModelId: session.currentModelId,
+    ...(session.title !== undefined && { title: session.title }),
+    activeEntryId: session.activeEntryId,
+    entryCount: session.entries.length,
+    filePath,
+  };
+}
+
+function isSession(value: unknown): value is Session {
+  return (
+    isRecord(value)
+    && value.version === SESSION_SCHEMA_VERSION
+    && isString(value.id)
+    && isString(value.projectKey)
+    && isString(value.cwd)
+    && isString(value.createdAt)
+    && isString(value.updatedAt)
+    && isString(value.currentModelId)
+    && isOptionalString(value.title)
+    && isNullableString(value.activeEntryId)
+    && Array.isArray(value.entries)
+    && value.entries.every(isSessionEntry)
+  );
+}
+
+function isSessionEntry(value: unknown): value is SessionEntry {
+  if (!isRecord(value) || !isBaseEntry(value)) {
+    return false;
+  }
+
+  switch (value.type) {
+    case "user":
+      return Array.isArray(value.content) && value.content.every(isUserContentBlock);
+    case "assistant":
+      return (
+        Array.isArray(value.content)
+        && value.content.every(isSessionContentBlock)
+        && isString(value.provider)
+        && isString(value.modelId)
+        && isOptionalString(value.modelVariant)
+        && isNumber(value.tokensIn)
+        && isNumber(value.tokensOut)
+        && isOptionalNumber(value.cacheReadTokens)
+        && isOptionalNumber(value.cacheCreationTokens)
+        && isNumber(value.cost)
+      );
+    case "tool_result":
+      return (
+        isString(value.toolUseId)
+        && Array.isArray(value.content)
+        && value.content.every(isToolResultPart)
+        && isOptionalBoolean(value.isError)
+      );
+    default:
+      return false;
+  }
+}
+
+function isBaseEntry(value: Record<string, unknown>): boolean {
+  return isString(value.id) && isNullableString(value.parentId) && isString(value.timestamp);
+}
+
+function isUserContentBlock(value: unknown): value is TextBlock | ImageBlock {
+  return isTextBlock(value) || isImageBlock(value);
+}
+
+function isSessionContentBlock(value: unknown): value is ContentBlock {
+  return isTextBlock(value) || isThinkingBlock(value) || isToolUseBlock(value) || isImageBlock(value);
+}
+
+function isToolResultPart(value: unknown): value is ToolResultPart {
+  return isTextBlock(value) || isImageBlock(value);
+}
+
+function isTextBlock(value: unknown): value is TextBlock {
+  return isRecord(value) && value.type === "text" && isString(value.text);
+}
+
+function isThinkingBlock(value: unknown): value is ThinkingBlock {
+  return isRecord(value) && value.type === "thinking" && isString(value.thinking);
+}
+
+function isToolUseBlock(value: unknown): value is ToolUseBlock {
+  return (
+    isRecord(value)
+    && value.type === "tool_use"
+    && isString(value.id)
+    && isString(value.name)
+    && hasOwn(value, "input")
+  );
+}
+
+function isImageBlock(value: unknown): value is ImageBlock {
+  return (
+    isRecord(value)
+    && value.type === "image"
+    && isSupportedImageMediaType(value.mediaType)
+    && isString(value.data)
+  );
+}
+
+function isSupportedImageMediaType(value: unknown): value is ImageBlock["mediaType"] {
+  return (
+    value === "image/jpeg"
+    || value === "image/png"
+    || value === "image/gif"
+    || value === "image/webp"
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || isString(value);
+}
+
+function isOptionalNumber(value: unknown): value is number | undefined {
+  return value === undefined || isNumber(value);
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || isString(value);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return isRecord(error) && typeof error.code === "string";
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

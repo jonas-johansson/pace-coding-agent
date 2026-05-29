@@ -289,7 +289,7 @@ Commit each slice before moving to the next one.
 - Preserve the existing `getSessionId`/`setCurrentSessionId` path so large tool-output files
   continue to live under the active session id.
 
-### Phase 5. Storage layer
+### Phase 5. Storage layer — done
 - Add `saveSession(session)`, `loadSession(projectKey, sessionId)`, and `listSessions(cwd)`.
 - Store files under `~/.agento/sessions/<projectKey>/<sessionId>.json`.
 - Write atomically with temp-file + rename.
