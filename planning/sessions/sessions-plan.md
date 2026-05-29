@@ -268,25 +268,21 @@ Commit each slice before moving to the next one.
 - Guard `commitTurnDraft` and draft context generation so a draft cannot be committed if the
   session's active leaf changed underneath it.
 
-### Phase 3. Stabilize provider stop reasons — in progress
-- Preserve provider stop reasons instead of collapsing all non-tool stops to `end_turn`.
-- Map OpenAI-compatible `finish_reason` values: `tool_calls` / `function_call` -> `tool_use`,
-  `length` -> `max_tokens`, `content_filter` -> `content_filter`, `stop` -> `end_turn`.
-- Map Anthropic `stop_reason` values: `tool_use`, `max_tokens`, `end_turn`, and
-  `stop_sequence`.
-- Surface abnormal stops in the TUI so max-token or filtered responses do not look like clean
-  completions.
-- If generation stops while only reasoning text was streamed, reopen/retitle the reasoning
-  block so the user can see it was cut off.
-- Only execute tool calls when the normalized stop reason is `tool_use` and actual tool-use
-  blocks are present.
+### Phase 3. Stabilize provider stop reasons — deferred
+- Keep the current provider abstraction simple for now: `stopReason` remains only `end_turn` or
+  `tool_use`.
+- Revisit abnormal stop handling later with a smaller design that does not clutter provider and
+  TUI code.
 
-### Phase 4. Wire app state to in-memory Session — in progress
+### Phase 4. Wire app state to in-memory Session — done
 - Make `activeSession` the in-memory source of truth instead of `messages: ProviderMessage[]`.
 - On user prompt, create a `TurnDraft` and append the `UserEntry` immediately to the draft.
 - Before each provider call, generate messages from `sessionToProviderMessages(activeSession,
   turnDraft)`.
-- Append every assistant response and tool result to the same `TurnDraft`.
+- Append every assistant response, display-only reasoning block, and tool result to the same
+  `TurnDraft`.
+- If a tool batch is cancelled after some tools completed, retain completed tool results and add
+  cancellation tool-result entries for the remaining tool uses before committing the draft.
 - Commit the draft into `activeSession` only after the full user turn ends.
 - On `/new`, create a new session and clear TUI/runtime state.
 - On model changes, update `Session.currentModelId`.

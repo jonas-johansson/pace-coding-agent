@@ -3,7 +3,19 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve, extname } from "path";
 import { Tui } from "./tui";
-import { resetSession } from "./session";
+import {
+  appendTurnDraftEntry,
+  commitTurnDraft,
+  createAssistantEntry,
+  createSession,
+  createToolResultEntry,
+  createTurnDraft,
+  createUserEntry,
+  isTurnDraftEmpty,
+  sessionToProviderMessages,
+  type ContentBlock as SessionContentBlock,
+  type ThinkingBlock,
+} from "./session";
 import { initHighlighter } from "./syntax";
 import {
   tools,
@@ -24,13 +36,10 @@ import {
 } from "./skill";
 import type {
   Provider,
-  ProviderMessage,
   ProviderStream,
-  ContentBlock,
+  ContentBlock as ProviderContentBlock,
   ToolUseBlock,
   ToolResultContent,
-  UserMessage,
-  AssistantMessage,
   ImageBlock,
 } from "./provider";
 import {
@@ -125,9 +134,21 @@ function getProvider(config: ModelConfig): Provider {
 // ── Model state ──────────────────────────────────────────────────────────────
 
 let currentModelId: string = DEFAULT_MODEL_ID;
+let activeSession = createSession(process.cwd(), currentModelId);
 
 function currentModelConfig(): ModelConfig {
   return MODELS[currentModelId];
+}
+
+function selectModel(modelId: string) {
+  currentModelId = modelId;
+  activeSession = {
+    ...activeSession,
+    currentModelId,
+    updatedAt: new Date().toISOString(),
+  };
+  tui.setModel(currentModelId);
+  updateContextInfo();
 }
 
 function cancelPrompt() {
@@ -162,10 +183,6 @@ let lastOutputTokens = 0;
 let lastCacheReadTokens = 0;
 let lastCacheCreationTokens = 0;
 let accumulatedCost = 0;
-
-// ── Conversation state (provider-agnostic) ───────────────────────────────────
-
-const messages: ProviderMessage[] = [];
 
 // ── Image attachment state ───────────────────────────────────────────────────
 
@@ -218,7 +235,7 @@ function expandHomePath(p: string): string {
 /** Estimate total base64 image payload already present in the conversation. */
 function estimateExistingImagePayload(): number {
   let total = 0;
-  for (const msg of messages) {
+  for (const msg of sessionToProviderMessages(activeSession)) {
     if (msg.role === "user") {
       for (const block of msg.content) {
         if (block.type === "image") {
@@ -284,18 +301,14 @@ function cycleModel() {
   const ids = AVAILABLE_MODEL_IDS;
   const currentIndex = ids.indexOf(currentModelId);
   const nextIndex = (currentIndex + 1) % ids.length;
-  currentModelId = ids[nextIndex];
-  tui.setModel(currentModelId);
-  updateContextInfo();
+  selectModel(ids[nextIndex]);
 }
 
 function cycleModelReverse() {
   const ids = AVAILABLE_MODEL_IDS;
   const currentIndex = ids.indexOf(currentModelId);
   const prevIndex = (currentIndex - 1 + ids.length) % ids.length;
-  currentModelId = ids[prevIndex];
-  tui.setModel(currentModelId);
-  updateContextInfo();
+  selectModel(ids[prevIndex]);
 }
 
 function formatModelList() {
@@ -319,7 +332,7 @@ async function handleCommand(command: string): Promise<boolean> {
 
   switch (name) {
     case "/new":
-      messages.length = 0;
+      activeSession = createSession(process.cwd(), currentModelId);
       lastInputTokens = 0;
       lastOutputTokens = 0;
       lastCacheReadTokens = 0;
@@ -327,7 +340,6 @@ async function handleCommand(command: string): Promise<boolean> {
       accumulatedCost = 0;
       pendingImages = [];
       clipboardCounter = 0;
-      resetSession();
       tui.setImageCount(0);
       tui.clearBlocks();
       updateContextInfo();
@@ -359,9 +371,7 @@ async function handleCommand(command: string): Promise<boolean> {
         return true;
       }
 
-      currentModelId = resolved;
-      tui.setModel(currentModelId);
-      updateContextInfo();
+      selectModel(resolved);
       tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModelId}.` });
       return true;
     }
@@ -643,7 +653,7 @@ function ensureToolBlock(
   return id;
 }
 
-function isToolUseBlock(block: ContentBlock): block is ToolUseBlock {
+function isToolUseBlock(block: ProviderContentBlock): block is ToolUseBlock {
   return block.type === "tool_use";
 }
 
@@ -729,7 +739,7 @@ async function executeToolUseBatch(
   toolUseBlocks: ToolUseBlock[],
   toolBlocks: Map<string, number>,
   signal: AbortSignal,
-  onComplete: (toolUseId: string) => void,
+  onComplete: (toolUseId: string, result: ToolResultContent) => void,
 ): Promise<ToolResultContent[]> {
   const hasExclusiveTool = toolUseBlocks.some((contentBlock) => {
     const toolToExecute = tools.find((tool) => tool.name === contentBlock.name);
@@ -738,7 +748,7 @@ async function executeToolUseBatch(
 
   const runOne = async (contentBlock: ToolUseBlock): Promise<ToolResultContent> => {
     const result = await executeToolUseBlock(contentBlock, toolBlocks, signal);
-    onComplete(contentBlock.id);
+    onComplete(contentBlock.id, result);
     return result;
   };
 
@@ -864,14 +874,13 @@ async function prompt(
   contentBlocks?: (ImageBlock | { type: "text"; text: string })[],
 ) {
   tui.addBlock({ role: "user", content: displayText });
+  const turnDraft = createTurnDraft(activeSession);
 
-  const userMsg: UserMessage = {
-    role: "user",
+  appendTurnDraftEntry(turnDraft, createUserEntry({
     content: contentBlocks && contentBlocks.length > 0
       ? contentBlocks
       : [{ type: "text", text: displayText }],
-  };
-  messages.push(userMsg);
+  }));
 
   const abortController = new AbortController();
   currentAbortController = abortController;
@@ -880,7 +889,18 @@ async function prompt(
   let assistantMessagePushed = false;
   let anyAssistantMessagePushed = false;
   let pendingToolUseIds: string[] = [];
+  let currentToolUseOrder: string[] = [];
+  let completedToolResults = new Map<string, ToolResultContent>();
+  let acceptToolResults = true;
   let currentToolBlocks = new Map<string, number>();
+
+  const appendToolResultToDraft = (toolResult: ToolResultContent) => {
+    appendTurnDraftEntry(turnDraft, createToolResultEntry({
+      toolUseId: toolResult.tool_use_id,
+      content: toolResult.content,
+      ...(toolResult.is_error && { isError: true }),
+    }));
+  };
 
   const [agentsFileContents, skills] = await Promise.all([
     loadAgentsFile(),
@@ -925,7 +945,7 @@ async function prompt(
       const stream: ProviderStream = await provider.stream({
         model: modelConfig.id,
         system: systemText,
-        messages,
+        messages: sessionToProviderMessages(activeSession, turnDraft),
         tools: toolDefs,
         maxTokens: modelConfig.maxOutputTokens,
         signal,
@@ -935,9 +955,14 @@ async function prompt(
       let accText = "";
       let currentReasoningBlockId: number | undefined;
       let accReasoning = "";
+      const reasoningBlocks: ThinkingBlock[] = [];
       const finishReasoningBlock = () => {
         if (currentReasoningBlockId === undefined) {
           return;
+        }
+
+        if (accReasoning) {
+          reasoningBlocks.push({ type: "thinking", thinking: accReasoning });
         }
 
         tui.updateBlock(currentReasoningBlockId, {
@@ -1044,6 +1069,8 @@ async function prompt(
         }
       }
 
+      finishReasoningBlock();
+
       const response = await stream.finalMessage();
 
       // Update usage tracking
@@ -1052,7 +1079,7 @@ async function prompt(
       lastInputTokens = response.usage.inputTokens;
       lastOutputTokens = response.usage.outputTokens;
 
-      accumulatedCost += computeCallCost(
+      const callCost = computeCallCost(
         modelConfig,
         // For cost: use inputTokens minus cache tokens for the base input cost
         response.usage.inputTokens - response.usage.cacheCreationTokens - response.usage.cacheReadTokens,
@@ -1060,18 +1087,22 @@ async function prompt(
         response.usage.cacheReadTokens,
         response.usage.outputTokens,
       );
+      accumulatedCost += callCost;
 
       updateContextInfo();
 
-      // Push assistant message to conversation
-      const assistantMsg: AssistantMessage = {
-        role: "assistant",
-        content: response.content,
-        ...(response.providerMetadata !== undefined && {
-          providerMetadata: response.providerMetadata,
-        }),
-      };
-      messages.push(assistantMsg);
+      const assistantContent: SessionContentBlock[] = [...reasoningBlocks, ...response.content];
+      appendTurnDraftEntry(turnDraft, createAssistantEntry({
+        content: assistantContent,
+        provider: modelConfig.provider,
+        modelId: modelConfig.id,
+        tokensIn: response.usage.inputTokens,
+        tokensOut: response.usage.outputTokens,
+        cacheReadTokens: response.usage.cacheReadTokens,
+        cacheCreationTokens: response.usage.cacheCreationTokens,
+        cost: callCost,
+        ...(response.providerMetadata !== undefined && { providerMetadata: response.providerMetadata }),
+      }));
       assistantMessagePushed = true;
       anyAssistantMessagePushed = true;
 
@@ -1080,22 +1111,27 @@ async function prompt(
       // together, even when execution happens in parallel.
       const toolUseBlocks = response.content.filter(isToolUseBlock);
       pendingToolUseIds = toolUseBlocks.map((block) => block.id);
+      currentToolUseOrder = pendingToolUseIds;
+      completedToolResults = new Map<string, ToolResultContent>();
+      acceptToolResults = true;
 
       if (toolUseBlocks.length > 0) {
         const toolResults = await executeToolUseBatch(
           toolUseBlocks,
           toolBlocks,
           signal,
-          (toolUseId) => {
+          (toolUseId, toolResult) => {
+            if (!acceptToolResults) return;
+            completedToolResults.set(toolUseId, toolResult);
             pendingToolUseIds = pendingToolUseIds.filter((id) => id !== toolUseId);
           },
         );
 
-        const toolResultMsg: UserMessage = {
-          role: "user",
-          content: toolResults,
-        };
-        messages.push(toolResultMsg);
+        for (const toolResult of toolResults) {
+          appendToolResultToDraft(toolResult);
+        }
+        currentToolUseOrder = [];
+        completedToolResults = new Map<string, ToolResultContent>();
       }
 
       if (response.stopReason === "tool_use") {
@@ -1106,8 +1142,11 @@ async function prompt(
 
       break;
     }
+
+    activeSession = commitTurnDraft(activeSession, turnDraft);
   } catch (error: unknown) {
     if (isAbortError(error)) {
+      acceptToolResults = false;
       // Mark any in-progress tool blocks as cancelled
       for (const [toolUseId, blockId] of currentToolBlocks) {
         if (pendingToolUseIds.includes(toolUseId)) {
@@ -1116,13 +1155,15 @@ async function prompt(
       }
 
       if (assistantMessagePushed && pendingToolUseIds.length > 0) {
-        const toolResultMsg: UserMessage = {
-          role: "user",
-          content: pendingToolUseIds.map((toolUseId) => makeToolErrorResult(toolUseId, "Cancelled by user")),
-        };
-        messages.push(toolResultMsg);
-      } else if (!anyAssistantMessagePushed) {
-        messages.pop();
+        for (const toolUseId of currentToolUseOrder) {
+          const toolResult = completedToolResults.get(toolUseId)
+            ?? makeToolErrorResult(toolUseId, "Cancelled by user");
+          appendToolResultToDraft(toolResult);
+        }
+      }
+
+      if (anyAssistantMessagePushed && !isTurnDraftEmpty(turnDraft)) {
+        activeSession = commitTurnDraft(activeSession, turnDraft);
       }
 
       tui.addBlock({
@@ -1131,6 +1172,9 @@ async function prompt(
         content: "Prompt execution cancelled.",
       });
       return;
+    }
+    if (!isTurnDraftEmpty(turnDraft)) {
+      activeSession = commitTurnDraft(activeSession, turnDraft);
     }
     throw error;
   } finally {
