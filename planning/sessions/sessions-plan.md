@@ -310,7 +310,7 @@ Commit each slice before moving to the next one.
   commit a coherent cancellation/tool-error state only if an assistant/tool-use entry already
   exists.
 
-### Phase 7. TUI projection and resume
+### Phase 7. TUI projection and resume — done
 - Add an `entries -> RenderBlock[]` builder for the active path.
 - Rebuild the TUI from session entries on startup/resume, `/undo`, `/new`, and session switch.
 - Reconstruct tool display by pairing assistant `ToolUseBlock`s with matching
@@ -319,7 +319,7 @@ Commit each slice before moving to the next one.
   collapse overrides keyed by stable display keys.
 - Keep live streaming imperative for now; the builder is the resume/switch/undo path.
 
-### Phase 8. User-facing commands
+### Phase 8. User-facing commands — done
 - Add `/sessions` to list sessions for the current project bucket.
 - Add `/resume <session-id>` to load an existing session and rebuild the TUI.
 - Add `/undo` to call `undoLastUserTurn`, persist, and rebuild the TUI.

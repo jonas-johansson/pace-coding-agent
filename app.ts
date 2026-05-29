@@ -3,18 +3,26 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve, extname } from "path";
 import { Tui } from "./tui";
+import { sessionToRenderBlocks } from "./session-view";
 import {
   appendTurnDraftEntry,
   commitTurnDraft,
   createAssistantEntry,
+  createProjectKey,
   createSession,
   createToolResultEntry,
   createTurnDraft,
   createUserEntry,
+  getActivePath,
   isTurnDraftEmpty,
+  listSessions,
+  loadSession,
   saveSession,
   sessionToProviderMessages,
+  undoLastUserTurn,
   type ContentBlock as SessionContentBlock,
+  type Session,
+  type SessionListItem,
   type ThinkingBlock,
 } from "./session";
 import { initHighlighter } from "./syntax";
@@ -168,6 +176,9 @@ const tui = new Tui({
     { label: "/exit", detail: "Exit the application", kind: "command", insertText: "/exit " },
     { label: "/quit", detail: "Exit the application", kind: "command", insertText: "/quit " },
     { label: "/model", detail: "Show or switch model", kind: "command", insertText: "/model " },
+    { label: "/sessions", detail: "List project sessions", kind: "command", insertText: "/sessions" },
+    { label: "/resume", detail: "Resume a session by id", kind: "command", insertText: "/resume " },
+    { label: "/undo", detail: "Undo the last user turn", kind: "command", insertText: "/undo" },
     { label: "/skills", detail: "List available skills", kind: "command", insertText: "/skills " },
     { label: "/skill:<name>", detail: "Load and run a skill", kind: "command", insertText: "/skill:" },
     { label: "/mcp", detail: "List connected MCP servers and tools", kind: "command", insertText: "/mcp" },
@@ -290,8 +301,54 @@ function updateContextInfo() {
   tui.setCost(accumulatedCost);
 }
 
+function refreshSessionStatsFromSession() {
+  const activePath = getActivePath(activeSession);
+  let lastAssistantEntry;
+
+  for (let i = activePath.length - 1; i >= 0; i -= 1) {
+    const entry = activePath[i];
+    if (entry.type === "assistant") {
+      lastAssistantEntry = entry;
+      break;
+    }
+  }
+
+  lastInputTokens = lastAssistantEntry?.tokensIn ?? 0;
+  lastOutputTokens = lastAssistantEntry?.tokensOut ?? 0;
+  lastCacheReadTokens = lastAssistantEntry?.cacheReadTokens ?? 0;
+  lastCacheCreationTokens = lastAssistantEntry?.cacheCreationTokens ?? 0;
+  accumulatedCost = activeSession.entries.reduce(
+    (sum, entry) => sum + (entry.type === "assistant" ? entry.cost : 0),
+    0,
+  );
+  updateContextInfo();
+}
+
+function clearPendingInputState() {
+  pendingImages = [];
+  clipboardCounter = 0;
+  tui.setImageCount(0);
+}
+
+function activateSession(session: Session) {
+  activeSession = session;
+  currentModelId = MODELS[activeSession.currentModelId] ? activeSession.currentModelId : DEFAULT_MODEL_ID;
+  if (currentModelId !== activeSession.currentModelId) {
+    activeSession = { ...activeSession, currentModelId };
+  }
+
+  tui.setModel(currentModelId);
+  clearPendingInputState();
+  rebuildTuiFromSession();
+  refreshSessionStatsFromSession();
+}
+
 function refreshCwd() {
   tui.setCwd(process.cwd());
+}
+
+function rebuildTuiFromSession() {
+  tui.setBlocks(sessionToRenderBlocks(activeSession));
 }
 
 function formatError(error: unknown) {
@@ -328,22 +385,47 @@ function formatModelList() {
     .join("\n");
 }
 
+function formatSessionList(sessions: SessionListItem[]): string {
+  if (sessions.length === 0) {
+    return `No sessions for ${formatCwd(process.cwd())}.`;
+  }
+
+  const rows = sessions.map((session) => {
+    const marker = session.id === activeSession.id ? " *" : "";
+    return [
+      `\`${session.id}\`${marker}`,
+      formatSessionTimestamp(session.updatedAt),
+      String(session.entryCount),
+      escapeTableCell(session.currentModelId),
+      escapeTableCell(session.title ?? ""),
+    ];
+  });
+
+  return [
+    `Project: ${formatCwd(process.cwd())}`,
+    "",
+    "| Session | Updated | Entries | Model | Title |",
+    "|---|---|---:|---|---|",
+    ...rows.map((row) => `| ${row.join(" | ")} |`),
+    "",
+    "Use `/resume <session-id>` to resume a session. `*` marks the active session.",
+  ].join("\n");
+}
+
+function formatSessionTimestamp(timestamp: string): string {
+  return timestamp.replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+}
+
+function escapeTableCell(value: string): string {
+  return value.replaceAll("|", "\\|").replace(/\s+/g, " ").trim();
+}
+
 async function handleCommand(command: string): Promise<boolean> {
   const [name, ...args] = command.split(/\s+/);
 
   switch (name) {
     case "/new":
-      activeSession = createSession(process.cwd(), currentModelId);
-      lastInputTokens = 0;
-      lastOutputTokens = 0;
-      lastCacheReadTokens = 0;
-      lastCacheCreationTokens = 0;
-      accumulatedCost = 0;
-      pendingImages = [];
-      clipboardCounter = 0;
-      tui.setImageCount(0);
-      tui.clearBlocks();
-      updateContextInfo();
+      activateSession(createSession(process.cwd(), currentModelId));
       return true;
     case "/exit":
     case "/quit": {
@@ -374,6 +456,39 @@ async function handleCommand(command: string): Promise<boolean> {
 
       selectModel(resolved);
       tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModelId}.` });
+      return true;
+    }
+    case "/sessions": {
+      const sessions = await listSessions(process.cwd());
+      tui.addBlock({ role: "assistant", title: "Sessions", content: formatSessionList(sessions) });
+      return true;
+    }
+    case "/resume": {
+      const sessionId = args[0];
+      if (!sessionId) {
+        tui.addBlock({ role: "error", title: "Error", content: "Usage: /resume <session-id>" });
+        return true;
+      }
+
+      const session = await loadSession(createProjectKey(process.cwd()), sessionId);
+      activateSession(session);
+      tui.addBlock({ role: "assistant", title: "Session", content: `Resumed session ${session.id}.` });
+      return true;
+    }
+    case "/undo": {
+      const previousActiveEntryId = activeSession.activeEntryId;
+      const nextSession = undoLastUserTurn(activeSession);
+
+      if (nextSession.activeEntryId === previousActiveEntryId) {
+        tui.addBlock({ role: "assistant", title: "Undo", content: "No user turn to undo." });
+        return true;
+      }
+
+      activeSession = nextSession;
+      await saveSession(activeSession);
+      rebuildTuiFromSession();
+      refreshSessionStatsFromSession();
+      tui.addBlock({ role: "assistant", title: "Undo", content: "Rewound to before the last user message." });
       return true;
     }
     case "/skills": {
@@ -1198,6 +1313,9 @@ const exampleTable = `| Command | Description |
 |---|---|
 | /new | Start a new conversation, clearing all history and context. |
 | /model <model-id> | Switch to a different model. Use without arguments to list available models. |
+| /sessions | List saved sessions for the current project. |
+| /resume <session-id> | Resume a saved session by id. |
+| /undo | Rewind to before the last user message. |
 | /skills | List discovered skills available in the current directory. |
 | /mcp | List connected MCP servers and their tools. |
 | /skill:<name> [args] | Run a discovered skill with optional arguments. Use /skills to see available skills.`;
