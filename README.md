@@ -28,15 +28,14 @@ export FIREWORKS_API_KEY=...           # Kimi via Fireworks
 - Interactive TUI
 - Sessions
 - Undo
-- Tools: bash, web_search, web_fetch, read, write, edit
+- Bash, web search, web fetch, read, write, edit
 - Paste image for vision models
 - MCP
 - Skills
 - AGENTS.md
-- Mouse support
+- Mouse support (scroll, select to copy)
 - Slash commands
 - Tables
-- Scroll
 - Token usage and cost
 
 ## Models
