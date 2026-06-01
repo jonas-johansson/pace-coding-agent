@@ -197,8 +197,8 @@ const tui = new Tui({
     { label: "/exit", detail: "Exit the application", kind: "command", insertText: "/exit " },
     { label: "/quit", detail: "Exit the application", kind: "command", insertText: "/quit " },
     { label: "/model", detail: "Show or switch model", kind: "command", insertText: "/model " },
-    { label: "/models", detail: "Open the model picker (Ctrl+O)", kind: "command", insertText: "/models" },
-    { label: "/sessions", detail: "List project sessions", kind: "command", insertText: "/sessions" },
+    { label: "/models", detail: "Open the model picker (Ctrl+O)", kind: "command", insertText: "/models", executeOnAccept: true },
+    { label: "/sessions", detail: "Open the session picker", kind: "command", insertText: "/sessions", executeOnAccept: true },
     { label: "/resume", detail: "Resume a session by id", kind: "command", insertText: "/resume " },
     { label: "/undo", detail: "Undo the last user turn", kind: "command", insertText: "/undo" },
     { label: "/skills", detail: "List available skills", kind: "command", insertText: "/skills " },
@@ -221,6 +221,11 @@ const tui = new Tui({
     onPick: (id) => selectModel(id),
     onCycleChange: (ids) => {
       cycleModelIds = ids.length > 0 ? ids : AVAILABLE_MODEL_IDS;
+    },
+  },
+  sessionOverlay: {
+    onPick: (id) => {
+      void resumeSessionById(id);
     },
   },
   model: DEFAULT_MODEL_ID,
@@ -386,6 +391,11 @@ function activateSession(session: Session) {
   refreshSessionStatsFromSession();
 }
 
+async function resumeSessionById(sessionId: string) {
+  const session = await loadSession(createProjectKey(process.cwd()), sessionId);
+  activateSession(session);
+}
+
 function refreshCwd() {
   tui.setCwd(process.cwd());
 }
@@ -514,7 +524,14 @@ async function handleCommand(command: string): Promise<boolean> {
     }
     case "/sessions": {
       const sessions = await listSessions(process.cwd());
-      tui.addBlock({ role: "assistant", title: "Sessions", content: formatSessionList(sessions) });
+      tui.openSessionOverlay(sessions.map((session) => ({
+        id: session.id,
+        updatedAt: session.updatedAt,
+        entryCount: session.entryCount,
+        currentModelId: session.currentModelId,
+        title: session.title,
+        isActive: session.id === activeSession.id,
+      })));
       return true;
     }
     case "/resume": {
@@ -524,9 +541,7 @@ async function handleCommand(command: string): Promise<boolean> {
         return true;
       }
 
-      const session = await loadSession(createProjectKey(process.cwd()), sessionId);
-      activateSession(session);
-      tui.addBlock({ role: "assistant", title: "Session", content: `Resumed session ${session.id}.` });
+      await resumeSessionById(sessionId);
       return true;
     }
     case "/undo": {

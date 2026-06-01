@@ -32,6 +32,7 @@ type SuggestionItem = {
   detail: string;
   kind: "command" | "file";
   insertText: string;
+  executeOnAccept?: boolean;
 };
 type SuggestionProvider = () => SuggestionItem[];
 type FileSuggestionProvider = () => Promise<string[]>;
@@ -55,6 +56,22 @@ export type ModelOverlayOptions = {
   onPick: (id: string) => void;
   /** Called whenever the cycle set changes via space toggle. */
   onCycleChange: (ids: string[]) => void;
+};
+
+/** A single session row displayed in the session picker overlay. */
+export type SessionOverlayItem = {
+  id: string;
+  updatedAt: string;
+  entryCount: number;
+  currentModelId: string;
+  title?: string;
+  isActive?: boolean;
+};
+
+/** Callbacks and data wiring for the session picker overlay. */
+export type SessionOverlayOptions = {
+  /** Called on Enter to resume the highlighted session. */
+  onPick: (id: string) => void;
 };
 
 type ModelOverlayEntry = { item: ModelOverlayItem; positions: number[] };
@@ -261,7 +278,13 @@ export class Tui {
   private modelOverlayItems: ModelOverlayItem[] = [];
   private modelOverlaySelected = new Set<string>();
 
-  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; slashCommands?: SuggestionProvider; fileSuggestions?: FileSuggestionProvider; modelOverlay?: ModelOverlayOptions; model?: string; cwd?: string } = {}) {
+  // ── Session picker overlay state ──
+  private sessionOverlayActive = false;
+  private sessionOverlayIndex = 0;
+  private sessionOverlayScroll = 0;
+  private sessionOverlayItems: SessionOverlayItem[] = [];
+
+  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; slashCommands?: SuggestionProvider; fileSuggestions?: FileSuggestionProvider; modelOverlay?: ModelOverlayOptions; sessionOverlay?: SessionOverlayOptions; model?: string; cwd?: string } = {}) {
     this.model = options.model ?? "";
     this.cwd = options.cwd ?? "";
     this.slashItems = options.slashCommands ? options.slashCommands() : [];
@@ -588,6 +611,11 @@ export class Tui {
   private handleData = (data: string) => {
     if (this.modelOverlayActive) {
       this.handleModelOverlayKey(data);
+      return;
+    }
+
+    if (this.sessionOverlayActive) {
+      this.handleSessionOverlayKey(data);
       return;
     }
 
@@ -1303,6 +1331,14 @@ export class Tui {
     }
     const item = matches[this.suggestionIndex];
     if (this.suggestionMode === "slash") {
+      if (item.executeOnAccept) {
+        this.input = item.insertText;
+        this.inputCursor = this.input.length;
+        this.dismissSuggestions();
+        this.submitInput();
+        return;
+      }
+
       this.input = item.insertText;
       this.inputCursor = this.input.length;
     } else {
@@ -1493,6 +1529,98 @@ export class Tui {
       this.options.modelOverlay?.onPick(entry.item.id);
     }
     this.closeModelOverlay();
+  }
+
+  // ── Session picker overlay ─────────────────────────────────────────────────
+
+  openSessionOverlay(items: SessionOverlayItem[]) {
+    if (!this.options.sessionOverlay) {
+      return;
+    }
+    this.sessionOverlayActive = true;
+    this.sessionOverlayItems = items;
+    const activeIndex = this.sessionOverlayItems.findIndex((item) => item.isActive);
+    this.sessionOverlayIndex = activeIndex >= 0 ? activeIndex : 0;
+    this.sessionOverlayScroll = 0;
+    this.sessionOverlayAdjustScroll();
+    this.requestRender();
+  }
+
+  private closeSessionOverlay() {
+    this.sessionOverlayActive = false;
+    // Force a full repaint so the picker is fully cleared.
+    this.previousFrameRows = -1;
+    this.requestRender();
+  }
+
+  private handleSessionOverlayKey(data: string) {
+    switch (data) {
+      case "\u0003": // Ctrl+C
+      case "\x1b": // Esc
+        this.closeSessionOverlay();
+        return;
+      case "\r": // Enter — resume highlighted session
+        this.pickSessionOverlay();
+        return;
+      case "\x1b[A": // Up
+      case "\u0010": // Ctrl+P
+      case "k":
+      case "K":
+      case "\x1bk": // Alt+K (vim-style up)
+        this.moveSessionOverlay(-1);
+        return;
+      case "\x1b[B": // Down
+      case "\u000e": // Ctrl+N
+      case "j":
+      case "J":
+      case "\x1bj": // Alt+J (vim-style down)
+        this.moveSessionOverlay(1);
+        return;
+      case "\x1b[5~": // Page Up
+        this.moveSessionOverlay(-this.sessionOverlayListRows());
+        return;
+      case "\x1b[6~": // Page Down
+        this.moveSessionOverlay(this.sessionOverlayListRows());
+        return;
+    }
+
+    if (data.startsWith("\x1b")) {
+      return;
+    }
+  }
+
+  private sessionOverlayListRows(): number {
+    const rows = Math.max(process.stdout.rows ?? 24, 1);
+    return Math.max(1, rows - OVERLAY_HEADER_ROWS - OVERLAY_FOOTER_ROWS);
+  }
+
+  private sessionOverlayAdjustScroll() {
+    const visible = this.sessionOverlayListRows();
+    if (this.sessionOverlayIndex < this.sessionOverlayScroll) {
+      this.sessionOverlayScroll = this.sessionOverlayIndex;
+    } else if (this.sessionOverlayIndex >= this.sessionOverlayScroll + visible) {
+      this.sessionOverlayScroll = this.sessionOverlayIndex - visible + 1;
+    }
+    if (this.sessionOverlayScroll < 0) {
+      this.sessionOverlayScroll = 0;
+    }
+  }
+
+  private moveSessionOverlay(delta: number) {
+    if (this.sessionOverlayItems.length === 0) {
+      return;
+    }
+    this.sessionOverlayIndex = Math.max(0, Math.min(this.sessionOverlayItems.length - 1, this.sessionOverlayIndex + delta));
+    this.sessionOverlayAdjustScroll();
+    this.requestRender();
+  }
+
+  private pickSessionOverlay() {
+    const item = this.sessionOverlayItems[this.sessionOverlayIndex];
+    if (item) {
+      this.options.sessionOverlay?.onPick(item.id);
+    }
+    this.closeSessionOverlay();
   }
 
   private handleMouse(data: string) {
@@ -1911,6 +2039,12 @@ export class Tui {
       // Cursor sits at the end of the search query on the second row.
       const cursorCol = visibleLength("  Search: ") + Array.from(this.modelOverlayQuery).length + 1;
       this.flushFrame(overlayLines, rows, columns, 2, cursorCol);
+      return;
+    }
+
+    if (this.sessionOverlayActive) {
+      const overlayLines = this.renderSessionOverlay(columns, rows);
+      this.flushFrame(overlayLines, rows, columns, Math.min(rows, this.sessionOverlayIndex - this.sessionOverlayScroll + OVERLAY_HEADER_ROWS + 1), 1);
       return;
     }
 
@@ -2370,6 +2504,78 @@ export class Tui {
     line += `${fg(isCurrent ? 41 : baseFg)}  ${marker} `;
     line += `${fg(isSelected ? 114 : 244)}${checkbox} `;
     line += highlightModelId(item.id, positions, baseFg, 117);
+    line += `${fg(245)}${" ".repeat(gap)}${meta}${" ".repeat(trailing)}`;
+    line += RESET;
+    return line;
+  }
+
+  private renderSessionOverlay(columns: number, rows: number): string[] {
+    const items = this.sessionOverlayItems;
+
+    if (this.sessionOverlayIndex >= items.length) {
+      this.sessionOverlayIndex = Math.max(0, items.length - 1);
+    }
+    const listRows = Math.max(1, rows - OVERLAY_HEADER_ROWS - OVERLAY_FOOTER_ROWS);
+    if (this.sessionOverlayScroll > Math.max(0, items.length - listRows)) {
+      this.sessionOverlayScroll = Math.max(0, items.length - listRows);
+    }
+    this.sessionOverlayAdjustScroll();
+
+    const lines: string[] = [];
+
+    const title = `  Select session  ·  ${items.length} saved`;
+    lines.push(overlayChromeLine(`${BOLD}${fg(252)}${title}`, columns));
+
+    lines.push(overlayLine(`${fg(245)}  Project sessions for ${fg(252)}${this.cwd || "current directory"}`, columns));
+
+    lines.push(`${bg(OVERLAY_BG)}${fg(240)}${"─".repeat(columns)}${RESET}`);
+
+    if (items.length === 0) {
+      lines.push(overlayLine(`${fg(244)}  No sessions found`, columns));
+      for (let i = 1; i < listRows; i++) {
+        lines.push(overlayLine("", columns));
+      }
+    } else {
+      const start = this.sessionOverlayScroll;
+      const end = Math.min(items.length, start + listRows);
+      for (let i = start; i < end; i++) {
+        lines.push(this.renderSessionOverlayRow(items[i], i === this.sessionOverlayIndex, columns));
+      }
+      for (let i = end - start; i < listRows; i++) {
+        lines.push(overlayLine("", columns));
+      }
+    }
+
+    const hint = "  ↑/↓ or J/K move   enter resume   esc close";
+    lines.push(overlayChromeLine(`${fg(245)}${hint}`, columns));
+
+    while (lines.length < rows) {
+      lines.push(overlayLine("", columns));
+    }
+    lines.length = rows;
+    return lines;
+  }
+
+  private renderSessionOverlayRow(item: SessionOverlayItem, isCursor: boolean, columns: number): string {
+    const rowBg = isCursor ? OVERLAY_SEL_BG : OVERLAY_BG;
+    const baseFg = isCursor ? 255 : 250;
+    const marker = item.isActive ? "●" : " ";
+    const shortId = item.id.slice(0, 8);
+    const updated = formatSessionOverlayTimestamp(item.updatedAt);
+    const entries = `${item.entryCount} ${item.entryCount === 1 ? "entry" : "entries"}`;
+    const meta = `${updated}  ${entries}  ${item.currentModelId}`;
+    const title = sanitizeSingleLine(item.title ?? "Untitled session").trim();
+
+    const left = `  ${marker} ${shortId}  `;
+    const minGap = 2;
+    const availableTitleWidth = Math.max(0, columns - displayWidth(left) - displayWidth(meta) - minGap);
+    const clippedTitle = truncateToWidth(title, availableTitleWidth);
+    const gap = Math.max(minGap, columns - displayWidth(left) - displayWidth(clippedTitle) - displayWidth(meta));
+    const trailing = Math.max(0, columns - displayWidth(left) - displayWidth(clippedTitle) - gap - displayWidth(meta));
+
+    let line = `${bg(rowBg)}`;
+    line += `${fg(item.isActive ? 41 : baseFg)}${left}`;
+    line += `${fg(baseFg)}${clippedTitle}`;
     line += `${fg(245)}${" ".repeat(gap)}${meta}${" ".repeat(trailing)}`;
     line += RESET;
     return line;
@@ -3796,6 +4002,10 @@ function highlightModelId(id: string, positions: number[], baseFg: number, match
 /** Format a per-MTok price, dropping trailing decimals for whole numbers. */
 function formatPrice(price: number): string {
   return Number.isInteger(price) ? String(price) : price.toFixed(2);
+}
+
+function formatSessionOverlayTimestamp(timestamp: string): string {
+  return timestamp.replace("T", " ").replace(/\.\d{3}Z$/, "Z");
 }
 
 function plainLine(text: string, columns: number) {
