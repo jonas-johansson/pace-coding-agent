@@ -14,7 +14,7 @@ Undo
 
 Syntax highlighting for markdown code blocks
 
-Come up with a name for this coding agent: boom, wing, cush, cuz, yea, pax, snow, sup
+Come up with a name for this coding agent: boom, wing, cush, cuz, yea, pax, snow, sup, pet
 
 
 

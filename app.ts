@@ -3,7 +3,28 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve, extname } from "path";
 import { Tui } from "./tui";
-import { resetSession } from "./session";
+import { sessionToRenderBlocks } from "./session-view";
+import {
+  appendTurnDraftEntry,
+  commitTurnDraft,
+  createAssistantEntry,
+  createProjectKey,
+  createSession,
+  createToolResultEntry,
+  createTurnDraft,
+  createUserEntry,
+  getActivePath,
+  isTurnDraftEmpty,
+  listSessions,
+  loadSession,
+  saveSession,
+  sessionToProviderMessages,
+  undoLastUserTurn,
+  type ContentBlock as SessionContentBlock,
+  type Session,
+  type SessionListItem,
+  type ThinkingBlock,
+} from "./session";
 import { initHighlighter } from "./syntax";
 import {
   tools,
@@ -24,13 +45,10 @@ import {
 } from "./skill";
 import type {
   Provider,
-  ProviderMessage,
   ProviderStream,
-  ContentBlock,
+  ContentBlock as ProviderContentBlock,
   ToolUseBlock,
   ToolResultContent,
-  UserMessage,
-  AssistantMessage,
   ImageBlock,
 } from "./provider";
 import {
@@ -125,9 +143,21 @@ function getProvider(config: ModelConfig): Provider {
 // ── Model state ──────────────────────────────────────────────────────────────
 
 let currentModelId: string = DEFAULT_MODEL_ID;
+let activeSession = createSession(process.cwd(), currentModelId);
 
 function currentModelConfig(): ModelConfig {
   return MODELS[currentModelId];
+}
+
+function selectModel(modelId: string) {
+  currentModelId = modelId;
+  activeSession = {
+    ...activeSession,
+    currentModelId,
+    updatedAt: new Date().toISOString(),
+  };
+  tui.setModel(currentModelId);
+  updateContextInfo();
 }
 
 function cancelPrompt() {
@@ -146,6 +176,9 @@ const tui = new Tui({
     { label: "/exit", detail: "Exit the application", kind: "command", insertText: "/exit " },
     { label: "/quit", detail: "Exit the application", kind: "command", insertText: "/quit " },
     { label: "/model", detail: "Show or switch model", kind: "command", insertText: "/model " },
+    { label: "/sessions", detail: "List project sessions", kind: "command", insertText: "/sessions" },
+    { label: "/resume", detail: "Resume a session by id", kind: "command", insertText: "/resume " },
+    { label: "/undo", detail: "Undo the last user turn", kind: "command", insertText: "/undo" },
     { label: "/skills", detail: "List available skills", kind: "command", insertText: "/skills " },
     { label: "/skill:<name>", detail: "Load and run a skill", kind: "command", insertText: "/skill:" },
     { label: "/mcp", detail: "List connected MCP servers and tools", kind: "command", insertText: "/mcp" },
@@ -162,10 +195,6 @@ let lastOutputTokens = 0;
 let lastCacheReadTokens = 0;
 let lastCacheCreationTokens = 0;
 let accumulatedCost = 0;
-
-// ── Conversation state (provider-agnostic) ───────────────────────────────────
-
-const messages: ProviderMessage[] = [];
 
 // ── Image attachment state ───────────────────────────────────────────────────
 
@@ -218,7 +247,7 @@ function expandHomePath(p: string): string {
 /** Estimate total base64 image payload already present in the conversation. */
 function estimateExistingImagePayload(): number {
   let total = 0;
-  for (const msg of messages) {
+  for (const msg of sessionToProviderMessages(activeSession)) {
     if (msg.role === "user") {
       for (const block of msg.content) {
         if (block.type === "image") {
@@ -272,8 +301,54 @@ function updateContextInfo() {
   tui.setCost(accumulatedCost);
 }
 
+function refreshSessionStatsFromSession() {
+  const activePath = getActivePath(activeSession);
+  let lastAssistantEntry;
+
+  for (let i = activePath.length - 1; i >= 0; i -= 1) {
+    const entry = activePath[i];
+    if (entry.type === "assistant") {
+      lastAssistantEntry = entry;
+      break;
+    }
+  }
+
+  lastInputTokens = lastAssistantEntry?.tokensIn ?? 0;
+  lastOutputTokens = lastAssistantEntry?.tokensOut ?? 0;
+  lastCacheReadTokens = lastAssistantEntry?.cacheReadTokens ?? 0;
+  lastCacheCreationTokens = lastAssistantEntry?.cacheCreationTokens ?? 0;
+  accumulatedCost = activeSession.entries.reduce(
+    (sum, entry) => sum + (entry.type === "assistant" ? entry.cost : 0),
+    0,
+  );
+  updateContextInfo();
+}
+
+function clearPendingInputState() {
+  pendingImages = [];
+  clipboardCounter = 0;
+  tui.setImageCount(0);
+}
+
+function activateSession(session: Session) {
+  activeSession = session;
+  currentModelId = MODELS[activeSession.currentModelId] ? activeSession.currentModelId : DEFAULT_MODEL_ID;
+  if (currentModelId !== activeSession.currentModelId) {
+    activeSession = { ...activeSession, currentModelId };
+  }
+
+  tui.setModel(currentModelId);
+  clearPendingInputState();
+  rebuildTuiFromSession();
+  refreshSessionStatsFromSession();
+}
+
 function refreshCwd() {
   tui.setCwd(process.cwd());
+}
+
+function rebuildTuiFromSession() {
+  tui.setBlocks(sessionToRenderBlocks(activeSession));
 }
 
 function formatError(error: unknown) {
@@ -284,18 +359,14 @@ function cycleModel() {
   const ids = AVAILABLE_MODEL_IDS;
   const currentIndex = ids.indexOf(currentModelId);
   const nextIndex = (currentIndex + 1) % ids.length;
-  currentModelId = ids[nextIndex];
-  tui.setModel(currentModelId);
-  updateContextInfo();
+  selectModel(ids[nextIndex]);
 }
 
 function cycleModelReverse() {
   const ids = AVAILABLE_MODEL_IDS;
   const currentIndex = ids.indexOf(currentModelId);
   const prevIndex = (currentIndex - 1 + ids.length) % ids.length;
-  currentModelId = ids[prevIndex];
-  tui.setModel(currentModelId);
-  updateContextInfo();
+  selectModel(ids[prevIndex]);
 }
 
 function formatModelList() {
@@ -314,23 +385,47 @@ function formatModelList() {
     .join("\n");
 }
 
+function formatSessionList(sessions: SessionListItem[]): string {
+  if (sessions.length === 0) {
+    return `No sessions for ${formatCwd(process.cwd())}.`;
+  }
+
+  const rows = sessions.map((session) => {
+    const marker = session.id === activeSession.id ? " *" : "";
+    return [
+      `\`${session.id}\`${marker}`,
+      formatSessionTimestamp(session.updatedAt),
+      String(session.entryCount),
+      escapeTableCell(session.currentModelId),
+      escapeTableCell(session.title ?? ""),
+    ];
+  });
+
+  return [
+    `Project: ${formatCwd(process.cwd())}`,
+    "",
+    "| Session | Updated | Entries | Model | Title |",
+    "|---|---|---:|---|---|",
+    ...rows.map((row) => `| ${row.join(" | ")} |`),
+    "",
+    "Use `/resume <session-id>` to resume a session. `*` marks the active session.",
+  ].join("\n");
+}
+
+function formatSessionTimestamp(timestamp: string): string {
+  return timestamp.replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+}
+
+function escapeTableCell(value: string): string {
+  return value.replaceAll("|", "\\|").replace(/\s+/g, " ").trim();
+}
+
 async function handleCommand(command: string): Promise<boolean> {
   const [name, ...args] = command.split(/\s+/);
 
   switch (name) {
     case "/new":
-      messages.length = 0;
-      lastInputTokens = 0;
-      lastOutputTokens = 0;
-      lastCacheReadTokens = 0;
-      lastCacheCreationTokens = 0;
-      accumulatedCost = 0;
-      pendingImages = [];
-      clipboardCounter = 0;
-      resetSession();
-      tui.setImageCount(0);
-      tui.clearBlocks();
-      updateContextInfo();
+      activateSession(createSession(process.cwd(), currentModelId));
       return true;
     case "/exit":
     case "/quit": {
@@ -359,10 +454,41 @@ async function handleCommand(command: string): Promise<boolean> {
         return true;
       }
 
-      currentModelId = resolved;
-      tui.setModel(currentModelId);
-      updateContextInfo();
+      selectModel(resolved);
       tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModelId}.` });
+      return true;
+    }
+    case "/sessions": {
+      const sessions = await listSessions(process.cwd());
+      tui.addBlock({ role: "assistant", title: "Sessions", content: formatSessionList(sessions) });
+      return true;
+    }
+    case "/resume": {
+      const sessionId = args[0];
+      if (!sessionId) {
+        tui.addBlock({ role: "error", title: "Error", content: "Usage: /resume <session-id>" });
+        return true;
+      }
+
+      const session = await loadSession(createProjectKey(process.cwd()), sessionId);
+      activateSession(session);
+      tui.addBlock({ role: "assistant", title: "Session", content: `Resumed session ${session.id}.` });
+      return true;
+    }
+    case "/undo": {
+      const previousActiveEntryId = activeSession.activeEntryId;
+      const nextSession = undoLastUserTurn(activeSession);
+
+      if (nextSession.activeEntryId === previousActiveEntryId) {
+        tui.addBlock({ role: "assistant", title: "Undo", content: "No user turn to undo." });
+        return true;
+      }
+
+      activeSession = nextSession;
+      await saveSession(activeSession);
+      rebuildTuiFromSession();
+      refreshSessionStatsFromSession();
+      tui.addBlock({ role: "assistant", title: "Undo", content: "Rewound to before the last user message." });
       return true;
     }
     case "/skills": {
@@ -643,7 +769,7 @@ function ensureToolBlock(
   return id;
 }
 
-function isToolUseBlock(block: ContentBlock): block is ToolUseBlock {
+function isToolUseBlock(block: ProviderContentBlock): block is ToolUseBlock {
   return block.type === "tool_use";
 }
 
@@ -729,7 +855,7 @@ async function executeToolUseBatch(
   toolUseBlocks: ToolUseBlock[],
   toolBlocks: Map<string, number>,
   signal: AbortSignal,
-  onComplete: (toolUseId: string) => void,
+  onComplete: (toolUseId: string, result: ToolResultContent) => void,
 ): Promise<ToolResultContent[]> {
   const hasExclusiveTool = toolUseBlocks.some((contentBlock) => {
     const toolToExecute = tools.find((tool) => tool.name === contentBlock.name);
@@ -738,7 +864,7 @@ async function executeToolUseBatch(
 
   const runOne = async (contentBlock: ToolUseBlock): Promise<ToolResultContent> => {
     const result = await executeToolUseBlock(contentBlock, toolBlocks, signal);
-    onComplete(contentBlock.id);
+    onComplete(contentBlock.id, result);
     return result;
   };
 
@@ -864,14 +990,24 @@ async function prompt(
   contentBlocks?: (ImageBlock | { type: "text"; text: string })[],
 ) {
   tui.addBlock({ role: "user", content: displayText });
+  const turnDraft = createTurnDraft(activeSession);
+  let turnDraftCommitted = false;
 
-  const userMsg: UserMessage = {
-    role: "user",
+  const commitAndSaveTurnDraft = async () => {
+    if (turnDraftCommitted) {
+      return;
+    }
+
+    activeSession = commitTurnDraft(activeSession, turnDraft);
+    turnDraftCommitted = true;
+    await saveSession(activeSession);
+  };
+
+  appendTurnDraftEntry(turnDraft, createUserEntry({
     content: contentBlocks && contentBlocks.length > 0
       ? contentBlocks
       : [{ type: "text", text: displayText }],
-  };
-  messages.push(userMsg);
+  }));
 
   const abortController = new AbortController();
   currentAbortController = abortController;
@@ -880,7 +1016,18 @@ async function prompt(
   let assistantMessagePushed = false;
   let anyAssistantMessagePushed = false;
   let pendingToolUseIds: string[] = [];
+  let currentToolUseOrder: string[] = [];
+  let completedToolResults = new Map<string, ToolResultContent>();
+  let acceptToolResults = true;
   let currentToolBlocks = new Map<string, number>();
+
+  const appendToolResultToDraft = (toolResult: ToolResultContent) => {
+    appendTurnDraftEntry(turnDraft, createToolResultEntry({
+      toolUseId: toolResult.tool_use_id,
+      content: toolResult.content,
+      ...(toolResult.is_error && { isError: true }),
+    }));
+  };
 
   const [agentsFileContents, skills] = await Promise.all([
     loadAgentsFile(),
@@ -925,7 +1072,7 @@ async function prompt(
       const stream: ProviderStream = await provider.stream({
         model: modelConfig.id,
         system: systemText,
-        messages,
+        messages: sessionToProviderMessages(activeSession, turnDraft),
         tools: toolDefs,
         maxTokens: modelConfig.maxOutputTokens,
         signal,
@@ -935,9 +1082,14 @@ async function prompt(
       let accText = "";
       let currentReasoningBlockId: number | undefined;
       let accReasoning = "";
+      const reasoningBlocks: ThinkingBlock[] = [];
       const finishReasoningBlock = () => {
         if (currentReasoningBlockId === undefined) {
           return;
+        }
+
+        if (accReasoning) {
+          reasoningBlocks.push({ type: "thinking", thinking: accReasoning });
         }
 
         tui.updateBlock(currentReasoningBlockId, {
@@ -1044,6 +1196,8 @@ async function prompt(
         }
       }
 
+      finishReasoningBlock();
+
       const response = await stream.finalMessage();
 
       // Update usage tracking
@@ -1052,7 +1206,7 @@ async function prompt(
       lastInputTokens = response.usage.inputTokens;
       lastOutputTokens = response.usage.outputTokens;
 
-      accumulatedCost += computeCallCost(
+      const callCost = computeCallCost(
         modelConfig,
         // For cost: use inputTokens minus cache tokens for the base input cost
         response.usage.inputTokens - response.usage.cacheCreationTokens - response.usage.cacheReadTokens,
@@ -1060,18 +1214,22 @@ async function prompt(
         response.usage.cacheReadTokens,
         response.usage.outputTokens,
       );
+      accumulatedCost += callCost;
 
       updateContextInfo();
 
-      // Push assistant message to conversation
-      const assistantMsg: AssistantMessage = {
-        role: "assistant",
-        content: response.content,
-        ...(response.providerMetadata !== undefined && {
-          providerMetadata: response.providerMetadata,
-        }),
-      };
-      messages.push(assistantMsg);
+      const assistantContent: SessionContentBlock[] = [...reasoningBlocks, ...response.content];
+      appendTurnDraftEntry(turnDraft, createAssistantEntry({
+        content: assistantContent,
+        provider: modelConfig.provider,
+        modelId: modelConfig.id,
+        tokensIn: response.usage.inputTokens,
+        tokensOut: response.usage.outputTokens,
+        cacheReadTokens: response.usage.cacheReadTokens,
+        cacheCreationTokens: response.usage.cacheCreationTokens,
+        cost: callCost,
+        ...(response.providerMetadata !== undefined && { providerMetadata: response.providerMetadata }),
+      }));
       assistantMessagePushed = true;
       anyAssistantMessagePushed = true;
 
@@ -1080,22 +1238,27 @@ async function prompt(
       // together, even when execution happens in parallel.
       const toolUseBlocks = response.content.filter(isToolUseBlock);
       pendingToolUseIds = toolUseBlocks.map((block) => block.id);
+      currentToolUseOrder = pendingToolUseIds;
+      completedToolResults = new Map<string, ToolResultContent>();
+      acceptToolResults = true;
 
       if (toolUseBlocks.length > 0) {
         const toolResults = await executeToolUseBatch(
           toolUseBlocks,
           toolBlocks,
           signal,
-          (toolUseId) => {
+          (toolUseId, toolResult) => {
+            if (!acceptToolResults) return;
+            completedToolResults.set(toolUseId, toolResult);
             pendingToolUseIds = pendingToolUseIds.filter((id) => id !== toolUseId);
           },
         );
 
-        const toolResultMsg: UserMessage = {
-          role: "user",
-          content: toolResults,
-        };
-        messages.push(toolResultMsg);
+        for (const toolResult of toolResults) {
+          appendToolResultToDraft(toolResult);
+        }
+        currentToolUseOrder = [];
+        completedToolResults = new Map<string, ToolResultContent>();
       }
 
       if (response.stopReason === "tool_use") {
@@ -1106,8 +1269,11 @@ async function prompt(
 
       break;
     }
+
+    await commitAndSaveTurnDraft();
   } catch (error: unknown) {
     if (isAbortError(error)) {
+      acceptToolResults = false;
       // Mark any in-progress tool blocks as cancelled
       for (const [toolUseId, blockId] of currentToolBlocks) {
         if (pendingToolUseIds.includes(toolUseId)) {
@@ -1116,13 +1282,15 @@ async function prompt(
       }
 
       if (assistantMessagePushed && pendingToolUseIds.length > 0) {
-        const toolResultMsg: UserMessage = {
-          role: "user",
-          content: pendingToolUseIds.map((toolUseId) => makeToolErrorResult(toolUseId, "Cancelled by user")),
-        };
-        messages.push(toolResultMsg);
-      } else if (!anyAssistantMessagePushed) {
-        messages.pop();
+        for (const toolUseId of currentToolUseOrder) {
+          const toolResult = completedToolResults.get(toolUseId)
+            ?? makeToolErrorResult(toolUseId, "Cancelled by user");
+          appendToolResultToDraft(toolResult);
+        }
+      }
+
+      if (anyAssistantMessagePushed && !isTurnDraftEmpty(turnDraft)) {
+        await commitAndSaveTurnDraft();
       }
 
       tui.addBlock({
@@ -1131,6 +1299,9 @@ async function prompt(
         content: "Prompt execution cancelled.",
       });
       return;
+    }
+    if (!turnDraftCommitted && !isTurnDraftEmpty(turnDraft)) {
+      await commitAndSaveTurnDraft();
     }
     throw error;
   } finally {
@@ -1142,6 +1313,9 @@ const exampleTable = `| Command | Description |
 |---|---|
 | /new | Start a new conversation, clearing all history and context. |
 | /model <model-id> | Switch to a different model. Use without arguments to list available models. |
+| /sessions | List saved sessions for the current project. |
+| /resume <session-id> | Resume a saved session by id. |
+| /undo | Rewind to before the last user message. |
 | /skills | List discovered skills available in the current directory. |
 | /mcp | List connected MCP servers and their tools. |
 | /skill:<name> [args] | Run a discovered skill with optional arguments. Use /skills to see available skills.`;

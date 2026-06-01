@@ -26,7 +26,8 @@ development. The session schema carries a `version` field anyway so we can detec
 - Session data is provider-agnostic, but carries opaque provider metadata (e.g. Claude
   thinking signatures, OpenAI reasoning items).
 - Session entries are conceptually immutable and form an append-only timeline. While
-  streaming we have partial data, so there is a single mutable draft entry (see below).
+  streaming we have partial data, so there is a mutable turn draft/buffer (see below) that
+  is frozen into immutable entries at turn end.
 - Observability: a user can browse session data after the fact.
 
 ## Data shape
@@ -84,10 +85,11 @@ type SessionEntry = UserEntry | AssistantEntry | ToolResultEntry;
 type Session = {
   version: number;               // schema version, starts at 1
   id: string;                    // uuid
-  projectKey: string;            // sanitized cwd; storage bucket
+  projectKey: string;            // deterministic filesystem-safe cwd key; storage bucket
   cwd: string;                   // original cwd, for display
   createdAt: string;             // ISO 8601
   updatedAt: string;             // ISO 8601
+  currentModelId: string;         // selected model to restore on resume
   title?: string;
   activeEntryId: string | null;  // null for a fresh, empty session
   entries: SessionEntry[];
@@ -98,10 +100,12 @@ type Session = {
 
 - Layout: `~/.agento/sessions/<projectKey>/<sessionId>.json` (reuses the existing
   `~/.agento` root already used for tool-outputs).
-- One JSON file per session, rewritten in full at each turn end.
+- One JSON file per session, rewritten in full at each turn end using temp-file + rename so
+  crashes do not leave a partially written session file.
 - Listing: scan the project directory and read each session's metadata (id / title /
-  updatedAt). No separate index file to keep in sync.
-- The in-memory draft entry is never written to disk until it is frozen at turn end.
+  updatedAt). No separate index file to keep in sync. Corrupt/unreadable session files are
+  reported or skipped without crashing the listing.
+- The in-memory turn draft/buffer is never written to disk until it is frozen at turn end.
 
 ## LLM context generation
 
@@ -130,23 +134,32 @@ such as file modifications.
 
 ## Streaming model
 
-A single in-memory **draft entry** represents the in-flight assistant turn. Streaming
-`StreamEvent`s (`provider.ts`) mutate the draft (accumulating text, thinking, partial
-tool-use input). The UI reads the draft live. When the turn ends (`finalMessage()`), the
-draft is frozen into an immutable `SessionEntry` and the session is persisted. The draft is
-the single sanctioned place for mutation, which keeps "entries are immutable" honest while
-still supporting live streaming.
+A single user prompt can produce multiple persisted entries before the turn is complete:
+`UserEntry -> AssistantEntry(tool_use) -> ToolResultEntry(s) -> AssistantEntry -> ...`.
+So the mutable in-flight state is a **turn draft/buffer**, not just one assistant draft
+entry.
+
+Streaming `StreamEvent`s (`provider.ts`) mutate the current assistant draft within that
+turn buffer (accumulating text, thinking, partial tool-use input). Tool execution appends
+tool-result drafts to the same buffer. The UI reads the buffer live. When the full turn ends
+with no further tool-use continuation, the buffer is frozen into immutable `SessionEntry`s
+and the session is persisted. The turn buffer is the single sanctioned place for mutation,
+which keeps "entries are immutable" honest while still supporting live streaming.
 
 ---
 
 ## Key decisions
 
 ### Project identity = exact cwd
-Key sessions by `process.cwd()` (sanitized, `/` -> `-`) as `projectKey`. **No git
-detection.** There is zero git code in the repo today, so this avoids a whole subsystem.
-Tradeoff: opening from a subdirectory of a repo produces a separate session bucket. Git
-root detection can be layered in later without changing the storage shape (it only changes
-how `projectKey` is computed).
+Key sessions by the exact `process.cwd()` value. **No git detection.** There is zero git
+code in the repo today, so this avoids a whole subsystem. Tradeoff: opening from a
+subdirectory of a repo produces a separate session bucket. Git root detection can be
+layered in later without changing the storage shape (it only changes how `projectKey` is
+computed).
+
+`projectKey` is a deterministic filesystem-safe encoding of the cwd, not a raw
+slash-replacement. A hash or base64url-style encoding avoids path separator issues,
+collisions such as `/a-b` vs `/a/b`, and overly long directory names.
 
 ### Flat discriminated unions, not class inheritance
 The original draft used pseudo-inheritance (`Message : SessionEntry`). The implementation
@@ -158,6 +171,13 @@ Each tool result is its own `ToolResultEntry` with `id` / `parentId` / `timestam
 the tree model. Cost: context generation must re-group consecutive results into one
 provider user message (see above). The current code folds results into a `UserMessage`;
 this is a deliberate divergence in the persisted model.
+
+Because active history is reconstructed by walking `activeEntryId -> parentId`, multiple
+tool results from the same assistant turn must still be linked into one linear active path.
+When a batch yields multiple `ToolResultEntry`s, chain them in execution/result order:
+first result parent = assistant entry, second result parent = first result, etc. The next
+assistant continuation points at the final tool-result entry. Otherwise only the last tool
+result would be reachable from the active leaf.
 
 ### Thinking / reasoning: providerMetadata is the source of truth
 `providerMetadata` (opaque, per assistant entry) is what gets replayed to the provider for
@@ -174,10 +194,19 @@ Store raw `tokensIn` / `tokensOut` / cache token counts (source of truth). `cost
 from model pricing (`MODELS` in `provider.ts`), which can change over time, so it is stored
 as a snapshot, not authoritative.
 
+After undo, context-token display should derive from the active path. Cost display should
+remain actual spend across all session entries, including entries on undone branches,
+because undo does not undo API calls.
+
+### Selected model is session state
+Each `AssistantEntry` stores the model that produced that response, but the currently
+selected model is also session state. Persist `Session.currentModelId` so resume restores
+the model the user had selected, even before the next assistant entry exists.
+
 ### Persist after turn end, one JSON file per session
 Simple and matches the "persist after a turn ends" requirement. Full-file rewrite at turn
-end (not an append log). Listing scans the directory rather than maintaining an index, to
-avoid a sync point that can drift.
+end (not an append log), written atomically with temp-file + rename. Listing scans the
+directory rather than maintaining an index, to avoid a sync point that can drift.
 
 ### Session schema carries a version field
 `version` starts at 1. No backwards-compat handling yet, but the field lets us detect and
@@ -211,6 +240,106 @@ undo, `/new`, and session switching. Tool display reconstruction combines a `Too
 with the matching `ToolResultEntry.toolUseId`: the tool-use block creates the title, the
 tool-result entry supplies content and done/error state. A missing result means "running"
 only for the live draft; resumed persisted history should not invent running state.
+
+---
+
+## Implementation plan
+
+Work in small slices and keep each slice type-checking independently with `npm run lint`.
+Commit each slice before moving to the next one.
+
+### Phase 1. Session core model — done
+- Replace the old session-id-only helper with typed session primitives in `session.ts`.
+- Define `Session`, `SessionEntry`, `UserEntry`, `AssistantEntry`, and `ToolResultEntry`.
+- Add `createSession(cwd, currentModelId)` and deterministic `projectKey` generation.
+- Add `getActivePath(session)` with missing-entry and cycle checks.
+- Add `appendEntries(session, entries)` that linearly chains parents from the current
+  `activeEntryId`.
+- Add `undoLastUserTurn(session)`.
+- Add `sessionToProviderMessages(session)` and `entriesToProviderMessages(entries)`, including
+  the consecutive `ToolResultEntry` collapse into one provider `UserMessage`.
+
+### Phase 2. Turn draft/buffer — done
+- Add `TurnDraft` as the mutable in-flight turn buffer.
+- Add entry constructors for user, assistant, and tool-result entries.
+- Add `createTurnDraft`, `appendTurnDraftEntry`, `isTurnDraftEmpty`, and `commitTurnDraft`.
+- Extend provider-message generation so it can include an uncommitted `TurnDraft` during
+  tool-use continuations.
+- Guard `commitTurnDraft` and draft context generation so a draft cannot be committed if the
+  session's active leaf changed underneath it.
+
+### Phase 3. Stabilize provider stop reasons — deferred
+- Keep the current provider abstraction simple for now: `stopReason` remains only `end_turn` or
+  `tool_use`.
+- Revisit abnormal stop handling later with a smaller design that does not clutter provider and
+  TUI code.
+
+### Phase 4. Wire app state to in-memory Session — done
+- Make `activeSession` the in-memory source of truth instead of `messages: ProviderMessage[]`.
+- On user prompt, create a `TurnDraft` and append the `UserEntry` immediately to the draft.
+- Before each provider call, generate messages from `sessionToProviderMessages(activeSession,
+  turnDraft)`.
+- Append every assistant response, display-only reasoning block, and tool result to the same
+  `TurnDraft`.
+- If a tool batch is cancelled after some tools completed, retain completed tool results and add
+  cancellation tool-result entries for the remaining tool uses before committing the draft.
+- Commit the draft into `activeSession` only after the full user turn ends.
+- On `/new`, create a new session and clear TUI/runtime state.
+- On model changes, update `Session.currentModelId`.
+- Preserve the existing `getSessionId`/`setCurrentSessionId` path so large tool-output files
+  continue to live under the active session id.
+
+### Phase 5. Storage layer — done
+- Add `saveSession(session)`, `loadSession(projectKey, sessionId)`, and `listSessions(cwd)`.
+- Store files under `~/.agento/sessions/<projectKey>/<sessionId>.json`.
+- Write atomically with temp-file + rename.
+- Validate `version`; for now reject/ignore unknown versions rather than migrating.
+- Listing should scan the project directory and read metadata from each session file.
+- Listing should skip or report corrupt/unreadable files without crashing.
+- After creating or resuming a session, call `setCurrentSessionId(session.id)` so future large
+  tool outputs go into the matching `~/.agento/tool-outputs/<sessionId>` directory.
+
+### Phase 6. Persist turn-end changes — done
+- Save a fresh session when it is created if we want empty sessions to appear in listings;
+  otherwise save only after the first committed turn.
+- Persist after every successful `commitTurnDraft`.
+- Do not persist immediately after `/model`; save `currentModelId` on the next turn-end persist.
+- Persist after `/undo` when Phase 8 adds the command because it changes `activeEntryId`.
+- Do not persist the mutable draft while streaming.
+- Define exit behavior while a prompt is running: current recommendation is cancel first, then
+  commit a coherent cancellation/tool-error state only if an assistant/tool-use entry already
+  exists.
+
+### Phase 7. TUI projection and resume — done
+- Add an `entries -> RenderBlock[]` builder for the active path.
+- Rebuild the TUI from session entries on startup/resume, `/undo`, `/new`, and session switch.
+- Reconstruct tool display by pairing assistant `ToolUseBlock`s with matching
+  `ToolResultEntry.toolUseId`s.
+- Derive default collapsed state for old reasoning/tool blocks, then apply in-memory user
+  collapse overrides keyed by stable display keys.
+- Keep live streaming imperative for now; the builder is the resume/switch/undo path.
+
+### Phase 8. User-facing commands — done
+- Add `/sessions` to list sessions for the current project bucket.
+- Add `/resume <session-id>` to load an existing session and rebuild the TUI.
+- Add `/undo` to call `undoLastUserTurn`, persist, and rebuild the TUI.
+- Decide whether to add aliases such as `/session` or CLI flags later; keep the first version
+  slash-command-only unless there is a concrete need.
+
+### Phase 9. Optional local/session event entries
+- Decide whether UI-only blocks such as `/model` confirmations, `/skills`, `/mcp`, direct
+  `!bash`, startup MCP errors, cancellation notices, and provider-stop warnings should resume
+  visually.
+- If yes, add a local/event entry type instead of forcing those blocks into assistant/user
+  entries.
+- If no, document that these are transient TUI blocks and not part of persisted conversation
+  history.
+
+### Phase 10. Observability tooling
+- Ensure persisted JSON is readable enough to inspect manually.
+- Consider a future `/session-data` or CLI helper that prints the active session file path.
+- Keep provider metadata opaque in the schema; do not try to normalize reasoning signatures or
+  raw output items beyond storing them on `providerMetadata`.
 
 ---
 

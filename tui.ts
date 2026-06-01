@@ -4,6 +4,7 @@ export type BlockState = "running" | "done" | "error";
 
 export type RenderBlock = {
   id: number;
+  key?: string;
   role: BlockRole;
   title?: string;
   content: string;
@@ -202,6 +203,7 @@ export class Tui {
   private imageCount = 0;
   private focused = true;
   private exitConfirmPresses = 0;
+  private collapseOverrides = new Map<string, boolean>();
 
   // ── Suggestion popup state ──
   private slashItems: SuggestionItem[] = [];
@@ -264,13 +266,23 @@ export class Tui {
 
   addBlock(block: Omit<RenderBlock, "id">) {
     const id = this.nextBlockId++;
-    this.blocks.push({
-      id,
-      ...block,
-      collapsed: block.collapsed ?? (block.role === "tool" || block.role === "reasoning" ? true : undefined),
-    });
+    this.blocks.push(this.createRenderBlock(id, block));
     this.requestRender();
     return id;
+  }
+
+  setBlocks(blocks: Array<Omit<RenderBlock, "id">>) {
+    this.nextBlockId = 1;
+    this.blocks = blocks.map((block) => this.createRenderBlock(this.nextBlockId++, block));
+    this.scrollOffset = 0;
+    this.lastRenderedLineCount = 0;
+    this.selection = undefined;
+    this.selecting = false;
+    this.selectionMoved = false;
+    this.blockRenderCache.clear();
+    this.previousFrameLines = [];
+    this.previousRawLines = [];
+    this.requestRender();
   }
 
   updateBlock(id: number, patch: string | BlockPatch) {
@@ -372,7 +384,26 @@ export class Tui {
       return;
     }
     block.collapsed = !block.collapsed;
+    if (block.key) {
+      this.collapseOverrides.set(block.key, block.collapsed);
+    }
     this.requestRender();
+  }
+
+  private createRenderBlock(id: number, block: Omit<RenderBlock, "id">): RenderBlock {
+    return {
+      id,
+      ...block,
+      collapsed: this.resolveCollapsed(block),
+    };
+  }
+
+  private resolveCollapsed(block: Omit<RenderBlock, "id">): boolean | undefined {
+    if (block.key && this.collapseOverrides.has(block.key)) {
+      return this.collapseOverrides.get(block.key);
+    }
+
+    return block.collapsed ?? (block.role === "tool" || block.role === "reasoning" ? true : undefined);
   }
 
   private handleBlockClick(position: ScreenPosition | undefined) {
@@ -515,6 +546,11 @@ export class Tui {
       if (this.input) {
         this.exitConfirmPresses = 0;
         this.clearInput();
+        this.requestRender();
+      } else if (this.running) {
+        this.exitConfirmPresses = 0;
+        this.options.onEscape?.();
+        this.status = "Cancelling prompt before exit";
         this.requestRender();
       } else if (this.exitConfirmPresses === 0) {
         this.exitConfirmPresses = 1;
