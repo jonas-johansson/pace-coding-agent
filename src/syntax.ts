@@ -78,6 +78,8 @@ const SHIKI_LANGS = [
   "sql",
   "rust",
   "go",
+  "c",
+  "cpp",
   "yaml",
   "toml",
   "dockerfile",
@@ -103,11 +105,27 @@ const shikiLangAlias: Record<string, ShikiLang> = {
   sh: "bash",
   zsh: "bash",
   fish: "bash",
+  shellsession: "bash",
+  "shell-session": "bash",
+  console: "bash",
   // YAML
   yml: "yaml",
   // JSON variants
   jsonc: "json",
   json5: "json",
+  // Rust / Go
+  rs: "rust",
+  golang: "go",
+  // C / C++
+  h: "c",
+  cc: "cpp",
+  cxx: "cpp",
+  cplusplus: "cpp",
+  "c++": "cpp",
+  hpp: "cpp",
+  hxx: "cpp",
+  // Docker
+  docker: "dockerfile",
 };
 
 function resolveShikiLang(lang: string): string {
@@ -429,6 +447,86 @@ const tomlRules: TokenRule[] = [
   { pattern: /[{}()[\],.=]/g, style: "sh-punctuation" },
 ];
 
+// Rust
+const RUST_KEYWORDS =
+  "\\b(?:as|async|await|box|break|const|continue|crate|dyn|else|enum|extern|false|fn|for|if|impl|in|let|loop|match|mod|move|mut|pub|ref|return|self|Self|static|struct|super|trait|true|type|unsafe|use|where|while)\\b";
+
+const RUST_TYPES = "\\b(?:bool|char|f32|f64|i8|i16|i32|i64|i128|isize|str|String|u8|u16|u32|u64|u128|usize|Vec|Option|Result)\\b";
+
+const rustRules: TokenRule[] = [
+  { pattern: /\/\/.*|\/\*[\s\S]*?\*\//g, style: "sh-comment" },
+  { pattern: /b?"(?:[^"\\]|\\.)*"|b?'(?:[^'\\]|\\.)*'/g, style: "sh-string" },
+  { pattern: /#\!?\[[^\]]*\]/g, style: "sh-keyword" },
+  { pattern: new RegExp(RUST_KEYWORDS, "g"), style: "sh-keyword" },
+  { pattern: new RegExp(RUST_TYPES, "g"), style: "sh-type" },
+  { pattern: /\b[A-Za-z_][A-Za-z0-9_]*(?=::)|\b[A-Z][A-Za-z0-9_]*\b/g, style: "sh-type" },
+  { pattern: /\b[a-z_][A-Za-z0-9_]*(?=\s*\()/g, style: "sh-function" },
+  { pattern: /\b0x[\da-fA-F_]+\b|\b\d[\d_]*(?:\.\d[\d_]*)?(?:[iu](?:8|16|32|64|128|size)|f(?:32|64))?\b/g, style: "sh-number" },
+  { pattern: /(?:=>|->|::|==|!=|<=|>=|&&|\|\||[+\-*/%&|^~!=<>?])/g, style: "sh-operator" },
+  { pattern: /[{}()[\],.;:]/g, style: "sh-punctuation" },
+];
+
+// Go
+const GO_KEYWORDS =
+  "\\b(?:break|case|chan|const|continue|default|defer|else|fallthrough|for|func|go|goto|if|import|interface|map|package|range|return|select|struct|switch|type|var)\\b";
+
+const GO_TYPES = "\\b(?:any|bool|byte|complex64|complex128|error|float32|float64|int|int8|int16|int32|int64|rune|string|uint|uint8|uint16|uint32|uint64|uintptr)\\b";
+
+const goRules: TokenRule[] = [
+  { pattern: /\/\/.*|\/\*[\s\S]*?\*\//g, style: "sh-comment" },
+  { pattern: /`[^`]*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, style: "sh-string" },
+  { pattern: new RegExp(GO_KEYWORDS, "g"), style: "sh-keyword" },
+  { pattern: new RegExp(GO_TYPES, "g"), style: "sh-type" },
+  { pattern: /\b[A-Z][A-Za-z0-9_]*\b/g, style: "sh-type" },
+  { pattern: /\b[A-Za-z_][A-Za-z0-9_]*(?=\s*\()/g, style: "sh-function" },
+  { pattern: /\b0x[\da-fA-F_]+\b|\b\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?i?\b/g, style: "sh-number" },
+  { pattern: /(?::=|==|!=|<=|>=|&&|\|\||<-|\+\+|--|[+\-*/%&|^~!=<>])/g, style: "sh-operator" },
+  { pattern: /[{}()[\],.;:]/g, style: "sh-punctuation" },
+];
+
+// C / C++
+const C_KEYWORDS =
+  "\\b(?:auto|break|case|char|const|continue|default|do|double|else|enum|extern|float|for|goto|if|inline|int|long|register|restrict|return|short|signed|sizeof|static|struct|switch|typedef|union|unsigned|void|volatile|while|_Bool|_Complex|_Imaginary)\\b";
+
+const CPP_KEYWORDS =
+  "\\b(?:alignas|alignof|and|and_eq|asm|atomic_cancel|atomic_commit|atomic_noexcept|auto|bitand|bitor|bool|break|case|catch|char|char8_t|char16_t|char32_t|class|compl|concept|const|consteval|constexpr|constinit|const_cast|continue|co_await|co_return|co_yield|decltype|default|delete|do|double|dynamic_cast|else|enum|explicit|export|extern|false|float|for|friend|goto|if|import|inline|int|long|module|mutable|namespace|new|noexcept|not|not_eq|nullptr|operator|or|or_eq|private|protected|public|reflexpr|register|reinterpret_cast|requires|return|short|signed|sizeof|static|static_assert|static_cast|struct|switch|synchronized|template|this|thread_local|throw|true|try|typedef|typeid|typename|union|unsigned|using|virtual|void|volatile|wchar_t|while|xor|xor_eq)\\b";
+
+const cRules: TokenRule[] = [
+  { pattern: /\/\/.*|\/\*[\s\S]*?\*\//g, style: "sh-comment" },
+  { pattern: /^\s*#\s*[A-Za-z_][A-Za-z0-9_]*/g, style: "sh-keyword" },
+  { pattern: /L?"(?:[^"\\]|\\.)*"|L?'(?:[^'\\]|\\.)*'/g, style: "sh-string" },
+  { pattern: new RegExp(C_KEYWORDS, "g"), style: "sh-keyword" },
+  { pattern: /\b(?:FILE|NULL|bool|int8_t|int16_t|int32_t|int64_t|size_t|ssize_t|uint8_t|uint16_t|uint32_t|uint64_t|uintptr_t)\b/g, style: "sh-type" },
+  { pattern: /\b[A-Za-z_][A-Za-z0-9_]*(?=\s*\()/g, style: "sh-function" },
+  { pattern: /\b0x[\da-fA-F]+[uUlL]*\b|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?[fFuUlL]*\b/g, style: "sh-number" },
+  { pattern: /(?:->|\+\+|--|==|!=|<=|>=|&&|\|\||<<|>>|[+\-*/%&|^~!=<>?])/g, style: "sh-operator" },
+  { pattern: /[{}()[\],.;:]/g, style: "sh-punctuation" },
+];
+
+const cppRules: TokenRule[] = [
+  { pattern: /\/\/.*|\/\*[\s\S]*?\*\//g, style: "sh-comment" },
+  { pattern: /^\s*#\s*[A-Za-z_][A-Za-z0-9_]*/g, style: "sh-keyword" },
+  { pattern: /(?:u8|u|U|L)?"(?:[^"\\]|\\.)*"|(?:u8|u|U|L)?'(?:[^'\\]|\\.)*'/g, style: "sh-string" },
+  { pattern: new RegExp(CPP_KEYWORDS, "g"), style: "sh-keyword" },
+  { pattern: /\b(?:std|string|vector|map|unordered_map|set|unordered_set|unique_ptr|shared_ptr|optional|variant|size_t|int8_t|int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|uint64_t)\b/g, style: "sh-type" },
+  { pattern: /\b[A-Z][A-Za-z0-9_]*\b/g, style: "sh-type" },
+  { pattern: /\b[A-Za-z_][A-Za-z0-9_]*(?=\s*\()/g, style: "sh-function" },
+  { pattern: /\b0x[\da-fA-F']+[uUlL]*\b|\b\d[\d']*(?:\.\d[\d']*)?(?:[eE][+-]?\d+)?[fFuUlL]*\b/g, style: "sh-number" },
+  { pattern: /(?:::|->|=>|\+\+|--|==|!=|<=|>=|&&|\|\||<<|>>|[+\-*/%&|^~!=<>?])/g, style: "sh-operator" },
+  { pattern: /[{}()[\],.;:]/g, style: "sh-punctuation" },
+];
+
+// Dockerfile
+const dockerfileRules: TokenRule[] = [
+  { pattern: /#.*/g, style: "sh-comment" },
+  { pattern: /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, style: "sh-string" },
+  { pattern: /^(?:\s*)(?:ADD|ARG|CMD|COPY|ENTRYPOINT|ENV|EXPOSE|FROM|HEALTHCHECK|LABEL|MAINTAINER|ONBUILD|RUN|SHELL|STOPSIGNAL|USER|VOLUME|WORKDIR)\b/gi, style: "sh-keyword" },
+  { pattern: /--[A-Za-z][A-Za-z0-9_-]*/g, style: "sh-property" },
+  { pattern: /\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/g, style: "sh-type" },
+  { pattern: /\b\d+\b/g, style: "sh-number" },
+  { pattern: /(?:&&|\|\||[|&;<>])/g, style: "sh-operator" },
+];
+
 // ---------------------------------------------------------------------------
 // Language alias map (hand-rolled)
 // ---------------------------------------------------------------------------
@@ -444,6 +542,11 @@ const langRules: Record<string, TokenRule[]> = {
   sql: sqlRules,
   yaml: yamlRules, yml: yamlRules,
   toml: tomlRules,
+  rs: rustRules, rust: rustRules,
+  go: goRules, golang: goRules,
+  c: cRules, h: cRules,
+  cc: cppRules, cpp: cppRules, cxx: cppRules, cplusplus: cppRules, "c++": cppRules, hpp: cppRules, hxx: cppRules,
+  docker: dockerfileRules, dockerfile: dockerfileRules,
 };
 
 // ---------------------------------------------------------------------------
@@ -455,11 +558,16 @@ const langRules: Record<string, TokenRule[]> = {
  * tokenizer.  Returns one `SyntaxSegment[]` per input line.
  */
 export function tokenizeCode(lines: string[], language: string | null): SyntaxSegment[][] {
-  if (shiki && language) {
-    const resolved = resolveShikiLang(language);
-    if (shiki.getLoadedLanguages().includes(resolved)) {
-      return tokenizeWithShiki(lines, resolved);
+  try {
+    if (shiki && language) {
+      const resolved = resolveShikiLang(language);
+      if (shiki.getLoadedLanguages().includes(resolved)) {
+        return tokenizeWithShiki(lines, resolved);
+      }
     }
+  } catch {
+    // Non-fatal: rendering must never fail because syntax highlighting did.
   }
+
   return tokenizeWithRules(lines, language);
 }

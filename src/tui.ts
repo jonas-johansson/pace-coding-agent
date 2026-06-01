@@ -2366,54 +2366,87 @@ type ContentRegion =
   | { kind: "markdown"; lines: string[] }
   | { kind: "code"; language: string | null; lines: string[] };
 
+type FenceInfo = {
+  marker: "`" | "~";
+  length: number;
+  language: string | null;
+};
+
 /**
  * Split raw content text into a sequence of alternating markdown and fenced
- * code regions.  Opening fences are ``` optionally followed by a language tag;
- * closing fences are ``` on their own line.
+ * code regions. Opening fences are either backticks or tildes, optionally
+ * followed by a language tag and metadata; closing fences must use the same
+ * marker and be at least as long as the opener.
  */
 function splitContentRegions(content: string): ContentRegion[] {
   const regions: ContentRegion[] = [];
   let currentMarkdown: string[] = [];
-  let inCode = false;
-  let codeLang: string | null = null;
+  let currentFence: FenceInfo | undefined;
   let codeLines: string[] = [];
 
   for (const line of content.split("\n")) {
-    if (!inCode) {
-      const openFence = /^`{3,}(\w*)[^\S\n]*.*$/.exec(line);
+    if (!currentFence) {
+      const openFence = parseOpeningFence(line);
       if (openFence) {
         // Flush any pending markdown lines.
         if (currentMarkdown.length > 0) {
           regions.push({ kind: "markdown", lines: currentMarkdown });
           currentMarkdown = [];
         }
-        inCode = true;
-        codeLang = openFence[1] || null;
+        currentFence = openFence;
         codeLines = [];
       } else {
         currentMarkdown.push(line);
       }
+      continue;
+    }
+
+    if (isClosingFence(line, currentFence)) {
+      regions.push({ kind: "code", language: currentFence.language, lines: codeLines });
+      currentFence = undefined;
+      codeLines = [];
     } else {
-      if (/^`{3,}\s*$/.test(line)) {
-        // Close the code region.
-        regions.push({ kind: "code", language: codeLang, lines: codeLines });
-        inCode = false;
-        codeLang = null;
-        codeLines = [];
-      } else {
-        codeLines.push(line);
-      }
+      codeLines.push(line);
     }
   }
 
   // Flush any remaining open code block (unterminated fence, e.g. streaming).
-  if (inCode && codeLines.length > 0) {
-    regions.push({ kind: "code", language: codeLang, lines: codeLines });
+  if (currentFence) {
+    regions.push({ kind: "code", language: currentFence.language, lines: codeLines });
   } else if (currentMarkdown.length > 0) {
     regions.push({ kind: "markdown", lines: currentMarkdown });
   }
 
   return regions;
+}
+
+function parseOpeningFence(line: string): FenceInfo | undefined {
+  const match = /^(\s*)(`{3,}|~{3,})\s*([^\s`]*)?.*$/.exec(line);
+  if (!match) {
+    return undefined;
+  }
+
+  const fence = match[2];
+  const marker = fence[0] as "`" | "~";
+  const rawLanguage = match[3]?.trim() ?? "";
+  const language = normalizeFenceLanguage(rawLanguage);
+  return { marker, length: fence.length, language };
+}
+
+function isClosingFence(line: string, fence: FenceInfo) {
+  const markerPattern = fence.marker === "`" ? "`" : "~";
+  const match = new RegExp("^\\s*" + markerPattern + "{" + fence.length + ",}\\s*$").exec(line);
+  return Boolean(match);
+}
+
+function normalizeFenceLanguage(language: string) {
+  if (!language) {
+    return null;
+  }
+
+  const withoutBraces = language.replace(/^\{/, "").replace(/\}$/, "");
+  const withoutLeadingDot = withoutBraces.replace(/^\./, "");
+  return withoutLeadingDot || null;
 }
 
 /**
@@ -3323,7 +3356,13 @@ function isInputWrapWhitespace(char: string | undefined) {
 
 function wrapSegments(segments: StyledSegment[], width: number) {
   const chars = segments.flatMap((segment) =>
-    Array.from(segment.text).map((char) => ({ text: char, style: segment.style, width: charWidth(char) })),
+    Array.from(segment.text).map((char) => ({
+      text: char,
+      style: segment.style,
+      color: segment.color,
+      fontStyle: segment.fontStyle,
+      width: charWidth(char),
+    })),
   );
 
   if (chars.length === 0) {
@@ -3380,7 +3419,7 @@ function coalesceSegments(chars: StyledSegment[]) {
   const segments: StyledSegment[] = [];
   for (const char of chars) {
     const previous = segments[segments.length - 1];
-    if (previous?.style === char.style) {
+    if (previous?.style === char.style && previous.color === char.color && previous.fontStyle === char.fontStyle) {
       previous.text += char.text;
     } else {
       segments.push({ ...char });
