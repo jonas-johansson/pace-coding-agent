@@ -19,8 +19,8 @@ Set at least one API key:
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...    # Claude models
 export OPENAI_API_KEY=sk-...           # GPT models
-export OPENCODE_ZEN_API_KEY=...        # Kimi K2.6 via OpenCode Zen
-export FIREWORKS_API_KEY=...           # Kimi K2.6 via Fireworks (default model)
+export OPENCODE_ZEN_API_KEY=...        # Kimi via OpenCode Zen
+export FIREWORKS_API_KEY=...           # Kimi via Fireworks
 ```
 
 ## Features
@@ -28,7 +28,7 @@ export FIREWORKS_API_KEY=...           # Kimi K2.6 via Fireworks (default model)
 - Interactive TUI
 - Sessions
 - Undo
-- File and web tools
+- Tools: bash, web_search, web_fetch, read, write, edit
 - Paste image for vision models
 - MCP
 - Skills
