@@ -30,6 +30,7 @@ export const skillTool = defineTool({
   }),
   titleFormatter: (input) => `skill: ${input.name ?? ""}`,
   showContent: false,
+  truncateOutput: false,
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
     const skill = findSkill(currentSkills, input.name);
