@@ -35,7 +35,7 @@ export FIREWORKS_API_KEY=...           # Kimi via Fireworks
 - Mouse support (scroll, select to copy)
 - Slash commands
 - Tables
-- Token usage and cost
+- Token usage and cost in your currency
 
 ## Models
 
@@ -79,6 +79,24 @@ Switch models at any time with **Tab** or `/model <name>`.
 - **`@filename`** — mention a project file (autocomplete with Tab)
 - **`@image(./path.png)`** — attach an image inline
 - Bare image paths like `./screenshot.png` are also auto-detected
+
+## Configuration
+
+Pace reads global configuration from `~/.config/pace/config.json`.
+
+To display estimated costs in a specific currency, configure a USD conversion rate, display format, and how many fraction digits:
+
+```json
+{
+  "cost": {
+    "conversionRate": 10,
+    "format": "{amount} kr",
+    "fractionDigits": 1
+  }
+}
+```
+
+If `fractionDigits` is omitted, Pace uses dynamic precision similar to the default USD display.
 
 ## MCP servers
 

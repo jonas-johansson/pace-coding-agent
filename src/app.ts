@@ -68,6 +68,7 @@ import { LmStudioProvider } from "./providers/lmstudio";
 import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
 import { sendDesktopNotification } from "./notify";
 import { onEvent } from "./events";
+import { loadPaceConfig } from "./config";
 import {
   initMcpServers,
   shutdownMcpServers,
@@ -1333,6 +1334,14 @@ const exampleTable = `| Command | Description |
 
 async function main() {
   tui.start();
+
+  try {
+    const paceConfig = await loadPaceConfig();
+    tui.setCostDisplayConfig(paceConfig.cost);
+  } catch (error) {
+    tui.addBlock({ role: "error", title: "Pace config", content: formatError(error) });
+  }
+
   updateContextInfo();
 
   // Initialise Shiki in the background. The hand-rolled tokenizer remains
