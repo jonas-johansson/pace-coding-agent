@@ -160,7 +160,10 @@ function getProvider(config: ModelConfig): Provider {
 // ── Model state ──────────────────────────────────────────────────────────────
 
 let currentModelId: string = DEFAULT_MODEL_ID;
-let cycleModelIds: string[] = AVAILABLE_MODEL_IDS;
+let cycleModelIds: string[] = [
+  "opencode/kimi-k2.6",
+  "opencode/claude-opus-4-8",
+];
 let activeSession = createSession(process.cwd(), currentModelId);
 
 function currentModelConfig(): ModelConfig {
