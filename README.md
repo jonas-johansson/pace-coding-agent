@@ -2,9 +2,9 @@
 
 **A really nice terminal-based coding agent.**
 
-![alt text](docs/screenshot-1.png)
+![Screenshot of Pace in action](docs/screenshot-1.png)
 
-![alt text](docs/screenshot-2.png)
+![Screenshot of Pace in action](docs/screenshot-2.png)
 
 ## Quick start
 
