@@ -2,9 +2,9 @@
 
 **A really nice terminal-based coding agent.**
 
-![alt text](screenshot-1.png)
+![alt text](docs/screenshot-1.png)
 
-![alt text](screenshot-2.png)
+![alt text](docs/screenshot-2.png)
 
 
 ## Quick start
