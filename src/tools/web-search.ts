@@ -36,6 +36,7 @@ export const webSearchTool = defineTool({
       .default(5)
       .describe("Number of results to return (default 5)"),
   }),
+  truncateOutput: false,
   showContent: false,
   titleFormatter: (input) => `web_search: ${input.query ?? ""}`,
   execute: async (input, signal): Promise<ToolOutput> => {
