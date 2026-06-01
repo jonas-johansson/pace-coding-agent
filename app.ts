@@ -1322,12 +1322,6 @@ const exampleTable = `| Command | Description |
 
 async function main() {
   tui.start();
-
-  const logo = await readFile("logo.txt", "utf-8").catch(() => "");
-  if (logo) {
-    tui.addBlock({ role: "assistant", title: "", content: logo.trimEnd() });
-  }
-
   updateContextInfo();
 
   // Initialise Shiki in the background. The hand-rolled tokenizer remains
