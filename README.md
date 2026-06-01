@@ -6,7 +6,6 @@
 
 ![alt text](docs/screenshot-2.png)
 
-
 ## Quick start
 
 ```
