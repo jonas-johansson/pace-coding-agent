@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "product-name": {
+      "source": "phuryn/pm-skills",
+      "sourceType": "github",
+      "skillPath": "pm-marketing-growth/skills/product-name/SKILL.md",
+      "computedHash": "37cca037c08948af87728d31b676c2192029fa8ca0a4dd62584ad0839dee55a7"
+    }
+  }
+}
