@@ -2543,7 +2543,7 @@ function renderReasoningBlock(block: RenderBlock, columns: number, sanitizedCont
 }
 
 function reasoningTitleSegments(title: string, state: "collapsed" | "expanded"): StyledSegment[] {
-  return [{ text: `${title}${state === "expanded" ? ":" : " →"}`, style: "title" }];
+  return [{ text: `${title}${state === "collapsed" ? " →" : ""}`, style: "title" }];
 }
 
 /** Render a tool block as a single inline line: `title  ✓` */

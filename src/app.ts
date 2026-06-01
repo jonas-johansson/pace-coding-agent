@@ -4,6 +4,7 @@ import { homedir } from "os";
 import { join, resolve, extname } from "path";
 import { Tui } from "./tui";
 import { sessionToRenderBlocks } from "./session-view";
+import { reasoningDisplayContent, reasoningDisplayTitle, reasoningTitle } from "./reasoning";
 import {
   appendTurnDraftEntry,
   commitTurnDraft,
@@ -541,7 +542,7 @@ async function handleCommand(command: string): Promise<boolean> {
         }
 
         promptRunning = true;
-        tui.setRunning(true, "thinking");
+        tui.setRunning(true, "reasoning");
         const startTime = Date.now();
 
         try {
@@ -922,7 +923,7 @@ async function handleUserInput(userMessage: string) {
   }
 
   promptRunning = true;
-  tui.setRunning(true, "thinking");
+  tui.setRunning(true, "reasoning");
 
   const startTime = Date.now();
 
@@ -1067,7 +1068,7 @@ async function prompt(
 
   try {
     while (true) {
-      tui.setStatus("Thinking");
+      tui.setStatus("Reasoning");
 
       const stream: ProviderStream = await provider.stream({
         model: modelConfig.id,
@@ -1082,6 +1083,7 @@ async function prompt(
       let accText = "";
       let currentReasoningBlockId: number | undefined;
       let accReasoning = "";
+      let currentReasoningTitle: string | undefined;
       const reasoningBlocks: ThinkingBlock[] = [];
       const finishReasoningBlock = () => {
         if (currentReasoningBlockId === undefined) {
@@ -1093,11 +1095,12 @@ async function prompt(
         }
 
         tui.updateBlock(currentReasoningBlockId, {
-          title: "Reasoning",
+          title: reasoningDisplayTitle(accReasoning),
           collapsed: true,
         });
         currentReasoningBlockId = undefined;
         accReasoning = "";
+        currentReasoningTitle = undefined;
       };
       const streamingTools = new Map<string, { name: string; inputJson: string }>();
       const toolBlocks = new Map<string, number>();
@@ -1135,13 +1138,14 @@ async function prompt(
             currentTextBlockId = undefined;
             accText = "";
             accReasoning = event.text;
+            currentReasoningTitle = reasoningTitle(accReasoning) ?? undefined;
             currentReasoningBlockId = tui.addBlock({
               role: "reasoning",
-              title: "Reasoning",
-              content: accReasoning,
+              title: reasoningDisplayTitle(accReasoning),
+              content: reasoningDisplayContent(accReasoning),
               collapsed: false,
             });
-            tui.setStatus("Thinking");
+            tui.setStatus("Reasoning");
             break;
           }
 
@@ -1149,17 +1153,24 @@ async function prompt(
             currentTextBlockId = undefined;
             accText = "";
             accReasoning += event.text;
+            const discoveredTitle = reasoningTitle(accReasoning);
+            if (discoveredTitle && discoveredTitle !== currentReasoningTitle) {
+              currentReasoningTitle = discoveredTitle;
+            }
             if (currentReasoningBlockId === undefined) {
               currentReasoningBlockId = tui.addBlock({
                 role: "reasoning",
-                title: "Reasoning",
-                content: accReasoning,
+                title: reasoningDisplayTitle(accReasoning),
+                content: reasoningDisplayContent(accReasoning),
                 collapsed: false,
               });
             } else {
-              tui.updateBlock(currentReasoningBlockId, accReasoning);
+              tui.updateBlock(currentReasoningBlockId, {
+                content: reasoningDisplayContent(accReasoning),
+                title: reasoningDisplayTitle(accReasoning),
+              });
             }
-            tui.setStatus("Thinking");
+            tui.setStatus("Reasoning");
             break;
           }
 

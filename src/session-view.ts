@@ -9,6 +9,7 @@ import {
   type UserEntry,
 } from "./session";
 import { tools, visualizeToolTitle } from "./tool";
+import { reasoningDisplayContent, reasoningDisplayTitle } from "./reasoning";
 
 export type SessionRenderBlock = Omit<RenderBlock, "id">;
 
@@ -82,7 +83,12 @@ function assistantEntryToRenderBlocks(
         break;
       case "thinking":
         if (contentBlock.thinking) {
-          blocks.push({ key, role: "reasoning", title: "Reasoning", content: contentBlock.thinking });
+          blocks.push({
+            key,
+            role: "reasoning",
+            title: reasoningDisplayTitle(contentBlock.thinking),
+            content: reasoningDisplayContent(contentBlock.thinking),
+          });
         }
         break;
       case "image":
