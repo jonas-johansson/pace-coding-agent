@@ -1,15 +1,11 @@
 # Pace
 
-```
-██████╗  █████╗  ██████╗███████╗
-██╔══██╗██╔══██╗██╔════╝██╔════╝
-██████╔╝███████║██║     █████╗  
-██╔═══╝ ██╔══██║██║     ██╔══╝  
-██║     ██║  ██║╚██████╗███████╗
-╚═╝     ╚═╝  ╚═╝ ╚═════╝╚══════╝
-```
-
 **A really nice terminal-based coding agent.**
+
+![alt text](screenshot-1.png)
+
+![alt text](screenshot-2.png)
+
 
 ## Quick start
 
@@ -39,6 +35,9 @@ export FIREWORKS_API_KEY=...           # Kimi K2.6 via Fireworks (default model)
 - AGENTS.md
 - Mouse support
 - Slash commands
+- Tables
+- Scroll
+- Token usage and cost
 
 ## Models
 
