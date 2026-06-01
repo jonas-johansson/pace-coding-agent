@@ -1,8 +1,15 @@
 # Pace
 
-**A really nice terminal-based coding agent.**
+```
+██████╗  █████╗  ██████╗███████╗
+██╔══██╗██╔══██╗██╔════╝██╔════╝
+██████╔╝███████║██║     █████╗  
+██╔═══╝ ██╔══██║██║     ██╔══╝  
+██║     ██║  ██║╚██████╗███████╗
+╚═╝     ╚═╝  ╚═╝ ╚═════╝╚══════╝
+```
 
-Talk to it, and it reads, writes, edits, and runs code for you.
+**A really nice terminal-based coding agent.**
 
 ## Quick start
 
