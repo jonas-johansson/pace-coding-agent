@@ -1326,7 +1326,7 @@ async function prompt(
         completedToolResults = new Map<string, ToolResultContent>();
       }
 
-      if (response.stopReason === "tool_use") {
+      if (toolUseBlocks.length > 0 || response.stopReason === "tool_use") {
         assistantMessagePushed = false;
         pendingToolUseIds = [];
         continue;
