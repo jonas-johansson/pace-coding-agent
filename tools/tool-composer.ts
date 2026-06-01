@@ -24,27 +24,27 @@ const SCRIPT_MAX_LOG_MESSAGE_LENGTH = 50;
 const SCRIPT_MAX_STDERR_BYTES = 64 * 1024;
 const SCRIPT_MAX_RESULT_BYTES = 128 * 1024;
 const SCRIPT_MAX_FILE_BYTES = 50 * 1024 * 1024;
-const REQUIRED_MAIN_SIGNATURE = "async function main({ agento, tools, args, log })";
-const REQUIRED_MAIN_FUNCTION_PATTERN = /(^|\s)async function main\(\{ agento, tools, args, log \}\)\s*\{/;
+const REQUIRED_MAIN_SIGNATURE = "async function main({ ctx, tools, args, log })";
+const REQUIRED_MAIN_FUNCTION_PATTERN = /(^|\s)async function main\(\{ ctx, tools, args, log \}\)\s*\{/;
 
 export const toolComposerTool = defineTool({
   name: "tool_composer",
   description:
-    "Run a JavaScript script that can call Agento tools internally without adding intermediate results to the conversation. " +
+    "Run a JavaScript script that can call Pace tools internally without adding intermediate results to the conversation. " +
     "Use this for complex multi-step tasks, base64 binary file handling, repeated tool calls, or workflows where only a concise final result should be returned to the model. " +
-    "The code must define exactly `async function main({ agento, tools, args, log }) { ... }`; do not provide only the function body or any other signature. Use `return` inside `main` for the final result. " +
-    "Available APIs: `await tools.<toolName>(input)` returns text and throws on tool errors; `await agento.callToolRaw(name, input)` returns `{ content, text, isError }`; " +
-    "`agento.readFileText(path)`, `agento.readFileBase64(path)`, `agento.writeFileText(path, content)`, and `agento.writeFileBase64(path, base64Content)` handle local files. " +
+    "The code must define exactly `async function main({ ctx, tools, args, log }) { ... }`; do not provide only the function body or any other signature. Use `return` inside `main` for the final result. " +
+    "Available APIs: `await tools.<toolName>(input)` returns text and throws on tool errors; `await ctx.callToolRaw(name, input)` returns `{ content, text, isError }`; " +
+    "`ctx.readFileText(path)`, `ctx.readFileBase64(path)`, `ctx.writeFileText(path, content)`, and `ctx.writeFileBase64(path, base64Content)` handle local files. " +
     "Use `log(...)` only for short local progress logs. Each log message is truncated to 50 characters and total logs are capped at 64 KB. " +
     "Logs are shown in the UI but are not returned to the model unless your final return value includes them.",
   concurrency: "exclusive",
   inputSchema: z.object({
     language: z.enum(["javascript"]).default("javascript").describe("Script language. Currently only javascript is supported."),
-    code: z.string().describe("Complete JavaScript code that defines exactly `async function main({ agento, tools, args, log }) { ... }`. Do not provide only the function body or any other signature. Use return inside main for the final result."),
+    code: z.string().describe("Complete JavaScript code that defines exactly `async function main({ ctx, tools, args, log }) { ... }`. Do not provide only the function body or any other signature. Use return inside main for the final result."),
     args: z.record(z.string(), z.unknown()).optional().describe("Optional JSON-serializable arguments available to the script as `args`."),
-    allowedTools: z.array(z.string()).optional().describe("Optional allowlist of Agento tool names the script may call. If omitted, all tools except `tool_composer` are available."),
+    allowedTools: z.array(z.string()).optional().describe("Optional allowlist of Pace tool names the script may call. If omitted, all tools except `tool_composer` are available."),
     timeoutSeconds: z.number().int().positive().max(300).optional().describe("Maximum runtime in seconds. Defaults to 60, max 300."),
-    maxToolCalls: z.number().int().positive().max(SCRIPT_MAX_TOOL_CALLS).optional().describe("Maximum number of internal Agento tool calls. Defaults to 100, max 500."),
+    maxToolCalls: z.number().int().positive().max(SCRIPT_MAX_TOOL_CALLS).optional().describe("Maximum number of internal Pace tool calls. Defaults to 100, max 500."),
   }),
   titleFormatter: (input) => {
     const lines = typeof input.code === "string" ? input.code.split(/\r?\n/).length : 0;
@@ -149,7 +149,7 @@ const tools = new Proxy({}, {
   },
 });
 
-const agento = {
+const ctx = {
   callToolRaw,
   readFileText: (path) => request("helper_call", { name: "readFileText", input: { path } }),
   readFileBase64: (path) => request("helper_call", { name: "readFileBase64", input: { path } }),
@@ -161,9 +161,9 @@ const agento = {
   try {
     send({ type: "ready" });
     const init = await initPromise;
-    const source = init.code + "\n;return await main({ agento, tools, args, log });";
-    const fn = new AsyncFunction("agento", "tools", "args", "log", source);
-    const value = await fn(agento, tools, init.args || {}, log);
+    const source = init.code + "\n;return await main({ ctx, tools, args, log });";
+    const fn = new AsyncFunction("ctx", "tools", "args", "log", source);
+    const value = await fn(ctx, tools, init.args || {}, log);
     send({ type: "final", result: value === undefined ? "" : stringify(value) });
   } catch (error) {
     send({

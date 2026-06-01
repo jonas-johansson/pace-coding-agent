@@ -1,4 +1,4 @@
-# Agento Coding Agent
+# Pace Coding Agent
 
 A barebones terminal-based coding agent.
 
@@ -55,10 +55,10 @@ base URL with `OPENCODE_ZEN_BASE_URL` (defaults to `https://opencode.ai/zen/v1`)
 
 ## MCP servers
 
-Agento supports connecting to external MCP (Model Context Protocol) servers.
+Pace supports connecting to external MCP (Model Context Protocol) servers.
 Both local stdio servers and remote HTTP/SSE servers are supported.
 
-Configure servers in `~/.config/agento/mcp.json`:
+Configure servers in `~/.config/pace/mcp.json`:
 
 ```json
 {

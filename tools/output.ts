@@ -52,7 +52,7 @@ export async function createToolOutputPath(toolName: string, toolUseId?: string)
 }
 
 function getToolOutputDir(): string {
-  return join(homedir(), ".agento", "tool-outputs", getSessionId());
+  return join(homedir(), ".pace", "tool-outputs", getSessionId());
 }
 
 function makeToolOutputFilename(toolName: string, toolUseId?: string): string {

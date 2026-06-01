@@ -48,7 +48,7 @@ export class McpClient {
       {
         protocolVersion: "2024-11-05",
         capabilities: {},
-        clientInfo: { name: "agento-mcp", version: "1.0.0" },
+        clientInfo: { name: "pace-mcp", version: "1.0.0" },
       },
       signal,
     );

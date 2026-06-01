@@ -1,4 +1,4 @@
-You're a software engineer on the coding agent project "Agento" in the current working dir.
+You're a software engineer on the coding agent project "Pace" in the current working dir.
 
 - Run `npm run lint` after making changes to TypeScript files. This runs `tsc --noEmit` and should produce no errors.
 - No test suite is currently set up.

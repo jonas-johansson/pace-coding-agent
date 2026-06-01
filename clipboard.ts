@@ -58,7 +58,7 @@ function execFileAsync(
 }
 
 async function readClipboardMacOS(): Promise<ClipboardImage | null> {
-  const tmpFile = join(tmpdir(), `agento-clip-${randomBytes(6).toString("hex")}.png`);
+  const tmpFile = join(tmpdir(), `pace-clip-${randomBytes(6).toString("hex")}.png`);
 
   // AppleScript that writes clipboard PNG data to a temp file
   const script = `

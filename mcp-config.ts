@@ -1,7 +1,7 @@
 /**
  * MCP server configuration loading and validation.
  *
- * Supports global config at ~/.config/agento/mcp.json
+ * Supports global config at ~/.config/pace/mcp.json
  */
 
 import { readFile } from "fs/promises";
@@ -38,7 +38,7 @@ export type McpConfig = z.infer<typeof mcpConfigSchema>;
 
 // ── Loading ──────────────────────────────────────────────────────────────────
 
-const CONFIG_PATH = join(homedir(), ".config", "agento", "mcp.json");
+const CONFIG_PATH = join(homedir(), ".config", "pace", "mcp.json");
 
 export async function loadMcpConfig(): Promise<McpConfig> {
   try {

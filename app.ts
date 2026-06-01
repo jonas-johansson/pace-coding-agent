@@ -556,7 +556,7 @@ async function handleCommand(command: string): Promise<boolean> {
           tui.setRunning(false, "idle");
           if (!tui.isFocused) {
             const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-            sendDesktopNotification("Agento", `Agent finished in ${elapsedSec}s.`);
+            sendDesktopNotification("Pace", `Agent finished in ${elapsedSec}s.`);
           }
         }
 
@@ -980,7 +980,7 @@ async function handleUserInput(userMessage: string) {
     tui.setRunning(false, "idle");
     if (!tui.isFocused) {
       const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-      sendDesktopNotification("Agento", `Agent finished in ${elapsedSec}s.`);
+      sendDesktopNotification("Pace", `Agent finished in ${elapsedSec}s.`);
     }
   }
 }
@@ -1037,7 +1037,7 @@ async function prompt(
   // Update the skill tool with the current set of skills
   setCurrentSkills(skills);
 
-  const baseSystem = `You are Agento, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${formatCwd(process.cwd())}\n\nCurrent date (YYYY-MM-DD): ${new Date().toISOString().split("T")[0]}\n\nWhen operating on files or directories in the current working directory, use relative paths rather than absolute paths.\n\nWhen listing files, use \`/bin/ls -1\` to show only filenames (one per line, no icons or extra info). Only add flags like \`-la\` if the user explicitly asks for more details.\n\nWhen searching files with Bash, prefer \`rg\`/\`rg --files\` over \`grep -R\`, \`find .\`, or \`ls -R\` because ripgrep respects \`.gitignore\`; do not run unbounded recursive searches, and if \`rg\` is unavailable explicitly exclude \`node_modules\`, \`.git\`, \`dist\`, \`build\`, \`coverage\`, \`.next\`, and \`vendor\`.`;
+  const baseSystem = `You are Pace, a highly capable coding agent designed to assist with software development tasks.\n\nCurrent working directory: ${formatCwd(process.cwd())}\n\nCurrent date (YYYY-MM-DD): ${new Date().toISOString().split("T")[0]}\n\nWhen operating on files or directories in the current working directory, use relative paths rather than absolute paths.\n\nWhen listing files, use \`/bin/ls -1\` to show only filenames (one per line, no icons or extra info). Only add flags like \`-la\` if the user explicitly asks for more details.\n\nWhen searching files with Bash, prefer \`rg\`/\`rg --files\` over \`grep -R\`, \`find .\`, or \`ls -R\` because ripgrep respects \`.gitignore\`; do not run unbounded recursive searches, and if \`rg\` is unavailable explicitly exclude \`node_modules\`, \`.git\`, \`dist\`, \`build\`, \`coverage\`, \`.next\`, and \`vendor\`.`;
 
   // Build system text: base → skills → MCP → AGENTS.md
   const skillsBlock = formatSkillsSystemPromptBlock(skills);
@@ -1322,6 +1322,12 @@ const exampleTable = `| Command | Description |
 
 async function main() {
   tui.start();
+
+  const logo = await readFile("logo.txt", "utf-8").catch(() => "");
+  if (logo) {
+    tui.addBlock({ role: "assistant", title: "", content: logo.trimEnd() });
+  }
+
   updateContextInfo();
 
   // Initialise Shiki in the background. The hand-rolled tokenizer remains

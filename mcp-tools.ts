@@ -1,5 +1,5 @@
 /**
- * Bridge MCP servers into Agento's tool system.
+ * Bridge MCP servers into Pace's tool system.
  *
  * Loads MCP config, connects to enabled servers, registers their tools
  * under prefixed names, and provides lifecycle management.

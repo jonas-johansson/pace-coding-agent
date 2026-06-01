@@ -123,7 +123,7 @@ export function createProjectKey(cwd: string): string {
 
 export function getSessionProjectDir(projectKey: string): string {
   assertSafeStorageSegment(projectKey, "projectKey");
-  return join(homedir(), ".agento", "sessions", projectKey);
+  return join(homedir(), ".pace", "sessions", projectKey);
 }
 
 export function getSessionFilePath(projectKey: string, sessionId: string): string {
