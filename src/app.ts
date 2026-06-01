@@ -58,7 +58,7 @@ import {
   DEFAULT_MODEL_ID,
   getModelConfig,
   type ModelConfig,
-} from "./provider";
+} from "./models";
 import { AnthropicProvider } from "./providers/anthropic";
 import { OpenCodeZenProvider } from "./providers/opencode-zen";
 import { OpenAIProvider } from "./providers/openai";

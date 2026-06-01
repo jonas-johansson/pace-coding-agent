@@ -46,6 +46,8 @@ Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the
 | `anthropic/claude-haiku-4-5` |
 | `anthropic/claude-sonnet-4-6` |
 | `anthropic/claude-opus-4-6` |
+| `anthropic/claude-opus-4-7` |
+| `anthropic/claude-opus-4-8` |
 | `opencode/kimi-k2.6` |
 | `opencode/gpt-5.5` |
 | `fireworks/kimi-k2.6` |
