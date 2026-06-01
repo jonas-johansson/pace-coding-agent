@@ -2559,26 +2559,17 @@ export class Tui {
   private renderSessionOverlayRow(item: SessionOverlayItem, isCursor: boolean, columns: number): string {
     const rowBg = isCursor ? OVERLAY_SEL_BG : OVERLAY_BG;
     const baseFg = isCursor ? 255 : 250;
-    const marker = item.isActive ? "●" : " ";
-    const shortId = item.id.slice(0, 8);
-    const updated = formatSessionOverlayTimestamp(item.updatedAt);
-    const entries = `${item.entryCount} ${item.entryCount === 1 ? "entry" : "entries"}`;
-    const meta = `${updated}  ${entries}  ${item.currentModelId}`;
-    const title = sanitizeSingleLine(item.title ?? "Untitled session").trim();
-
-    const left = `  ${marker} ${shortId}  `;
-    const minGap = 2;
-    const availableTitleWidth = Math.max(0, columns - displayWidth(left) - displayWidth(meta) - minGap);
-    const clippedTitle = truncateToWidth(title, availableTitleWidth);
-    const gap = Math.max(minGap, columns - displayWidth(left) - displayWidth(clippedTitle) - displayWidth(meta));
-    const trailing = Math.max(0, columns - displayWidth(left) - displayWidth(clippedTitle) - gap - displayWidth(meta));
-
-    let line = `${bg(rowBg)}`;
-    line += `${fg(item.isActive ? 41 : baseFg)}${left}`;
-    line += `${fg(baseFg)}${clippedTitle}`;
-    line += `${fg(245)}${" ".repeat(gap)}${meta}${" ".repeat(trailing)}`;
-    line += RESET;
-    return line;
+    return renderSessionOverlayColumns({
+      columns,
+      bgColor: rowBg,
+      date: formatSessionOverlayTimestamp(item.updatedAt),
+      id: item.id.slice(0, 8),
+      name: sanitizeSingleLine(item.title ?? "").trim(),
+      entries: String(item.entryCount),
+      fgColor: baseFg,
+      activeColor: item.isActive ? 41 : baseFg,
+      activeMarker: item.isActive ? "●" : " ",
+    });
   }
 
   private renderInputLine(columns: number, maxRows: number) {
@@ -4005,7 +3996,58 @@ function formatPrice(price: number): string {
 }
 
 function formatSessionOverlayTimestamp(timestamp: string): string {
-  return timestamp.replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return timestamp.replace("T", " ").slice(0, 16);
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
+type SessionOverlayColumns = {
+  columns: number;
+  bgColor: number;
+  date: string;
+  id: string;
+  name: string;
+  entries: string;
+  fgColor: number;
+  activeColor: number;
+  activeMarker?: string;
+};
+
+function renderSessionOverlayColumns(options: SessionOverlayColumns): string {
+  const dateWidth = 16;
+  const idWidth = 8;
+  const entriesWidth = 7;
+  const gap = 2;
+  const leftPadding = 2;
+  const markerWidth = 1;
+  const fixedWidth = leftPadding + markerWidth + gap + dateWidth + gap + idWidth + gap + gap + entriesWidth;
+  const nameWidth = Math.max(0, options.columns - fixedWidth);
+
+  const marker = options.activeMarker ?? " ";
+  const date = padRight(truncateToWidth(options.date, dateWidth), dateWidth);
+  const id = padRight(truncateToWidth(options.id, idWidth), idWidth);
+  const name = padRight(truncateToWidth(options.name, nameWidth), nameWidth);
+  const entries = padLeft(truncateToWidth(options.entries, entriesWidth), entriesWidth);
+  const visible = leftPadding + markerWidth + gap + dateWidth + gap + idWidth + gap + nameWidth + gap + entriesWidth;
+  const trailing = Math.max(0, options.columns - visible);
+
+  return `${bg(options.bgColor)}${" ".repeat(leftPadding)}${fg(options.activeColor)}${marker}${fg(options.fgColor)}${" ".repeat(gap)}${date}${" ".repeat(gap)}${id}${fg(151)}${" ".repeat(gap)}${name}${fg(options.fgColor)}${" ".repeat(gap)}${entries}${" ".repeat(trailing)}${RESET}`;
+}
+
+function padRight(text: string, width: number): string {
+  return text + " ".repeat(Math.max(0, width - displayWidth(text)));
+}
+
+function padLeft(text: string, width: number): string {
+  return " ".repeat(Math.max(0, width - displayWidth(text))) + text;
 }
 
 function plainLine(text: string, columns: number) {

@@ -489,6 +489,8 @@ function validateLoadedSession(
 }
 
 function toSessionListItem(session: Session, filePath: string): SessionListItem {
+  const title = session.title ?? firstUserMessagePreview(session);
+
   return {
     id: session.id,
     projectKey: session.projectKey,
@@ -496,11 +498,27 @@ function toSessionListItem(session: Session, filePath: string): SessionListItem 
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     currentModelId: session.currentModelId,
-    ...(session.title !== undefined && { title: session.title }),
+    ...(title !== undefined && { title }),
     activeEntryId: session.activeEntryId,
     entryCount: session.entries.length,
     filePath,
   };
+}
+
+function firstUserMessagePreview(session: Session): string | undefined {
+  const firstUserEntry = session.entries.find((entry): entry is UserEntry => entry.type === "user");
+  const text = firstUserEntry?.content
+    .filter((block): block is TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) {
+    return undefined;
+  }
+
+  return Array.from(text).slice(0, 80).join("");
 }
 
 function isSession(value: unknown): value is Session {
