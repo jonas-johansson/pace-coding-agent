@@ -94,6 +94,61 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
       outputPerMTok: 25,
     },
   },
+  "opencode/claude-haiku-4-5": {
+    contextWindow: 200_000,
+    maxOutputTokens: 16_000,
+    supportsImages: true,
+    pricing: {
+      inputPerMTok: 1,
+      cacheWritePerMTok: 1.25,
+      cacheReadPerMTok: 0.10,
+      outputPerMTok: 5,
+    },
+  },
+  "opencode/claude-sonnet-4-6": {
+    contextWindow: 1_000_000,
+    maxOutputTokens: 16_000,
+    supportsImages: true,
+    pricing: {
+      inputPerMTok: 3,
+      cacheWritePerMTok: 3.75,
+      cacheReadPerMTok: 0.30,
+      outputPerMTok: 15,
+    },
+  },
+  "opencode/claude-opus-4-6": {
+    contextWindow: 1_000_000,
+    maxOutputTokens: 16_000,
+    supportsImages: true,
+    pricing: {
+      inputPerMTok: 5,
+      cacheWritePerMTok: 6.25,
+      cacheReadPerMTok: 0.50,
+      outputPerMTok: 25,
+    },
+  },
+  "opencode/claude-opus-4-7": {
+    contextWindow: 1_000_000,
+    maxOutputTokens: 16_000,
+    supportsImages: true,
+    pricing: {
+      inputPerMTok: 5,
+      cacheWritePerMTok: 6.25,
+      cacheReadPerMTok: 0.50,
+      outputPerMTok: 25,
+    },
+  },
+  "opencode/claude-opus-4-8": {
+    contextWindow: 1_000_000,
+    maxOutputTokens: 16_000,
+    supportsImages: true,
+    pricing: {
+      inputPerMTok: 5,
+      cacheWritePerMTok: 6.25,
+      cacheReadPerMTok: 0.50,
+      outputPerMTok: 25,
+    },
+  },
   "opencode/kimi-k2.6": {
     contextWindow: 262_144,
     maxOutputTokens: 32_000,

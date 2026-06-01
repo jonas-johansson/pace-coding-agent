@@ -24,6 +24,7 @@ export type ContextInfo = {
 import { homedir } from "os";
 import { DEFAULT_COST_DISPLAY_CONFIG, type CostDisplayConfig } from "./config";
 import { tokenizeCode, hexToAnsi256, onHighlighterReady } from "./syntax.js";
+import { fuzzyMatch } from "./fuzzy.js";
 
 type SubmitHandler = (input: string) => void | Promise<void>;
 type SuggestionItem = {
@@ -34,6 +35,29 @@ type SuggestionItem = {
 };
 type SuggestionProvider = () => SuggestionItem[];
 type FileSuggestionProvider = () => Promise<string[]>;
+
+/** A single model row displayed in the model picker overlay. */
+export type ModelOverlayItem = {
+  id: string;
+  contextWindow: number;
+  supportsImages: boolean;
+  inputPerMTok: number;
+  outputPerMTok: number;
+};
+
+/** Callbacks and data wiring for the model picker overlay. */
+export type ModelOverlayOptions = {
+  /** Snapshot of the full model catalog to display. */
+  list: () => ModelOverlayItem[];
+  /** Model ids currently in the cycle set. */
+  initialSelected: () => string[];
+  /** Called on Enter to switch the current model immediately. */
+  onPick: (id: string) => void;
+  /** Called whenever the cycle set changes via space toggle. */
+  onCycleChange: (ids: string[]) => void;
+};
+
+type ModelOverlayEntry = { item: ModelOverlayItem; positions: number[] };
 type SegmentStyle =
   | "normal"
   | "bold"
@@ -95,6 +119,7 @@ type BlockTheme = {
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
+const NO_BOLD = "\x1b[22m";
 const ITALIC = "\x1b[3m";
 const INVERSE = "\x1b[7m";
 const HIDE_CURSOR = "\x1b[?25l";
@@ -125,6 +150,15 @@ const MIN_MESSAGE_ROWS = 1;
 const INSERT_NEWLINE_KEYS = new Set(["\x1b[13;2u", "\x1b[13;2~", "\x1b[27;2;13~"]);
 const MAX_SUGGESTION_ROWS = 6;
 const SUGGESTION_BG = 235;
+
+// ── Model picker overlay ──
+const OVERLAY_BG = 235;
+const OVERLAY_CHROME_BG = 237;
+const OVERLAY_SEL_BG = 238;
+/** Header rows above the list: title, search, separator. */
+const OVERLAY_HEADER_ROWS = 3;
+/** Footer rows below the list: hint line. */
+const OVERLAY_FOOTER_ROWS = 1;
 
 /** Pitch black background used for the main canvas (assistant text, inline tools). */
 const CANVAS_BG = 234;
@@ -219,7 +253,15 @@ export class Tui {
   private suggestionTokenStart = 0;
   private suggestionTokenEnd = 0;
 
-  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; slashCommands?: SuggestionProvider; fileSuggestions?: FileSuggestionProvider; model?: string; cwd?: string } = {}) {
+  // ── Model picker overlay state ──
+  private modelOverlayActive = false;
+  private modelOverlayQuery = "";
+  private modelOverlayIndex = 0;
+  private modelOverlayScroll = 0;
+  private modelOverlayItems: ModelOverlayItem[] = [];
+  private modelOverlaySelected = new Set<string>();
+
+  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; slashCommands?: SuggestionProvider; fileSuggestions?: FileSuggestionProvider; modelOverlay?: ModelOverlayOptions; model?: string; cwd?: string } = {}) {
     this.model = options.model ?? "";
     this.cwd = options.cwd ?? "";
     this.slashItems = options.slashCommands ? options.slashCommands() : [];
@@ -544,6 +586,11 @@ export class Tui {
   };
 
   private handleData = (data: string) => {
+    if (this.modelOverlayActive) {
+      this.handleModelOverlayKey(data);
+      return;
+    }
+
     if (data === "\u0003") {
       if (this.suggestionActive) {
         this.dismissSuggestions();
@@ -630,6 +677,12 @@ export class Tui {
         void Promise.resolve(this.options.onPasteImage?.()).catch(() => {
           // Swallow here; app-level handler is responsible for user-visible status.
         });
+        continue;
+      }
+
+      // Ctrl+O — open the model picker overlay
+      if (char === "\u000f") {
+        this.openModelOverlay();
         continue;
       }
 
@@ -1282,6 +1335,166 @@ export class Tui {
     return true;
   }
 
+  // ── Model picker overlay ───────────────────────────────────────────────────
+
+  openModelOverlay() {
+    if (!this.options.modelOverlay) {
+      return;
+    }
+    this.modelOverlayActive = true;
+    this.modelOverlayQuery = "";
+    this.modelOverlayItems = this.options.modelOverlay.list();
+    this.modelOverlaySelected = new Set(this.options.modelOverlay.initialSelected());
+    const currentIndex = this.modelOverlayItems.findIndex((item) => item.id === this.model);
+    this.modelOverlayIndex = currentIndex >= 0 ? currentIndex : 0;
+    this.modelOverlayScroll = 0;
+    this.modelOverlayAdjustScroll();
+    this.requestRender();
+  }
+
+  private closeModelOverlay() {
+    this.modelOverlayActive = false;
+    // Force a full repaint so the picker is fully cleared.
+    this.previousFrameRows = -1;
+    this.requestRender();
+  }
+
+  private handleModelOverlayKey(data: string) {
+    switch (data) {
+      case "\u0003": // Ctrl+C
+      case "\x1b": // Esc
+        this.closeModelOverlay();
+        return;
+      case "\r": // Enter — switch to highlighted model
+        this.pickModelOverlay();
+        return;
+      case " ": // Space — toggle cycle membership
+        this.toggleModelOverlay();
+        return;
+      case "\x1b[A": // Up
+      case "\u0010": // Ctrl+P
+      case "\x1bk": // Alt+K (vim-style up)
+        this.moveModelOverlay(-1);
+        return;
+      case "\x1b[B": // Down
+      case "\u000e": // Ctrl+N
+      case "\x1bj": // Alt+J (vim-style down)
+        this.moveModelOverlay(1);
+        return;
+      case "\x1b[5~": // Page Up
+        this.moveModelOverlay(-this.modelOverlayListRows());
+        return;
+      case "\x1b[6~": // Page Down
+        this.moveModelOverlay(this.modelOverlayListRows());
+        return;
+      case "\u007f": // Backspace
+      case "\b":
+        if (this.modelOverlayQuery.length > 0) {
+          this.modelOverlayQuery = Array.from(this.modelOverlayQuery).slice(0, -1).join("");
+          this.modelOverlayIndex = 0;
+          this.modelOverlayScroll = 0;
+          this.requestRender();
+        }
+        return;
+    }
+
+    if (data.startsWith("\x1b")) {
+      return;
+    }
+
+    // Append any printable characters to the fuzzy query. Spaces are handled
+    // above as a toggle (model ids never contain spaces).
+    let added = "";
+    for (const char of data) {
+      if (char >= " " && char !== "\u007f" && char !== " ") {
+        added += char;
+      }
+    }
+    if (added.length > 0) {
+      this.modelOverlayQuery += added;
+      this.modelOverlayIndex = 0;
+      this.modelOverlayScroll = 0;
+      this.requestRender();
+    }
+  }
+
+  private modelOverlayFiltered(): ModelOverlayEntry[] {
+    const query = this.modelOverlayQuery.trim();
+    if (query.length === 0) {
+      return this.modelOverlayItems.map((item) => ({ item, positions: [] }));
+    }
+    const scored: Array<ModelOverlayEntry & { score: number; index: number }> = [];
+    this.modelOverlayItems.forEach((item, index) => {
+      const match = fuzzyMatch(query, item.id);
+      if (match) {
+        scored.push({ item, positions: match.positions, score: match.score, index });
+      }
+    });
+    scored.sort((a, b) => b.score - a.score || a.index - b.index);
+    return scored.map(({ item, positions }) => ({ item, positions }));
+  }
+
+  private modelOverlayListRows(): number {
+    const rows = Math.max(process.stdout.rows ?? 24, 1);
+    return Math.max(1, rows - OVERLAY_HEADER_ROWS - OVERLAY_FOOTER_ROWS);
+  }
+
+  private modelOverlayAdjustScroll() {
+    const visible = this.modelOverlayListRows();
+    if (this.modelOverlayIndex < this.modelOverlayScroll) {
+      this.modelOverlayScroll = this.modelOverlayIndex;
+    } else if (this.modelOverlayIndex >= this.modelOverlayScroll + visible) {
+      this.modelOverlayScroll = this.modelOverlayIndex - visible + 1;
+    }
+    if (this.modelOverlayScroll < 0) {
+      this.modelOverlayScroll = 0;
+    }
+  }
+
+  private moveModelOverlay(delta: number) {
+    const items = this.modelOverlayFiltered();
+    if (items.length === 0) {
+      return;
+    }
+    this.modelOverlayIndex = Math.max(0, Math.min(items.length - 1, this.modelOverlayIndex + delta));
+    this.modelOverlayAdjustScroll();
+    this.requestRender();
+  }
+
+  /** Cycle ids in catalog order, restricted to the current selection. */
+  private modelOverlayOrderedSelection(): string[] {
+    return this.modelOverlayItems
+      .filter((item) => this.modelOverlaySelected.has(item.id))
+      .map((item) => item.id);
+  }
+
+  private toggleModelOverlay() {
+    const entry = this.modelOverlayFiltered()[this.modelOverlayIndex];
+    if (!entry) {
+      return;
+    }
+    if (this.modelOverlaySelected.has(entry.item.id)) {
+      this.modelOverlaySelected.delete(entry.item.id);
+    } else {
+      this.modelOverlaySelected.add(entry.item.id);
+    }
+    this.options.modelOverlay?.onCycleChange(this.modelOverlayOrderedSelection());
+    this.requestRender();
+  }
+
+  private pickModelOverlay() {
+    const entry = this.modelOverlayFiltered()[this.modelOverlayIndex];
+    if (entry) {
+      // Picking a model also adds it to the cycle so Tab can return to it.
+      if (!this.modelOverlaySelected.has(entry.item.id)) {
+        this.modelOverlaySelected.add(entry.item.id);
+        this.options.modelOverlay?.onCycleChange(this.modelOverlayOrderedSelection());
+      }
+      this.options.modelOverlay?.onPick(entry.item.id);
+    }
+    this.closeModelOverlay();
+  }
+
   private handleMouse(data: string) {
     let handled = false;
 
@@ -1692,6 +1905,15 @@ export class Tui {
 
     const columns = Math.max(process.stdout.columns ?? 80, 1);
     const rows = Math.max(process.stdout.rows ?? 24, 1);
+
+    if (this.modelOverlayActive) {
+      const overlayLines = this.renderModelOverlay(columns, rows);
+      // Cursor sits at the end of the search query on the second row.
+      const cursorCol = visibleLength("  Search: ") + Array.from(this.modelOverlayQuery).length + 1;
+      this.flushFrame(overlayLines, rows, columns, 2, cursorCol);
+      return;
+    }
+
     const statusRows = this.statusRows(rows);
     const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
     const suggestionPopup = this.suggestionActive
@@ -1882,15 +2104,23 @@ export class Tui {
     this.lastMessageRows = messageRows;
     this.emptyPrefixLines = emptyPrefixLines;
 
-    // ── P1: Line-level screen diffing ──
-    // Only emit escape sequences for rows that actually changed since the
-    // previous frame. We use a two-level diff:
-    //  1. Fast path: compare the raw (pre-clip) line reference. If the
-    //     line object is the same reference (common for cached logo lines,
-    //     cached block lines, etc.) AND there's no active selection, we
-    //     can skip the expensive clipAnsi entirely.
-    //  2. Slow path: compute the final clipped string and compare it to
-    //     the previously emitted string.
+    const cursorRow = Math.min(rows, messageRows + suggestionPopup.length + input.cursorRow);
+    this.flushFrame(lines, rows, columns, cursorRow, input.cursorCol);
+  }
+
+  /**
+   * Diff `lines` against the previously emitted frame and write only the rows
+   * that changed, then park the cursor. Shared by the normal render path and
+   * the model picker overlay.
+   *
+   * Uses a two-level diff:
+   *  1. Fast path: compare the raw (pre-clip) line reference. If the line is
+   *     identical by reference to the previous frame AND there's no active
+   *     selection, the output is unchanged — skip clipAnsi entirely.
+   *  2. Slow path: compute the final clipped string and compare it to the
+   *     previously emitted string.
+   */
+  private flushFrame(lines: string[], rows: number, columns: number, cursorRow: number, cursorCol: number) {
     const fullRepaint = this.previousFrameRows !== rows || this.previousFrameColumns !== columns;
     const hasSelection = !!(this.selection && this.selectionMoved);
     const output: string[] = [];
@@ -1899,9 +2129,6 @@ export class Tui {
     for (let row = 0; row < rows; row += 1) {
       const rawLine = lines[row] ?? "";
 
-      // Fast path: if no selection, no resize, and the raw source line
-      // is identical by reference to the previous frame, the output is
-      // guaranteed unchanged — skip clipAnsi entirely.
       if (
         !fullRepaint &&
         !hasSelection &&
@@ -1936,7 +2163,7 @@ export class Tui {
     this.previousFrameColumns = columns;
 
     // Always position cursor and show it
-    output.push(`\x1b[${Math.min(rows, messageRows + suggestionPopup.length + input.cursorRow)};${input.cursorCol}H${SHOW_CURSOR}`);
+    output.push(`\x1b[${cursorRow};${cursorCol}H${SHOW_CURSOR}`);
 
     process.stdout.write(output.join(""));
   }
@@ -2059,6 +2286,93 @@ export class Tui {
       lines.push(`${bg(SUGGESTION_BG)}${fg(245)}${moreText}${" ".repeat(pad)}${RESET}`);
     }
     return lines;
+  }
+
+  private renderModelOverlay(columns: number, rows: number): string[] {
+    const items = this.modelOverlayFiltered();
+
+    // Clamp the highlight and scroll window to the current (possibly filtered) list.
+    if (this.modelOverlayIndex >= items.length) {
+      this.modelOverlayIndex = Math.max(0, items.length - 1);
+    }
+    const listRows = Math.max(1, rows - OVERLAY_HEADER_ROWS - OVERLAY_FOOTER_ROWS);
+    if (this.modelOverlayScroll > Math.max(0, items.length - listRows)) {
+      this.modelOverlayScroll = Math.max(0, items.length - listRows);
+    }
+    this.modelOverlayAdjustScroll();
+
+    const lines: string[] = [];
+
+    // Title bar.
+    const count = this.modelOverlaySelected.size;
+    const title = `  Select models  ·  ${count} in cycle  ·  ${items.length}/${this.modelOverlayItems.length} shown`;
+    lines.push(overlayChromeLine(`${BOLD}${fg(252)}${title}`, columns));
+
+    // Search line.
+    lines.push(overlayLine(`${fg(245)}  Search: ${fg(252)}${this.modelOverlayQuery}`, columns));
+
+    // Separator.
+    lines.push(`${bg(OVERLAY_BG)}${fg(240)}${"─".repeat(columns)}${RESET}`);
+
+    // List window.
+    if (items.length === 0) {
+      lines.push(overlayLine(`${fg(244)}  No models match "${this.modelOverlayQuery}"`, columns));
+      for (let i = 1; i < listRows; i++) {
+        lines.push(overlayLine("", columns));
+      }
+    } else {
+      const start = this.modelOverlayScroll;
+      const end = Math.min(items.length, start + listRows);
+      for (let i = start; i < end; i++) {
+        lines.push(this.renderModelOverlayRow(items[i], i === this.modelOverlayIndex, columns));
+      }
+      for (let i = end - start; i < listRows; i++) {
+        lines.push(overlayLine("", columns));
+      }
+    }
+
+    // Footer hint.
+    const hint = "  ↑/↓ move   space toggle cycle   enter switch now   esc close";
+    lines.push(overlayChromeLine(`${fg(245)}${hint}`, columns));
+
+    // Guarantee exactly `rows` lines.
+    while (lines.length < rows) {
+      lines.push(overlayLine("", columns));
+    }
+    lines.length = rows;
+    return lines;
+  }
+
+  private renderModelOverlayRow(entry: ModelOverlayEntry, isCursor: boolean, columns: number): string {
+    const { item, positions } = entry;
+    const rowBg = isCursor ? OVERLAY_SEL_BG : OVERLAY_BG;
+    const isCurrent = item.id === this.model;
+    const isSelected = this.modelOverlaySelected.has(item.id);
+
+    const marker = isCurrent ? "●" : " ";
+    const checkbox = isSelected ? "[x]" : "[ ]";
+    const baseFg = isCursor ? 255 : 250;
+
+    const ctx = formatTokenCount(item.contextWindow).padStart(6);
+    const img = item.supportsImages ? "img" : "   ";
+    const price = item.inputPerMTok === 0 && item.outputPerMTok === 0
+      ? "free"
+      : `${formatPrice(item.inputPerMTok)}/${formatPrice(item.outputPerMTok)}`;
+    const meta = `${ctx}  ${img}  ${price}`;
+
+    // Visible width of the left portion: "  " + marker + " " + checkbox + " " + id.
+    const leftWidth = 2 + 1 + 1 + checkbox.length + 1 + item.id.length;
+    const metaWidth = meta.length;
+    const gap = Math.max(1, columns - leftWidth - metaWidth - 1);
+    const trailing = Math.max(0, columns - leftWidth - gap - metaWidth);
+
+    let line = `${bg(rowBg)}`;
+    line += `${fg(isCurrent ? 41 : baseFg)}  ${marker} `;
+    line += `${fg(isSelected ? 114 : 244)}${checkbox} `;
+    line += highlightModelId(item.id, positions, baseFg, 117);
+    line += `${fg(245)}${" ".repeat(gap)}${meta}${" ".repeat(trailing)}`;
+    line += RESET;
+    return line;
   }
 
   private renderInputLine(columns: number, maxRows: number) {
@@ -3450,6 +3764,38 @@ function blackLine(columns: number) {
     cachedBlackLine = `${bg(CANVAS_BG)}${" ".repeat(columns)}${RESET}`;
   }
   return cachedBlackLine;
+}
+
+function overlayLine(content: string, columns: number) {
+  const pad = Math.max(0, columns - visibleLength(content));
+  return `${bg(OVERLAY_BG)}${content}${" ".repeat(pad)}${RESET}`;
+}
+
+function overlayChromeLine(content: string, columns: number) {
+  const pad = Math.max(0, columns - visibleLength(content));
+  return `${bg(OVERLAY_CHROME_BG)}${content}${" ".repeat(pad)}${RESET}`;
+}
+
+/** Render a model id, brightening fuzzy-matched character positions. */
+function highlightModelId(id: string, positions: number[], baseFg: number, matchFg: number): string {
+  if (positions.length === 0) {
+    return `${fg(baseFg)}${id}`;
+  }
+  const matched = new Set(positions);
+  let out = "";
+  for (let i = 0; i < id.length; i++) {
+    if (matched.has(i)) {
+      out += `${BOLD}${fg(matchFg)}${id[i]}${NO_BOLD}`;
+    } else {
+      out += `${fg(baseFg)}${id[i]}`;
+    }
+  }
+  return out;
+}
+
+/** Format a per-MTok price, dropping trailing decimals for whole numbers. */
+function formatPrice(price: number): string {
+  return Number.isInteger(price) ? String(price) : price.toFixed(2);
 }
 
 function plainLine(text: string, columns: number) {

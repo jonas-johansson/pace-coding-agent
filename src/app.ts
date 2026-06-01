@@ -117,6 +117,7 @@ async function getProjectFiles(): Promise<string[]> {
 
 let anthropicProvider: AnthropicProvider | undefined;
 let openCodeZenProvider: OpenCodeZenProvider | undefined;
+let openCodeZenAnthropicProvider: AnthropicProvider | undefined;
 let openAIProvider: OpenAIProvider | undefined;
 let fireworksProvider: FireworksProvider | undefined;
 let lmStudioProvider: LmStudioProvider | undefined;
@@ -127,6 +128,21 @@ function getProvider(config: ModelConfig): Provider {
       if (!anthropicProvider) anthropicProvider = new AnthropicProvider();
       return anthropicProvider;
     case "opencode":
+      if (config.providerModel.startsWith("claude-")) {
+        if (!openCodeZenAnthropicProvider) {
+          const apiKey = process.env.OPENCODE_ZEN_API_KEY ?? process.env.OPENCODE_API_KEY;
+          if (!apiKey) {
+            throw new Error(
+              "Missing API key for OpenCode Zen. Set the OPENCODE_ZEN_API_KEY or OPENCODE_API_KEY environment variable.",
+            );
+          }
+          openCodeZenAnthropicProvider = new AnthropicProvider({
+            apiKey,
+            baseURL: process.env.OPENCODE_ZEN_ANTHROPIC_BASE_URL ?? "https://opencode.ai/zen",
+          });
+        }
+        return openCodeZenAnthropicProvider;
+      }
       if (!openCodeZenProvider) openCodeZenProvider = new OpenCodeZenProvider();
       return openCodeZenProvider;
     case "openai":
@@ -178,6 +194,7 @@ const tui = new Tui({
     { label: "/exit", detail: "Exit the application", kind: "command", insertText: "/exit " },
     { label: "/quit", detail: "Exit the application", kind: "command", insertText: "/quit " },
     { label: "/model", detail: "Show or switch model", kind: "command", insertText: "/model " },
+    { label: "/models", detail: "Open the model picker (Ctrl+O)", kind: "command", insertText: "/models" },
     { label: "/sessions", detail: "List project sessions", kind: "command", insertText: "/sessions" },
     { label: "/resume", detail: "Resume a session by id", kind: "command", insertText: "/resume " },
     { label: "/undo", detail: "Undo the last user turn", kind: "command", insertText: "/undo" },
@@ -186,6 +203,23 @@ const tui = new Tui({
     { label: "/mcp", detail: "List connected MCP servers and tools", kind: "command", insertText: "/mcp" },
   ],
   fileSuggestions: getProjectFiles,
+  modelOverlay: {
+    list: () => AVAILABLE_MODEL_IDS.map((id) => {
+      const config = MODELS[id];
+      return {
+        id,
+        contextWindow: config.contextWindow,
+        supportsImages: config.supportsImages,
+        inputPerMTok: config.pricing.inputPerMTok,
+        outputPerMTok: config.pricing.outputPerMTok,
+      };
+    }),
+    initialSelected: () => cycleModelIds,
+    onPick: (id) => selectModel(id),
+    onCycleChange: (ids) => {
+      cycleModelIds = ids.length > 0 ? ids : AVAILABLE_MODEL_IDS;
+    },
+  },
   model: DEFAULT_MODEL_ID,
   cwd: process.cwd(),
 });
@@ -469,6 +503,10 @@ async function handleCommand(command: string): Promise<boolean> {
 
       selectModel(resolved.id);
       tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModelId}.` });
+      return true;
+    }
+    case "/models": {
+      tui.openModelOverlay();
       return true;
     }
     case "/sessions": {

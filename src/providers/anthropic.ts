@@ -139,8 +139,8 @@ function fromAnthropicContent(blocks: Anthropic.ContentBlock[]): ContentBlock[] 
 export class AnthropicProvider implements Provider {
   private client: Anthropic;
 
-  constructor() {
-    this.client = new Anthropic();
+  constructor(options?: { apiKey?: string; baseURL?: string }) {
+    this.client = new Anthropic(options);
   }
 
   async stream(params: {
