@@ -16,6 +16,10 @@ export type FuzzyMatch = {
 
 const BOUNDARY_CHARS = new Set(["/", "-", ".", "_", " ", ":"]);
 
+function isAtBoundary(text: string, index: number): boolean {
+  return index === 0 || BOUNDARY_CHARS.has(text[index - 1]);
+}
+
 /**
  * Returns match details if every character of `query` appears in `text` in
  * order, otherwise `undefined`. An empty query matches everything with a
@@ -28,45 +32,108 @@ export function fuzzyMatch(query: string, text: string): FuzzyMatch | undefined 
 
   const q = query.toLowerCase();
   const t = text.toLowerCase();
-  const positions: number[] = [];
+  const m = q.length;
+  const n = t.length;
 
-  let score = 0;
-  let queryIndex = 0;
-  let previousMatch = -2;
-  let streak = 0;
-
-  for (let textIndex = 0; textIndex < t.length && queryIndex < q.length; textIndex++) {
-    if (t[textIndex] !== q[queryIndex]) {
-      continue;
+  // --- Exact-substring bonuses --------------------------------------------
+  let exactBonus = 0;
+  if (t.startsWith(q)) {
+    exactBonus = 300;
+  } else {
+    let best = 0;
+    let idx = t.indexOf(q);
+    while (idx !== -1) {
+      let bonus = 100;
+      if (idx === 0 || BOUNDARY_CHARS.has(t[idx - 1])) {
+        bonus = 200;
+      }
+      best = Math.max(best, bonus);
+      idx = t.indexOf(q, idx + 1);
     }
-
-    positions.push(textIndex);
-
-    // Reward consecutive matches with a growing streak bonus.
-    if (textIndex === previousMatch + 1) {
-      streak += 1;
-      score += 5 + streak * 2;
-    } else {
-      streak = 0;
-      score += 1;
-    }
-
-    // Reward matches that begin a new "word" (after a separator or at start).
-    const previousChar = textIndex > 0 ? t[textIndex - 1] : "/";
-    if (BOUNDARY_CHARS.has(previousChar)) {
-      score += 8;
-    }
-
-    // Reward matches near the front of the candidate.
-    score += Math.max(0, 6 - textIndex);
-
-    previousMatch = textIndex;
-    queryIndex += 1;
+    exactBonus = best;
   }
 
-  if (queryIndex < q.length) {
+  // --- DP over text positions ---------------------------------------------
+  // Each row is a Map<textPosition, entry> for the corresponding query char.
+  type Entry = { pos: number; score: number; pred: number };
+  const rows: Map<number, Entry>[] = [];
+
+  // First query character.
+  const firstRow = new Map<number, Entry>();
+  for (let j = 0; j < n; j++) {
+    if (t[j] === q[0]) {
+      let score = 1;
+      if (isAtBoundary(t, j)) score += 15;
+      score += Math.max(0, 10 - j);
+      firstRow.set(j, { pos: j, score, pred: -1 });
+    }
+  }
+
+  if (firstRow.size === 0) {
+    return undefined;
+  }
+  rows.push(firstRow);
+
+  // Remaining query characters.
+  for (let i = 1; i < m; i++) {
+    const prevRow = rows[i - 1];
+    const currRow = new Map<number, Entry>();
+
+    for (let j = 0; j < n; j++) {
+      if (t[j] !== q[i]) continue;
+
+      let bestScore = -Infinity;
+      let bestPred = -1;
+
+      for (const entry of prevRow.values()) {
+        if (entry.pos >= j) break; // must stay in order
+
+        const gap = j - entry.pos - 1;
+        let score = entry.score + 1;
+        if (gap === 0) {
+          score += 20; // consecutive run
+        } else {
+          score -= gap * 5; // gap penalty
+        }
+        if (isAtBoundary(t, j)) score += 15;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestPred = entry.pos;
+        }
+      }
+
+      if (bestPred !== -1) {
+        currRow.set(j, { pos: j, score: bestScore, pred: bestPred });
+      }
+    }
+
+    if (currRow.size === 0) {
+      return undefined;
+    }
+    rows.push(currRow);
+  }
+
+  // --- Pick the best overall path -----------------------------------------
+  let bestEntry: Entry | undefined;
+  for (const entry of rows[m - 1].values()) {
+    if (!bestEntry || entry.score > bestEntry.score) {
+      bestEntry = entry;
+    }
+  }
+
+  if (!bestEntry) {
     return undefined;
   }
 
-  return { score, positions };
+  // --- Reconstruct match positions ----------------------------------------
+  const positions = new Array<number>(m);
+  let pos = bestEntry.pos;
+  for (let i = m - 1; i >= 0; i--) {
+    const entry = rows[i].get(pos)!;
+    positions[i] = entry.pos;
+    pos = entry.pred;
+  }
+
+  return { score: bestEntry.score + exactBonus, positions };
 }
