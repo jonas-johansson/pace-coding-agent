@@ -54,10 +54,9 @@ import type {
 } from "./provider";
 import {
   MODELS,
-  MODEL_ALIASES,
   AVAILABLE_MODEL_IDS,
   DEFAULT_MODEL_ID,
-  resolveModelId,
+  getModelConfig,
   type ModelConfig,
 } from "./provider";
 import { AnthropicProvider } from "./providers/anthropic";
@@ -127,7 +126,7 @@ function getProvider(config: ModelConfig): Provider {
     case "anthropic":
       if (!anthropicProvider) anthropicProvider = new AnthropicProvider();
       return anthropicProvider;
-    case "opencode-zen":
+    case "opencode":
       if (!openCodeZenProvider) openCodeZenProvider = new OpenCodeZenProvider();
       return openCodeZenProvider;
     case "openai":
@@ -145,10 +144,11 @@ function getProvider(config: ModelConfig): Provider {
 // ── Model state ──────────────────────────────────────────────────────────────
 
 let currentModelId: string = DEFAULT_MODEL_ID;
+let cycleModelIds: string[] = AVAILABLE_MODEL_IDS;
 let activeSession = createSession(process.cwd(), currentModelId);
 
 function currentModelConfig(): ModelConfig {
-  return MODELS[currentModelId];
+  return getModelConfig(currentModelId) ?? MODELS[DEFAULT_MODEL_ID];
 }
 
 function selectModel(modelId: string) {
@@ -277,12 +277,16 @@ function mimeFromExtension(filePath: string): SupportedImageMediaType | null {
 
 function computeCallCost(
   config: ModelConfig,
+  totalInputTokens: number,
   inputTokens: number,
   cacheCreationTokens: number,
   cacheReadTokens: number,
   outputTokens: number,
 ): number {
-  const pricing = config.pricing;
+  const pricing = config.longContextPricing && totalInputTokens > config.longContextPricing.inputTokenThreshold
+    ? config.longContextPricing.pricing
+    : config.pricing;
+
   return (
     (inputTokens / 1_000_000) * pricing.inputPerMTok +
     (cacheCreationTokens / 1_000_000) * pricing.cacheWritePerMTok +
@@ -334,7 +338,7 @@ function clearPendingInputState() {
 
 function activateSession(session: Session) {
   activeSession = session;
-  currentModelId = MODELS[activeSession.currentModelId] ? activeSession.currentModelId : DEFAULT_MODEL_ID;
+  currentModelId = getModelConfig(activeSession.currentModelId) ? activeSession.currentModelId : DEFAULT_MODEL_ID;
   if (currentModelId !== activeSession.currentModelId) {
     activeSession = { ...activeSession, currentModelId };
   }
@@ -358,33 +362,40 @@ function formatError(error: unknown) {
 }
 
 function cycleModel() {
-  const ids = AVAILABLE_MODEL_IDS;
+  const ids = cycleModelIds;
   const currentIndex = ids.indexOf(currentModelId);
-  const nextIndex = (currentIndex + 1) % ids.length;
+  const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % ids.length;
   selectModel(ids[nextIndex]);
 }
 
 function cycleModelReverse() {
-  const ids = AVAILABLE_MODEL_IDS;
+  const ids = cycleModelIds;
   const currentIndex = ids.indexOf(currentModelId);
-  const prevIndex = (currentIndex - 1 + ids.length) % ids.length;
+  const prevIndex = currentIndex === -1 ? ids.length - 1 : (currentIndex - 1 + ids.length) % ids.length;
   selectModel(ids[prevIndex]);
 }
 
 function formatModelList() {
-  const aliasLookup = new Map<string, string[]>();
-  for (const [alias, modelId] of Object.entries(MODEL_ALIASES)) {
-    const existing = aliasLookup.get(modelId) ?? [];
-    existing.push(alias);
-    aliasLookup.set(modelId, existing);
+  return cycleModelIds.join("\n");
+}
+
+function applyConfiguredModels(config: { defaultModel?: string; cycleModels?: string[] }) {
+  if (config.cycleModels) {
+    const invalid = config.cycleModels.filter((modelId) => !getModelConfig(modelId));
+    if (invalid.length > 0) {
+      throw new Error(`Invalid cycleModels entries. Expected full provider/model ids for supported providers: ${invalid.join(", ")}`);
+    }
+    cycleModelIds = config.cycleModels;
   }
 
-  return AVAILABLE_MODEL_IDS
-    .map((modelId) => {
-      const aliases = aliasLookup.get(modelId);
-      return aliases ? `${modelId} (${aliases.join(", ")})` : modelId;
-    })
-    .join("\n");
+  if (config.defaultModel !== undefined) {
+    if (!getModelConfig(config.defaultModel)) {
+      throw new Error(`Invalid defaultModel. Expected a full provider/model id for a supported provider: ${config.defaultModel}`);
+    }
+    selectModel(config.defaultModel);
+  } else if (!cycleModelIds.includes(currentModelId)) {
+    selectModel(cycleModelIds[0]);
+  }
 }
 
 function formatSessionList(sessions: SessionListItem[]): string {
@@ -441,22 +452,22 @@ async function handleCommand(command: string): Promise<boolean> {
         tui.addBlock({
           role: "assistant",
           title: "Model",
-          content: `Current model: ${currentModelId}\n\nAvailable models:\n${formatModelList()}\n\nUsage: /model <model-id>`,
+          content: `Current model: ${currentModelId}\n\nCycle models:\n${formatModelList()}\n\nUsage: /model <model-id>`,
         });
         return true;
       }
 
-      const resolved = resolveModelId(requestedModel);
+      const resolved = getModelConfig(requestedModel);
       if (!resolved) {
         tui.addBlock({
           role: "error",
           title: "Unknown model",
-          content: `Unknown model: ${requestedModel}\n\nAvailable models:\n${formatModelList()}`,
+          content: `Unknown model: ${requestedModel}\n\nUse a full model id in the form provider/model.\n\nCycle models:\n${formatModelList()}`,
         });
         return true;
       }
 
-      selectModel(resolved);
+      selectModel(resolved.id);
       tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModelId}.` });
       return true;
     }
@@ -1072,7 +1083,7 @@ async function prompt(
       tui.setStatus("Reasoning");
 
       const stream: ProviderStream = await provider.stream({
-        model: modelConfig.id,
+        model: modelConfig.providerModel,
         system: systemText,
         messages: sessionToProviderMessages(activeSession, turnDraft),
         tools: toolDefs,
@@ -1220,6 +1231,7 @@ async function prompt(
 
       const callCost = computeCallCost(
         modelConfig,
+        response.usage.inputTokens,
         // For cost: use inputTokens minus cache tokens for the base input cost
         response.usage.inputTokens - response.usage.cacheCreationTokens - response.usage.cacheReadTokens,
         response.usage.cacheCreationTokens,
@@ -1338,6 +1350,7 @@ async function main() {
   try {
     const paceConfig = await loadPaceConfig();
     tui.setCostDisplayConfig(paceConfig.cost);
+    applyConfiguredModels(paceConfig);
   } catch (error) {
     tui.addBlock({ role: "error", title: "Pace config", content: formatError(error) });
   }

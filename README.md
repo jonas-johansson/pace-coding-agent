@@ -16,10 +16,10 @@ tsx src/app.ts
 Set at least one API key:
 
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-...    # Claude models
-export OPENAI_API_KEY=sk-...           # GPT models
-export OPENCODE_ZEN_API_KEY=...        # Kimi via OpenCode Zen
-export FIREWORKS_API_KEY=...           # Kimi via Fireworks
+export ANTHROPIC_API_KEY=sk-ant-...    # anthropic/* models
+export OPENAI_API_KEY=sk-...           # openai/* models
+export OPENCODE_ZEN_API_KEY=...        # opencode/* models via OpenCode Zen
+export FIREWORKS_API_KEY=...           # fireworks/* models
 ```
 
 ## Features
@@ -39,16 +39,17 @@ export FIREWORKS_API_KEY=...           # Kimi via Fireworks
 
 ## Models
 
-Switch models at any time with **Tab** or `/model <name>`.
+Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the full `provider/model` string.
 
-| Model | Alias | Provider |
-|---|---|---|
-| `claude-haiku-4-5` | `haiku` | Anthropic |
-| `claude-sonnet-4-6` | `sonnet` | Anthropic |
-| `claude-opus-4-6` | `opus` | Anthropic |
-| `kimi-k2.6` | `kimi` | OpenCode Zen |
-| `kimi-k2.6-fw` | `kimi-fw` | Fireworks |
-| `gpt-5.5` | `5.5` | OpenAI |
+| Model ID |
+|---|
+| `anthropic/claude-haiku-4-5` |
+| `anthropic/claude-sonnet-4-6` |
+| `anthropic/claude-opus-4-6` |
+| `opencode/kimi-k2.6` |
+| `opencode/gpt-5.5` |
+| `fireworks/kimi-k2.6` |
+| `openai/gpt-5.5` |
 
 ## Keyboard shortcuts
 
@@ -66,7 +67,7 @@ Switch models at any time with **Tab** or `/model <name>`.
 | Command | What it does |
 |---|---|
 | `/new` | Start a fresh conversation |
-| `/model <name>` | Switch model (or list models without args) |
+| `/model <model-id>` | Switch model (or list models without args) |
 | `/sessions` | List saved sessions for this project |
 | `/resume <id>` | Resume a saved session |
 | `/undo` | Rewind to before the last user message |
@@ -83,6 +84,19 @@ Switch models at any time with **Tab** or `/model <name>`.
 ## Configuration
 
 Pace reads global configuration from `~/.config/pace/config.json`.
+
+Choose the startup model and the models that **Tab** / **Shift+Tab** cycle through with full `provider/model` IDs:
+
+```json
+{
+  "defaultModel": "opencode/gpt-5.5",
+  "cycleModels": [
+    "opencode/gpt-5.5",
+    "opencode/kimi-k2.6",
+    "openai/gpt-5.5"
+  ]
+}
+```
 
 To display estimated costs in a specific currency, configure a USD conversion rate, display format, and how many fraction digits:
 

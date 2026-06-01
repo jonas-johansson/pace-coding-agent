@@ -19,11 +19,11 @@ import type {
 const DEFAULT_BASE_URL = "https://api.fireworks.ai/inference/v1";
 
 /**
- * Maps our internal model IDs to the Fireworks API model identifiers.
+ * Maps provider model IDs to the Fireworks API model identifiers.
  * Add new entries here when onboarding additional Fireworks-hosted models.
  */
 const FIREWORKS_MODEL_MAP: Record<string, string> = {
-  "kimi-k2.6-fw": "accounts/fireworks/models/kimi-k2p6",
+  "kimi-k2.6": "accounts/fireworks/models/kimi-k2p6",
 };
 
 // ── OpenAI-compatible types (minimal) ────────────────────────────────────────

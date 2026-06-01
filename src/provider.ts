@@ -1,12 +1,8 @@
 /**
- * Provider abstraction layer.
- *
- * Defines a common interface that both Anthropic and OpenAI-compatible
- * providers implement, so the rest of the app can work against a single
- * set of types regardless of the upstream API.
+ * Provider-agnostic types and model configuration.
  */
 
-// ── Normalised content blocks ────────────────────────────────────────────────
+// ── Content blocks ───────────────────────────────────────────────────────────
 
 export type TextBlock = {
   type: "text";
@@ -16,7 +12,6 @@ export type TextBlock = {
 export type ImageBlock = {
   type: "image";
   mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-  /** Base64-encoded image data. */
   data: string;
 };
 
@@ -26,10 +21,6 @@ export type ToolUseBlock = {
   name: string;
   input: unknown;
 };
-
-export type ContentBlock = TextBlock | ToolUseBlock;
-
-// ── Tool result (sent back to the model) ─────────────────────────────────────
 
 export type ToolResultPart = {
   type: "text";
@@ -43,23 +34,77 @@ export type ToolResultContent = {
   is_error?: boolean;
 };
 
+export type ContentBlock = TextBlock | ToolUseBlock;
+
 // ── Messages ─────────────────────────────────────────────────────────────────
 
 export type UserMessage = {
   role: "user";
-  content: (TextBlock | ImageBlock | ToolResultContent)[];
+  content: Array<TextBlock | ImageBlock | ToolResultContent>;
 };
 
 export type AssistantMessage = {
   role: "assistant";
-  content: ContentBlock[];
-  /** Opaque provider-specific data, serialized as-is for session persistence. */
+  content: Array<TextBlock | ToolUseBlock>;
+  /**
+   * Provider-specific metadata needed to faithfully continue conversations.
+   * Examples: Anthropic raw content blocks, OpenAI Responses output items,
+   * OpenCode Zen reasoning_content.
+   */
   providerMetadata?: unknown;
 };
 
 export type ProviderMessage = UserMessage | AssistantMessage;
 
-// ── Usage ────────────────────────────────────────────────────────────────────
+// ── Streaming events ─────────────────────────────────────────────────────────
+
+export type TextStartEvent = {
+  type: "text_start";
+  text: string;
+};
+
+export type TextDeltaEvent = {
+  type: "text_delta";
+  text: string;
+};
+
+export type ReasoningStartEvent = {
+  type: "reasoning_start";
+  text: string;
+};
+
+export type ReasoningDeltaEvent = {
+  type: "reasoning_delta";
+  text: string;
+};
+
+export type ToolUseStartEvent = {
+  type: "tool_use_start";
+  id: string;
+  name: string;
+};
+
+export type ToolInputDeltaEvent = {
+  type: "tool_input_delta";
+  id: string;
+  partialJson: string;
+};
+
+export type BlockStopEvent = {
+  type: "block_stop";
+  id?: string;
+};
+
+export type StreamEvent =
+  | TextStartEvent
+  | TextDeltaEvent
+  | ReasoningStartEvent
+  | ReasoningDeltaEvent
+  | ToolUseStartEvent
+  | ToolInputDeltaEvent
+  | BlockStopEvent;
+
+// ── Usage / response ─────────────────────────────────────────────────────────
 
 export type UsageInfo = {
   inputTokens: number;
@@ -68,65 +113,12 @@ export type UsageInfo = {
   cacheCreationTokens: number;
 };
 
-// ── Streaming events ─────────────────────────────────────────────────────────
-
-export type StreamTextStart = {
-  type: "text_start";
-  text: string;
-};
-
-export type StreamTextDelta = {
-  type: "text_delta";
-  text: string;
-};
-
-export type StreamReasoningStart = {
-  type: "reasoning_start";
-  text: string;
-};
-
-export type StreamReasoningDelta = {
-  type: "reasoning_delta";
-  text: string;
-};
-
-export type StreamToolUseStart = {
-  type: "tool_use_start";
-  id: string;
-  name: string;
-};
-
-export type StreamToolInputDelta = {
-  type: "tool_input_delta";
-  id: string;
-  partialJson: string;
-};
-
-export type StreamBlockStop = {
-  type: "block_stop";
-  id?: string;
-};
-
-export type StreamEvent =
-  | StreamTextStart
-  | StreamTextDelta
-  | StreamReasoningStart
-  | StreamReasoningDelta
-  | StreamToolUseStart
-  | StreamToolInputDelta
-  | StreamBlockStop;
-
-// ── Provider response (after stream completes) ──────────────────────────────
-
 export type ProviderResponse = {
   content: ContentBlock[];
   stopReason: "end_turn" | "tool_use";
   usage: UsageInfo;
-  /** Opaque provider-specific data to carry on the AssistantMessage. */
   providerMetadata?: unknown;
 };
-
-// ── Stream handle ────────────────────────────────────────────────────────────
 
 export type ProviderStream = {
   [Symbol.asyncIterator](): AsyncIterator<StreamEvent>;
@@ -156,24 +148,44 @@ export interface Provider {
 
 // ── Model configuration ─────────────────────────────────────────────────────
 
-export type ModelConfig = {
-  id: string;
-  provider: "anthropic" | "opencode-zen" | "openai" | "fireworks" | "lmstudio";
+export type ProviderId = "anthropic" | "opencode" | "openai" | "fireworks" | "lmstudio";
+
+export type PricingConfig = {
+  inputPerMTok: number;
+  cacheWritePerMTok: number;
+  cacheReadPerMTok: number;
+  outputPerMTok: number;
+};
+
+export type ModelMetadata = {
   contextWindow: number;
   maxOutputTokens: number;
   supportsImages: boolean;
-  pricing: {
-    inputPerMTok: number;
-    cacheWritePerMTok: number;
-    cacheReadPerMTok: number;
-    outputPerMTok: number;
+  pricing: PricingConfig;
+  longContextPricing?: {
+    inputTokenThreshold: number;
+    pricing: PricingConfig;
   };
 };
 
-export const MODELS: Record<string, ModelConfig> = {
-  "claude-haiku-4-5": {
-    id: "claude-haiku-4-5",
-    provider: "anthropic",
+export type ModelConfig = ModelMetadata & {
+  /** Full user-facing model id: provider/model. */
+  id: string;
+  /** Provider id parsed from the full model id. */
+  provider: ProviderId;
+  /** Model id sent to the provider API. */
+  providerModel: string;
+};
+
+const ZERO_PRICING: PricingConfig = {
+  inputPerMTok: 0,
+  cacheWritePerMTok: 0,
+  cacheReadPerMTok: 0,
+  outputPerMTok: 0,
+};
+
+export const MODEL_METADATA: Record<string, ModelMetadata> = {
+  "anthropic/claude-haiku-4-5": {
     contextWindow: 200_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
@@ -184,9 +196,7 @@ export const MODELS: Record<string, ModelConfig> = {
       outputPerMTok: 5,
     },
   },
-  "claude-sonnet-4-6": {
-    id: "claude-sonnet-4-6",
-    provider: "anthropic",
+  "anthropic/claude-sonnet-4-6": {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
@@ -197,9 +207,7 @@ export const MODELS: Record<string, ModelConfig> = {
       outputPerMTok: 15,
     },
   },
-  "claude-opus-4-6": {
-    id: "claude-opus-4-6",
-    provider: "anthropic",
+  "anthropic/claude-opus-4-6": {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
@@ -210,9 +218,7 @@ export const MODELS: Record<string, ModelConfig> = {
       outputPerMTok: 25,
     },
   },
-  "kimi-k2.6": {
-    id: "kimi-k2.6",
-    provider: "opencode-zen",
+  "opencode/kimi-k2.6": {
     contextWindow: 262_144,
     maxOutputTokens: 32_000,
     supportsImages: true,
@@ -223,9 +229,7 @@ export const MODELS: Record<string, ModelConfig> = {
       outputPerMTok: 4.00,
     },
   },
-  "kimi-k2.6-fw": {
-    id: "kimi-k2.6-fw",
-    provider: "fireworks",
+  "fireworks/kimi-k2.6": {
     contextWindow: 262_144,
     maxOutputTokens: 32_000,
     supportsImages: true,
@@ -236,9 +240,7 @@ export const MODELS: Record<string, ModelConfig> = {
       outputPerMTok: 4.00,
     },
   },
-  "gpt-5.5": {
-    id: "gpt-5.5",
-    provider: "openai",
+  "opencode/gpt-5.5": {
     contextWindow: 1_050_000,
     maxOutputTokens: 128_000,
     supportsImages: true,
@@ -248,54 +250,127 @@ export const MODELS: Record<string, ModelConfig> = {
       cacheReadPerMTok: 0.50,
       outputPerMTok: 30.00,
     },
+    longContextPricing: {
+      inputTokenThreshold: 272_000,
+      pricing: {
+        inputPerMTok: 10.00,
+        cacheWritePerMTok: 0,
+        cacheReadPerMTok: 1.00,
+        outputPerMTok: 45.00,
+      },
+    },
   },
-  "gemma-4-26b": {
-    id: "google/gemma-4-26b-a4b",
-    provider: "lmstudio",
+  "openai/gpt-5.5": {
+    contextWindow: 1_050_000,
+    maxOutputTokens: 128_000,
+    supportsImages: true,
+    pricing: {
+      inputPerMTok: 5.00,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.50,
+      outputPerMTok: 30.00,
+    },
+    longContextPricing: {
+      inputTokenThreshold: 272_000,
+      pricing: {
+        inputPerMTok: 10.00,
+        cacheWritePerMTok: 0,
+        cacheReadPerMTok: 1.00,
+        outputPerMTok: 45.00,
+      },
+    },
+  },
+  "lmstudio/google/gemma-4-26b-a4b": {
     contextWindow: 32_768,
     maxOutputTokens: 8_192,
     supportsImages: true,
-    pricing: {
-      inputPerMTok: 0,
-      cacheWritePerMTok: 0,
-      cacheReadPerMTok: 0,
-      outputPerMTok: 0,
-    },
+    pricing: ZERO_PRICING,
   },
-  "qwen-3.6-35b": {
-    id: "qwen/qwen3.6-35b-a3b",
-    provider: "lmstudio",
+  "lmstudio/qwen/qwen3.6-35b-a3b": {
     contextWindow: 32_768,
     maxOutputTokens: 8_192,
     supportsImages: true,
-    pricing: {
-      inputPerMTok: 0,
-      cacheWritePerMTok: 0,
-      cacheReadPerMTok: 0,
-      outputPerMTok: 0,
-    },
+    pricing: ZERO_PRICING,
   },
 };
 
-export const MODEL_ALIASES: Record<string, string> = {
-  haiku: "claude-haiku-4-5",
-  sonnet: "claude-sonnet-4-6",
-  opus: "claude-opus-4-6",
-  kimi: "kimi-k2.6",
-  "k2.6": "kimi-k2.6",
-  "kimi-fw": "kimi-k2.6-fw",
-  "k2.6-fw": "kimi-k2.6-fw",
-  "gpt5.5": "gpt-5.5",
-  "5.5": "gpt-5.5",
-  gemma: "gemma-4-26b",
-  qwen: "qwen-3.6-35b",
+const PROVIDER_IDS = new Set<ProviderId>([
+  "anthropic",
+  "opencode",
+  "openai",
+  "fireworks",
+  "lmstudio",
+]);
+
+export function parseModelId(id: string): { id: string; provider: ProviderId; providerModel: string } | undefined {
+  const slashIndex = id.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === id.length - 1) return undefined;
+
+  const provider = id.slice(0, slashIndex);
+  if (!PROVIDER_IDS.has(provider as ProviderId)) return undefined;
+
+  return {
+    id,
+    provider: provider as ProviderId,
+    providerModel: id.slice(slashIndex + 1),
+  };
+}
+
+const DEFAULT_MODEL_METADATA_BY_PROVIDER: Record<ProviderId, ModelMetadata> = {
+  anthropic: {
+    contextWindow: 200_000,
+    maxOutputTokens: 16_000,
+    supportsImages: true,
+    pricing: ZERO_PRICING,
+  },
+  opencode: {
+    contextWindow: 128_000,
+    maxOutputTokens: 16_000,
+    supportsImages: true,
+    pricing: ZERO_PRICING,
+  },
+  openai: {
+    contextWindow: 128_000,
+    maxOutputTokens: 16_000,
+    supportsImages: true,
+    pricing: ZERO_PRICING,
+  },
+  fireworks: {
+    contextWindow: 128_000,
+    maxOutputTokens: 16_000,
+    supportsImages: true,
+    pricing: ZERO_PRICING,
+  },
+  lmstudio: {
+    contextWindow: 32_768,
+    maxOutputTokens: 8_192,
+    supportsImages: true,
+    pricing: ZERO_PRICING,
+  },
 };
+
+export function getModelConfig(id: string): ModelConfig | undefined {
+  const parsed = parseModelId(id);
+  if (!parsed) return undefined;
+
+  const metadata = MODEL_METADATA[id] ?? DEFAULT_MODEL_METADATA_BY_PROVIDER[parsed.provider];
+  return { ...metadata, ...parsed };
+}
+
+function createModels(): Record<string, ModelConfig> {
+  return Object.fromEntries(
+    Object.keys(MODEL_METADATA).map((id) => {
+      const config = getModelConfig(id);
+      if (!config) {
+        throw new Error(`Invalid built-in model id: ${id}`);
+      }
+      return [id, config];
+    }),
+  );
+}
+
+export const MODELS: Record<string, ModelConfig> = createModels();
 
 export const AVAILABLE_MODEL_IDS = Object.keys(MODELS);
 
-export const DEFAULT_MODEL_ID = "kimi-k2.6";
-
-export function resolveModelId(input: string): string | undefined {
-  if (input in MODELS) return input;
-  return MODEL_ALIASES[input.toLowerCase()];
-}
+export const DEFAULT_MODEL_ID = "opencode/kimi-k2.6";
