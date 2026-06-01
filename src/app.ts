@@ -1121,7 +1121,7 @@ async function prompt(
 
   try {
     while (true) {
-      tui.setStatus("Reasoning");
+      tui.setStatus("Thinking");
 
       const stream: ProviderStream = await provider.stream({
         model: modelConfig.providerModel,
@@ -1223,7 +1223,7 @@ async function prompt(
                 title: reasoningDisplayTitle(accReasoning),
               });
             }
-            tui.setStatus("Reasoning");
+            tui.setStatus("Thinking");
             break;
           }
 
