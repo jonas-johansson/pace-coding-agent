@@ -121,6 +121,26 @@ function toAnthropicTools(tools: ToolDefinition[]): Anthropic.Tool[] {
   }));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function anthropicThinkingOption(options: Record<string, unknown> | undefined): Anthropic.ThinkingConfigParam {
+  const thinking = options?.thinking;
+  if (isRecord(thinking)) {
+    return thinking as unknown as Anthropic.ThinkingConfigParam;
+  }
+  return { type: "enabled", budget_tokens: 8_192, display: "summarized" };
+}
+
+function anthropicOutputConfigOption(options: Record<string, unknown> | undefined): Anthropic.OutputConfig | undefined {
+  const outputConfig = options?.output_config;
+  if (isRecord(outputConfig)) {
+    return outputConfig as unknown as Anthropic.OutputConfig;
+  }
+  return undefined;
+}
+
 function fromAnthropicContent(blocks: Anthropic.ContentBlock[]): ContentBlock[] {
   const result: ContentBlock[] = [];
   for (const block of blocks) {
@@ -149,6 +169,7 @@ export class AnthropicProvider implements Provider {
     messages: ProviderMessage[];
     tools: ToolDefinition[];
     maxTokens: number;
+    providerOptions?: Record<string, unknown>;
     signal?: AbortSignal;
   }): Promise<ProviderStream> {
     const systemPrompt: Anthropic.TextBlockParam[] = [
@@ -158,6 +179,7 @@ export class AnthropicProvider implements Provider {
         cache_control: { type: "ephemeral" as const },
       },
     ];
+    const outputConfig = anthropicOutputConfigOption(params.providerOptions);
 
     const anthropicStream = await this.client.messages.stream(
       {
@@ -167,7 +189,8 @@ export class AnthropicProvider implements Provider {
         messages: toAnthropicMessages(params.messages),
         tools: toAnthropicTools(params.tools),
         cache_control: { type: "ephemeral" },
-        thinking: { type: "adaptive", display: "summarized" },
+        thinking: anthropicThinkingOption(params.providerOptions),
+        ...(outputConfig && { output_config: outputConfig }),
       },
       { signal: params.signal },
     );

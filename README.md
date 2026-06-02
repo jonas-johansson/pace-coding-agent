@@ -39,7 +39,7 @@ export FIREWORKS_API_KEY=...           # fireworks/* models
 
 ## Models
 
-Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the full `provider/model` string.
+Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the full `provider/model` string. For models with variants, use **Ctrl+T** or `/variant <variant>` to cycle provider-native options such as OpenAI reasoning effort.
 
 | Model ID |
 |---|
@@ -63,6 +63,7 @@ Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the
 | Key | Action |
 |---|---|
 | **Tab** / **Shift+Tab** | Cycle models forward / backward |
+| **Ctrl+T** | Cycle the current model's variant |
 | **Escape** | Cancel the running prompt |
 | **Ctrl+V** | Paste image from clipboard |
 | **Ctrl+C** | Clear input, or press twice to exit |
@@ -74,7 +75,8 @@ Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the
 | Command | What it does |
 |---|---|
 | `/new` | Start a fresh conversation |
-| `/model <model-id>` | Switch model (or list models without args) |
+| `/model <model-id>[:variant]` | Switch model (or list models without args) |
+| `/variant [variant]` | Show or switch the current model's variant |
 | `/sessions` | List saved sessions for this project |
 | `/resume <id>` | Resume a saved session |
 | `/undo` | Rewind to before the last user message |
@@ -92,18 +94,21 @@ Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the
 
 Pace reads global configuration from `~/.config/pace/config.json`.
 
-Choose the startup model and the models that **Tab** / **Shift+Tab** cycle through with full `provider/model` IDs:
+Choose the startup model and the models that **Tab** / **Shift+Tab** cycle through with full `provider/model` IDs. Models with variants can use `provider/model:variant` entries:
 
 ```json
 {
-  "defaultModel": "opencode/gpt-5.5",
+  "defaultModel": "opencode/gpt-5.5:medium",
   "cycleModels": [
-    "opencode/gpt-5.5",
+    "opencode/gpt-5.5:medium",
+    "opencode/gpt-5.5:high",
     "opencode/kimi-k2.6",
-    "openai/gpt-5.5"
+    "openai/gpt-5.5:xhigh"
   ]
 }
 ```
+
+Pace remembers the last variant used for each model in memory, so cycling away from a model and back restores that model's previous variant during the current run.
 
 To display estimated costs in a specific currency, configure a USD conversion rate, display format, and how many fraction digits:
 

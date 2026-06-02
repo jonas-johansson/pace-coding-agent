@@ -142,6 +142,8 @@ export interface Provider {
     messages: ProviderMessage[];
     tools: ToolDefinition[];
     maxTokens: number;
+    /** Provider-native options for the selected model variant. */
+    providerOptions?: Record<string, unknown>;
     signal?: AbortSignal;
   }): Promise<ProviderStream>;
 }

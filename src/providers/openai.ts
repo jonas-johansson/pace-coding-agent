@@ -24,6 +24,7 @@ import type {
   ResponseOutputItem,
   ResponseStreamEvent,
   FunctionTool,
+  ResponseCreateParamsStreaming,
 } from "openai/resources/responses/responses";
 
 // ── Provider metadata type ──────────────────────────────────────────────────
@@ -176,6 +177,26 @@ function parseToolArguments(args: string): unknown {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function openAIReasoningOption(options: Record<string, unknown> | undefined): ResponseCreateParamsStreaming["reasoning"] {
+  const reasoning = options?.reasoning;
+  if (isRecord(reasoning)) {
+    return reasoning as ResponseCreateParamsStreaming["reasoning"];
+  }
+  return { summary: "auto" };
+}
+
+function openAIIncludeOption(options: Record<string, unknown> | undefined): ResponseCreateParamsStreaming["include"] {
+  const include = options?.include;
+  if (Array.isArray(include) && include.every((value) => typeof value === "string")) {
+    return include as ResponseCreateParamsStreaming["include"];
+  }
+  return ["reasoning.encrypted_content"];
+}
+
 function contentFromOutputItems(outputItems: ResponseOutputItem[]): ContentBlock[] {
   const content: ContentBlock[] = [];
 
@@ -223,6 +244,7 @@ export class OpenAIProvider implements Provider {
     messages: ProviderMessage[];
     tools: ToolDefinition[];
     maxTokens: number;
+    providerOptions?: Record<string, unknown>;
     signal?: AbortSignal;
   }): Promise<ProviderStream> {
     const responseStream = this.client.responses.stream(
@@ -234,8 +256,8 @@ export class OpenAIProvider implements Provider {
         max_output_tokens: params.maxTokens,
         parallel_tool_calls: true,
         store: false,
-        reasoning: { summary: "auto" },
-        include: ["reasoning.encrypted_content"],
+        reasoning: openAIReasoningOption(params.providerOptions),
+        include: openAIIncludeOption(params.providerOptions),
       },
       { signal: params.signal },
     );

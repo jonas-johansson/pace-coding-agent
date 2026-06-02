@@ -270,6 +270,7 @@ export class FireworksProvider implements Provider {
     messages: ProviderMessage[];
     tools: ToolDefinition[];
     maxTokens: number;
+    providerOptions?: Record<string, unknown>;
     signal?: AbortSignal;
   }): Promise<ProviderStream> {
     const fireworksModel = FIREWORKS_MODEL_MAP[params.model];

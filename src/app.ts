@@ -57,7 +57,12 @@ import {
   AVAILABLE_MODEL_IDS,
   DEFAULT_MODEL_ID,
   getModelConfig,
+  getModelVariant,
+  parseModelSelection,
+  formatModelSelection,
   type ModelConfig,
+  type ModelSelection,
+  type ModelVariant,
 } from "./models";
 import { AnthropicProvider } from "./providers/anthropic";
 import { OpenCodeZenProvider } from "./providers/opencode-zen";
@@ -179,25 +184,65 @@ function getProvider(config: ModelConfig): Provider {
 // ── Model state ──────────────────────────────────────────────────────────────
 
 let currentModelId: string = DEFAULT_MODEL_ID;
-let cycleModelIds: string[] = [
-  "opencode/kimi-k2.6",
-  "opencode/claude-opus-4-8",
+const lastVariantByModelId = new Map<string, string>();
+let cycleModelSelections: ModelSelection[] = [
+  { modelId: "opencode/kimi-k2.6" },
+  { modelId: "opencode/claude-opus-4-8" },
 ];
 let activeSession = createSession(process.cwd(), currentModelId);
+
+type ResolvedModelVariant = ModelVariant & { id: string };
 
 function currentModelConfig(): ModelConfig {
   return getModelConfig(currentModelId) ?? MODELS[DEFAULT_MODEL_ID];
 }
 
-function selectModel(modelId: string) {
+function currentModelVariantId(): string | undefined {
+  const remembered = lastVariantByModelId.get(currentModelId);
+  if (remembered && getModelVariant(currentModelId, remembered)) {
+    return remembered;
+  }
+  return undefined;
+}
+
+function currentModelVariant(): ResolvedModelVariant | undefined {
+  const variantId = currentModelVariantId();
+  const variant = getModelVariant(currentModelId, variantId);
+  return variant && variantId ? { ...variant, id: variantId } : undefined;
+}
+
+function formatCurrentModelSelection(): string {
+  return formatModelSelection({ modelId: currentModelId, variantId: currentModelVariantId() });
+}
+
+function selectModel(modelId: string, explicitVariantId?: string) {
   currentModelId = modelId;
+  const model = currentModelConfig();
+  const variants = model.variants ?? {};
+  const rememberedVariantId = lastVariantByModelId.get(modelId);
+  const nextVariantId = explicitVariantId
+    ?? (rememberedVariantId && variants[rememberedVariantId] ? rememberedVariantId : undefined)
+    ?? model.defaultVariant;
+
+  if (nextVariantId && variants[nextVariantId]) {
+    lastVariantByModelId.set(modelId, nextVariantId);
+  } else {
+    lastVariantByModelId.delete(modelId);
+  }
+
+  const currentVariantId = currentModelVariantId();
   activeSession = {
     ...activeSession,
     currentModelId,
+    currentModelVariant: currentVariantId,
     updatedAt: new Date().toISOString(),
   };
-  tui.setModel(currentModelId);
+  tui.setModel(formatCurrentModelSelection());
   updateContextInfo();
+}
+
+function selectModelSelection(selection: ModelSelection) {
+  selectModel(selection.modelId, selection.variantId);
 }
 
 function cancelPrompt() {
@@ -209,6 +254,7 @@ const tui = new Tui({
   onSubmit: handleUserInput,
   onTab: cycleModel,
   onShiftTab: cycleModelReverse,
+  onCycleVariant: cycleModelVariant,
   onEscape: cancelPrompt,
   onPasteImage: handlePasteImage,
   slashCommands: () => [
@@ -217,6 +263,8 @@ const tui = new Tui({
     { label: "/quit", detail: "Exit the application", kind: "command", insertText: "/quit " },
     { label: "/model", detail: "Show or switch model", kind: "command", insertText: "/model " },
     { label: "/models", detail: "Open the model picker (Ctrl+O)", kind: "command", insertText: "/models", executeOnAccept: true },
+    { label: "/variant", detail: "Show or switch model variant", kind: "command", insertText: "/variant " },
+    { label: "/variants", detail: "List model variants", kind: "command", insertText: "/variants", executeOnAccept: true },
     { label: "/sessions", detail: "Open the session picker", kind: "command", insertText: "/sessions", executeOnAccept: true },
     { label: "/resume", detail: "Resume a session by id", kind: "command", insertText: "/resume " },
     { label: "/undo", detail: "Undo the last user turn", kind: "command", insertText: "/undo" },
@@ -236,10 +284,10 @@ const tui = new Tui({
         outputPerMTok: config.pricing.outputPerMTok,
       };
     }),
-    initialSelected: () => cycleModelIds,
+    initialSelected: () => Array.from(new Set(cycleModelSelections.map((selection) => selection.modelId))),
     onPick: (id) => selectModel(id),
     onCycleChange: (ids) => {
-      cycleModelIds = ids.length > 0 ? ids : AVAILABLE_MODEL_IDS;
+      cycleModelSelections = (ids.length > 0 ? ids : AVAILABLE_MODEL_IDS).map((modelId) => ({ modelId }));
     },
   },
   sessionOverlay: {
@@ -400,11 +448,12 @@ function clearPendingInputState() {
 function activateSession(session: Session) {
   activeSession = session;
   currentModelId = getModelConfig(activeSession.currentModelId) ? activeSession.currentModelId : DEFAULT_MODEL_ID;
-  if (currentModelId !== activeSession.currentModelId) {
-    activeSession = { ...activeSession, currentModelId };
+  if (getModelVariant(currentModelId, activeSession.currentModelVariant)) {
+    lastVariantByModelId.set(currentModelId, activeSession.currentModelVariant as string);
   }
+  activeSession = { ...activeSession, currentModelId, currentModelVariant: currentModelVariantId() };
 
-  tui.setModel(currentModelId);
+  tui.setModel(formatCurrentModelSelection());
   clearPendingInputState();
   rebuildTuiFromSession();
   refreshSessionStatsFromSession();
@@ -427,40 +476,90 @@ function formatError(error: unknown) {
   return error instanceof Error ? error.stack ?? error.message : String(error);
 }
 
+function modelSelectionMatchesCurrent(selection: ModelSelection): boolean {
+  return selection.modelId === currentModelId
+    && (selection.variantId === undefined || selection.variantId === currentModelVariantId());
+}
+
 function cycleModel() {
-  const ids = cycleModelIds;
-  const currentIndex = ids.indexOf(currentModelId);
-  const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % ids.length;
-  selectModel(ids[nextIndex]);
+  const selections = cycleModelSelections;
+  const currentIndex = selections.findIndex(modelSelectionMatchesCurrent);
+  const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % selections.length;
+  selectModelSelection(selections[nextIndex]);
 }
 
 function cycleModelReverse() {
-  const ids = cycleModelIds;
-  const currentIndex = ids.indexOf(currentModelId);
-  const prevIndex = currentIndex === -1 ? ids.length - 1 : (currentIndex - 1 + ids.length) % ids.length;
-  selectModel(ids[prevIndex]);
+  const selections = cycleModelSelections;
+  const currentIndex = selections.findIndex(modelSelectionMatchesCurrent);
+  const prevIndex = currentIndex === -1 ? selections.length - 1 : (currentIndex - 1 + selections.length) % selections.length;
+  selectModelSelection(selections[prevIndex]);
+}
+
+function cycleModelVariant() {
+  const variants = Object.keys(currentModelConfig().variants ?? {});
+  if (variants.length === 0) {
+    tui.setStatus(`${currentModelId} has no variants`);
+    return;
+  }
+
+  const currentVariant = currentModelVariantId();
+  const currentIndex = currentVariant ? variants.indexOf(currentVariant) : -1;
+  const nextVariant = variants[(currentIndex + 1) % variants.length];
+  lastVariantByModelId.set(currentModelId, nextVariant);
+  activeSession = {
+    ...activeSession,
+    currentModelId,
+    currentModelVariant: nextVariant,
+    updatedAt: new Date().toISOString(),
+  };
+  tui.setModel(formatCurrentModelSelection());
+  tui.setStatus(`Variant: ${formatCurrentModelSelection()}`);
 }
 
 function formatModelList() {
-  return cycleModelIds.join("\n");
+  return cycleModelSelections.map(formatModelSelection).join("\n");
+}
+
+function formatVariantList() {
+  const variants = currentModelConfig().variants ?? {};
+  const entries = Object.entries(variants);
+  if (entries.length === 0) {
+    return `${currentModelId} has no variants.`;
+  }
+
+  const currentVariant = currentModelVariantId();
+  return [
+    `Current model: ${currentModelId}`,
+    `Current variant: ${currentVariant ?? "none"}`,
+    "",
+    "Available variants:",
+    ...entries.map(([id, variant]) => {
+      const marker = id === currentVariant ? "*" : "-";
+      return `${marker} ${id}${variant.label ? ` — ${variant.label}` : ""}`;
+    }),
+    "",
+    "Usage: /variant <variant>",
+  ].join("\n");
 }
 
 function applyConfiguredModels(config: { defaultModel?: string; cycleModels?: string[] }) {
   if (config.cycleModels) {
-    const invalid = config.cycleModels.filter((modelId) => !getModelConfig(modelId));
+    const parsed = config.cycleModels.map((modelSelection) => ({ raw: modelSelection, parsed: parseModelSelection(modelSelection) }));
+    const invalid = parsed.filter((entry) => !entry.parsed).map((entry) => entry.raw);
     if (invalid.length > 0) {
-      throw new Error(`Invalid cycleModels entries. Expected full provider/model ids for supported providers: ${invalid.join(", ")}`);
+      throw new Error(`Invalid cycleModels entries. Expected provider/model or provider/model:variant ids for supported providers: ${invalid.join(", ")}`);
     }
-    cycleModelIds = config.cycleModels;
+    cycleModelSelections = parsed.map((entry) => entry.parsed as ModelSelection);
   }
 
   if (config.defaultModel !== undefined) {
-    if (!getModelConfig(config.defaultModel)) {
-      throw new Error(`Invalid defaultModel. Expected a full provider/model id for a supported provider: ${config.defaultModel}`);
+    const selection = parseModelSelection(config.defaultModel);
+    if (!selection) {
+      throw new Error(`Invalid defaultModel. Expected provider/model or provider/model:variant for a supported provider: ${config.defaultModel}`);
     }
-    selectModel(config.defaultModel);
-  } else if (!cycleModelIds.includes(currentModelId)) {
-    selectModel(cycleModelIds[0]);
+    selectModelSelection(selection);
+  } else if (!cycleModelSelections.some((selection) => selection.modelId === currentModelId)) {
+    selectModelSelection(cycleModelSelections[0]);
   }
 }
 
@@ -518,27 +617,55 @@ async function handleCommand(command: string): Promise<boolean> {
         tui.addBlock({
           role: "assistant",
           title: "Model",
-          content: `Current model: ${currentModelId}\n\nCycle models:\n${formatModelList()}\n\nUsage: /model <model-id>`,
+          content: `Current model: ${formatCurrentModelSelection()}\n\nCycle models:\n${formatModelList()}\n\nUsage: /model <model-id>[:variant]`,
         });
         return true;
       }
 
-      const resolved = getModelConfig(requestedModel);
+      const resolved = parseModelSelection(requestedModel);
       if (!resolved) {
         tui.addBlock({
           role: "error",
           title: "Unknown model",
-          content: `Unknown model: ${requestedModel}\n\nUse a full model id in the form provider/model.\n\nCycle models:\n${formatModelList()}`,
+          content: `Unknown model: ${requestedModel}\n\nUse a full model id in the form provider/model or provider/model:variant.\n\nCycle models:\n${formatModelList()}`,
         });
         return true;
       }
 
-      selectModel(resolved.id);
-      tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${currentModelId}.` });
+      selectModelSelection(resolved);
+      tui.addBlock({ role: "assistant", title: "Model", content: `Model changed to ${formatCurrentModelSelection()}.` });
       return true;
     }
     case "/models": {
       tui.openModelOverlay();
+      return true;
+    }
+    case "/variants":
+    case "/variant": {
+      const requestedVariant = args[0];
+      if (!requestedVariant) {
+        tui.addBlock({ role: "assistant", title: "Variants", content: formatVariantList() });
+        return true;
+      }
+
+      if (!getModelVariant(currentModelId, requestedVariant)) {
+        tui.addBlock({
+          role: "error",
+          title: "Unknown variant",
+          content: `Unknown variant for ${currentModelId}: ${requestedVariant}\n\n${formatVariantList()}`,
+        });
+        return true;
+      }
+
+      lastVariantByModelId.set(currentModelId, requestedVariant);
+      activeSession = {
+        ...activeSession,
+        currentModelId,
+        currentModelVariant: requestedVariant,
+        updatedAt: new Date().toISOString(),
+      };
+      tui.setModel(formatCurrentModelSelection());
+      tui.addBlock({ role: "assistant", title: "Variant", content: `Variant changed to ${formatCurrentModelSelection()}.` });
       return true;
     }
     case "/sessions": {
@@ -1150,6 +1277,7 @@ async function prompt(
   }
 
   const modelConfig = currentModelConfig();
+  const modelVariant = currentModelVariant();
   const provider = getProvider(modelConfig);
   const toolDefs = getProviderToolDefinitions();
 
@@ -1163,6 +1291,7 @@ async function prompt(
         messages: sessionToProviderMessages(activeSession, turnDraft),
         tools: toolDefs,
         maxTokens: modelConfig.maxOutputTokens,
+        ...(modelVariant?.providerOptions && { providerOptions: modelVariant.providerOptions }),
         signal,
       });
 
@@ -1322,6 +1451,7 @@ async function prompt(
         content: assistantContent,
         provider: modelConfig.provider,
         modelId: modelConfig.id,
+        ...(modelVariant?.id !== undefined && { modelVariant: modelVariant.id }),
         tokensIn: response.usage.inputTokens,
         tokensOut: response.usage.outputTokens,
         cacheReadTokens: response.usage.cacheReadTokens,
@@ -1411,7 +1541,8 @@ async function prompt(
 const exampleTable = `| Command | Description |
 |---|---|
 | /new | Start a new conversation, clearing all history and context. |
-| /model <model-id> | Switch to a different model. Use without arguments to list available models. |
+| /model <model-id>[:variant] | Switch to a different model. Use without arguments to list available models. |
+| /variant [variant] | Show or switch the current model's variant. |
 | /sessions | List saved sessions for the current project. |
 | /resume <session-id> | Resume a saved session by id. |
 | /undo | Rewind to before the last user message. |

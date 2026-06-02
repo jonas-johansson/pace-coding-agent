@@ -69,6 +69,7 @@ export type Session = {
   createdAt: string;
   updatedAt: string;
   currentModelId: string;
+  currentModelVariant?: string;
   title?: string;
   activeEntryId: string | null;
   entries: SessionEntry[];
@@ -81,6 +82,7 @@ export type SessionListItem = {
   createdAt: string;
   updatedAt: string;
   currentModelId: string;
+  currentModelVariant?: string;
   title?: string;
   activeEntryId: string | null;
   entryCount: number;
@@ -531,6 +533,7 @@ function isSession(value: unknown): value is Session {
     && isString(value.createdAt)
     && isString(value.updatedAt)
     && isString(value.currentModelId)
+    && isOptionalString(value.currentModelVariant)
     && isOptionalString(value.title)
     && isNullableString(value.activeEntryId)
     && Array.isArray(value.entries)

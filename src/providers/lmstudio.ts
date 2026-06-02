@@ -209,6 +209,7 @@ export class LmStudioProvider implements Provider {
     messages: ProviderMessage[];
     tools: ToolDefinition[];
     maxTokens: number;
+    providerOptions?: Record<string, unknown>;
     signal?: AbortSignal;
   }): Promise<ProviderStream> {
     const modelId = process.env.LMSTUDIO_MODEL ?? params.model;

@@ -284,7 +284,7 @@ export class Tui {
   private sessionOverlayScroll = 0;
   private sessionOverlayItems: SessionOverlayItem[] = [];
 
-  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; slashCommands?: SuggestionProvider; fileSuggestions?: FileSuggestionProvider; modelOverlay?: ModelOverlayOptions; sessionOverlay?: SessionOverlayOptions; model?: string; cwd?: string } = {}) {
+  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onCycleVariant?: () => void; onEscape?: () => void; onPasteImage?: () => void | Promise<void>; slashCommands?: SuggestionProvider; fileSuggestions?: FileSuggestionProvider; modelOverlay?: ModelOverlayOptions; sessionOverlay?: SessionOverlayOptions; model?: string; cwd?: string } = {}) {
     this.model = options.model ?? "";
     this.cwd = options.cwd ?? "";
     this.slashItems = options.slashCommands ? options.slashCommands() : [];
@@ -705,6 +705,12 @@ export class Tui {
         void Promise.resolve(this.options.onPasteImage?.()).catch(() => {
           // Swallow here; app-level handler is responsible for user-visible status.
         });
+        continue;
+      }
+
+      // Ctrl+T — cycle the current model's variant.
+      if (char === "\u0014") {
+        this.options.onCycleVariant?.();
         continue;
       }
 

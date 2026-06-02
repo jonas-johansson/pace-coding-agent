@@ -11,6 +11,15 @@ export type PricingConfig = {
   outputPerMTok: number;
 };
 
+export type ModelVariant = {
+  id: string;
+  /** Human-readable provider-native wording, e.g. "reasoning effort: high". */
+  label?: string;
+  description?: string;
+  /** Provider-native request options applied when this variant is selected. */
+  providerOptions: Record<string, unknown>;
+};
+
 export type ModelMetadata = {
   contextWindow: number;
   maxOutputTokens: number;
@@ -20,6 +29,8 @@ export type ModelMetadata = {
     inputTokenThreshold: number;
     pricing: PricingConfig;
   };
+  defaultVariant?: string;
+  variants?: Record<string, ModelVariant>;
 };
 
 export type ModelConfig = ModelMetadata & {
@@ -38,11 +49,79 @@ const ZERO_PRICING: PricingConfig = {
   outputPerMTok: 0,
 };
 
+const OPENAI_ENCRYPTED_REASONING_INCLUDE = ["reasoning.encrypted_content"];
+
+function openAIReasoningEffortVariant(effort: "none" | "low" | "medium" | "high" | "xhigh"): ModelVariant {
+  return {
+    id: effort,
+    label: `reasoning effort: ${effort}`,
+    providerOptions: {
+      reasoning: { effort, summary: "auto" },
+      include: OPENAI_ENCRYPTED_REASONING_INCLUDE,
+    },
+  };
+}
+
+const GPT_5_5_REASONING_VARIANTS: Record<string, ModelVariant> = {
+  none: openAIReasoningEffortVariant("none"),
+  low: openAIReasoningEffortVariant("low"),
+  medium: openAIReasoningEffortVariant("medium"),
+  high: openAIReasoningEffortVariant("high"),
+  xhigh: openAIReasoningEffortVariant("xhigh"),
+};
+
+function anthropicAdaptiveThinkingVariant(effort: "low" | "medium" | "high" | "xhigh" | "max"): ModelVariant {
+  return {
+    id: effort,
+    label: `adaptive thinking effort: ${effort}`,
+    providerOptions: {
+      thinking: { type: "adaptive", display: "summarized" },
+      output_config: { effort },
+    },
+  };
+}
+
+const ANTHROPIC_NOTHINK_VARIANT: ModelVariant = {
+  id: "nothink",
+  label: "thinking: disabled",
+  providerOptions: { thinking: { type: "disabled" } },
+};
+
+const ANTHROPIC_ADAPTIVE_THINKING_VARIANTS: Record<string, ModelVariant> = {
+  nothink: ANTHROPIC_NOTHINK_VARIANT,
+  adaptive: {
+    id: "adaptive",
+    label: "adaptive thinking",
+    providerOptions: { thinking: { type: "adaptive", display: "summarized" } },
+  },
+  low: anthropicAdaptiveThinkingVariant("low"),
+  medium: anthropicAdaptiveThinkingVariant("medium"),
+  high: anthropicAdaptiveThinkingVariant("high"),
+  xhigh: anthropicAdaptiveThinkingVariant("xhigh"),
+  max: anthropicAdaptiveThinkingVariant("max"),
+};
+
+const ANTHROPIC_BUDGET_THINKING_VARIANTS: Record<string, ModelVariant> = {
+  nothink: ANTHROPIC_NOTHINK_VARIANT,
+  "thinking-8k": {
+    id: "thinking-8k",
+    label: "thinking budget: 8k",
+    providerOptions: { thinking: { type: "enabled", budget_tokens: 8_192, display: "summarized" } },
+  },
+  "thinking-max": {
+    id: "thinking-max",
+    label: "thinking budget: max",
+    providerOptions: { thinking: { type: "enabled", budget_tokens: 15_999, display: "summarized" } },
+  },
+};
+
 export const MODEL_METADATA: Record<string, ModelMetadata> = {
   "anthropic/claude-haiku-4-5": {
     contextWindow: 200_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
+    defaultVariant: "thinking-8k",
+    variants: ANTHROPIC_BUDGET_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 1,
       cacheWritePerMTok: 1.25,
@@ -54,6 +133,8 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
+    defaultVariant: "adaptive",
+    variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 3,
       cacheWritePerMTok: 3.75,
@@ -65,6 +146,8 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
+    defaultVariant: "adaptive",
+    variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
       cacheWritePerMTok: 6.25,
@@ -76,6 +159,8 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
+    defaultVariant: "adaptive",
+    variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
       cacheWritePerMTok: 6.25,
@@ -87,6 +172,8 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
+    defaultVariant: "adaptive",
+    variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
       cacheWritePerMTok: 6.25,
@@ -98,6 +185,8 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 200_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
+    defaultVariant: "thinking-8k",
+    variants: ANTHROPIC_BUDGET_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 1,
       cacheWritePerMTok: 1.25,
@@ -109,6 +198,8 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
+    defaultVariant: "adaptive",
+    variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 3,
       cacheWritePerMTok: 3.75,
@@ -120,6 +211,8 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
+    defaultVariant: "adaptive",
+    variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
       cacheWritePerMTok: 6.25,
@@ -131,6 +224,8 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
+    defaultVariant: "adaptive",
+    variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
       cacheWritePerMTok: 6.25,
@@ -142,6 +237,8 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
+    defaultVariant: "adaptive",
+    variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
       cacheWritePerMTok: 6.25,
@@ -175,6 +272,8 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_050_000,
     maxOutputTokens: 128_000,
     supportsImages: true,
+    defaultVariant: "medium",
+    variants: GPT_5_5_REASONING_VARIANTS,
     pricing: {
       inputPerMTok: 5.00,
       cacheWritePerMTok: 0,
@@ -195,6 +294,8 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_050_000,
     maxOutputTokens: 128_000,
     supportsImages: true,
+    defaultVariant: "medium",
+    variants: GPT_5_5_REASONING_VARIANTS,
     pricing: {
       inputPerMTok: 5.00,
       cacheWritePerMTok: 0,
@@ -286,6 +387,35 @@ export function getModelConfig(id: string): ModelConfig | undefined {
 
   const metadata = MODEL_METADATA[id] ?? DEFAULT_MODEL_METADATA_BY_PROVIDER[parsed.provider];
   return { ...metadata, ...parsed };
+}
+
+export type ModelSelection = {
+  modelId: string;
+  variantId?: string;
+};
+
+export function getModelVariant(modelId: string, variantId: string | undefined): ModelVariant | undefined {
+  if (!variantId) return undefined;
+  return getModelConfig(modelId)?.variants?.[variantId];
+}
+
+export function formatModelSelection(selection: ModelSelection): string {
+  return selection.variantId ? `${selection.modelId}:${selection.variantId}` : selection.modelId;
+}
+
+export function parseModelSelection(input: string): ModelSelection | undefined {
+  const exactModel = getModelConfig(input);
+  if (exactModel) return { modelId: exactModel.id };
+
+  const lastColonIndex = input.lastIndexOf(":");
+  if (lastColonIndex === -1) return undefined;
+
+  const modelId = input.slice(0, lastColonIndex);
+  const variantId = input.slice(lastColonIndex + 1);
+  const model = getModelConfig(modelId);
+  if (!model || !variantId || !model.variants?.[variantId]) return undefined;
+
+  return { modelId: model.id, variantId };
 }
 
 function createModels(): Record<string, ModelConfig> {
