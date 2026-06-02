@@ -594,7 +594,6 @@ function cycleModelVariant() {
   const currentIndex = currentVariant ? cycle.indexOf(currentVariant) : 0;
   const nextVariant = cycle[((currentIndex === -1 ? 0 : currentIndex) + 1) % cycle.length];
   updateCurrentModelVariant(nextVariant);
-  tui.setStatus(`Variant: ${formatCurrentModelSelection()}${nextVariant === undefined ? " (unset)" : ""}`);
 }
 
 function formatModelList() {
