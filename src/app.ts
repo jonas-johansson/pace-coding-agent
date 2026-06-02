@@ -215,29 +215,30 @@ function formatCurrentModelSelection(): string {
   return formatModelSelection({ modelId: currentModelId, variantId: currentModelVariantId() });
 }
 
-function selectModel(modelId: string, explicitVariantId?: string) {
-  currentModelId = modelId;
-  const model = currentModelConfig();
-  const variants = model.variants ?? {};
-  const rememberedVariantId = lastVariantByModelId.get(modelId);
-  const nextVariantId = explicitVariantId
-    ?? (rememberedVariantId && variants[rememberedVariantId] ? rememberedVariantId : undefined)
-    ?? model.defaultVariant;
-
-  if (nextVariantId && variants[nextVariantId]) {
-    lastVariantByModelId.set(modelId, nextVariantId);
+function updateCurrentModelVariant(variantId: string | undefined) {
+  if (variantId) {
+    lastVariantByModelId.set(currentModelId, variantId);
   } else {
-    lastVariantByModelId.delete(modelId);
+    lastVariantByModelId.delete(currentModelId);
   }
 
-  const currentVariantId = currentModelVariantId();
   activeSession = {
     ...activeSession,
     currentModelId,
-    currentModelVariant: currentVariantId,
+    currentModelVariant: variantId,
     updatedAt: new Date().toISOString(),
   };
   tui.setModel(formatCurrentModelSelection());
+}
+
+function selectModel(modelId: string, explicitVariantId?: string) {
+  currentModelId = modelId;
+  const variants = currentModelConfig().variants ?? {};
+  const rememberedVariantId = lastVariantByModelId.get(modelId);
+  const nextVariantId = explicitVariantId
+    ?? (rememberedVariantId && variants[rememberedVariantId] ? rememberedVariantId : undefined);
+
+  updateCurrentModelVariant(nextVariantId && variants[nextVariantId] ? nextVariantId : undefined);
   updateContextInfo();
 }
 
@@ -263,7 +264,7 @@ const tui = new Tui({
     { label: "/quit", detail: "Exit the application", kind: "command", insertText: "/quit " },
     { label: "/model", detail: "Show or switch model", kind: "command", insertText: "/model " },
     { label: "/models", detail: "Open the model picker (Ctrl+O)", kind: "command", insertText: "/models", executeOnAccept: true },
-    { label: "/variant", detail: "Show or switch model variant", kind: "command", insertText: "/variant " },
+    { label: "/variant", detail: "Show, switch, or unset model variant", kind: "command", insertText: "/variant " },
     { label: "/variants", detail: "List model variants", kind: "command", insertText: "/variants", executeOnAccept: true },
     { label: "/sessions", detail: "Open the session picker", kind: "command", insertText: "/sessions", executeOnAccept: true },
     { label: "/resume", detail: "Resume a session by id", kind: "command", insertText: "/resume " },
@@ -450,6 +451,8 @@ function activateSession(session: Session) {
   currentModelId = getModelConfig(activeSession.currentModelId) ? activeSession.currentModelId : DEFAULT_MODEL_ID;
   if (getModelVariant(currentModelId, activeSession.currentModelVariant)) {
     lastVariantByModelId.set(currentModelId, activeSession.currentModelVariant as string);
+  } else {
+    lastVariantByModelId.delete(currentModelId);
   }
   activeSession = { ...activeSession, currentModelId, currentModelVariant: currentModelVariantId() };
 
@@ -503,17 +506,11 @@ function cycleModelVariant() {
   }
 
   const currentVariant = currentModelVariantId();
-  const currentIndex = currentVariant ? variants.indexOf(currentVariant) : -1;
-  const nextVariant = variants[(currentIndex + 1) % variants.length];
-  lastVariantByModelId.set(currentModelId, nextVariant);
-  activeSession = {
-    ...activeSession,
-    currentModelId,
-    currentModelVariant: nextVariant,
-    updatedAt: new Date().toISOString(),
-  };
-  tui.setModel(formatCurrentModelSelection());
-  tui.setStatus(`Variant: ${formatCurrentModelSelection()}`);
+  const cycle: (string | undefined)[] = [undefined, ...variants];
+  const currentIndex = currentVariant ? cycle.indexOf(currentVariant) : 0;
+  const nextVariant = cycle[((currentIndex === -1 ? 0 : currentIndex) + 1) % cycle.length];
+  updateCurrentModelVariant(nextVariant);
+  tui.setStatus(`Variant: ${formatCurrentModelSelection()}${nextVariant === undefined ? " (unset)" : ""}`);
 }
 
 function formatModelList() {
@@ -530,15 +527,16 @@ function formatVariantList() {
   const currentVariant = currentModelVariantId();
   return [
     `Current model: ${currentModelId}`,
-    `Current variant: ${currentVariant ?? "none"}`,
+    `Current variant: ${currentVariant ?? "unset"}`,
     "",
     "Available variants:",
+    `${currentVariant === undefined ? "*" : "-"} unset — provider default, no explicit options sent`,
     ...entries.map(([id, variant]) => {
       const marker = id === currentVariant ? "*" : "-";
       return `${marker} ${id}${variant.label ? ` — ${variant.label}` : ""}`;
     }),
     "",
-    "Usage: /variant <variant>",
+    "Usage: /variant <variant|unset>",
   ].join("\n");
 }
 
@@ -648,6 +646,13 @@ async function handleCommand(command: string): Promise<boolean> {
         return true;
       }
 
+      const normalizedVariant = requestedVariant.toLowerCase();
+      if (["unset", "none", "default", "clear"].includes(normalizedVariant)) {
+        updateCurrentModelVariant(undefined);
+        tui.addBlock({ role: "assistant", title: "Variant", content: `Variant changed to ${formatCurrentModelSelection()} (unset).` });
+        return true;
+      }
+
       if (!getModelVariant(currentModelId, requestedVariant)) {
         tui.addBlock({
           role: "error",
@@ -657,14 +662,7 @@ async function handleCommand(command: string): Promise<boolean> {
         return true;
       }
 
-      lastVariantByModelId.set(currentModelId, requestedVariant);
-      activeSession = {
-        ...activeSession,
-        currentModelId,
-        currentModelVariant: requestedVariant,
-        updatedAt: new Date().toISOString(),
-      };
-      tui.setModel(formatCurrentModelSelection());
+      updateCurrentModelVariant(requestedVariant);
       tui.addBlock({ role: "assistant", title: "Variant", content: `Variant changed to ${formatCurrentModelSelection()}.` });
       return true;
     }

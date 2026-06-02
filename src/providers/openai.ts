@@ -4,8 +4,9 @@
  *
  * Supports reasoning models (GPT-5.5, etc.) by capturing raw output items
  * — including reasoning items — and storing them on the AssistantMessage's
- * `providerMetadata` field. On subsequent requests, these are replayed
- * directly so the model can continue its chain of thought after tool calls.
+ * `providerMetadata` field. On subsequent requests, these are sanitized and
+ * replayed so the model can continue after tool calls without relying on
+ * server-side item persistence.
  */
 
 import OpenAI from "openai";
@@ -31,8 +32,8 @@ import type {
 
 /**
  * Shape of the `providerMetadata` stored on AssistantMessages originating
- * from this provider. Contains the raw Responses API output items so that
- * reasoning items, messages, and function calls can be replayed verbatim.
+ * from this provider. Contains the raw Responses API output items; they are
+ * sanitized before being sent as input on subsequent requests.
  */
 type OpenAIMetadata = {
   provider: "openai";
@@ -48,16 +49,82 @@ function isOpenAIMetadata(v: unknown): v is OpenAIMetadata {
   );
 }
 
+function textFromOutputMessage(item: Extract<ResponseOutputItem, { type: "message" }>): string {
+  return item.content
+    .map((part) => {
+      if (part.type === "output_text") return part.text;
+      if (part.type === "refusal") return part.refusal;
+      return "";
+    })
+    .join("");
+}
+
+function textFromReasoningItem(item: Extract<ResponseOutputItem, { type: "reasoning" }>): string {
+  const reasoningText = item.content?.map((part) => part.text).join("") ?? "";
+  if (reasoningText) {
+    return reasoningText;
+  }
+
+  return item.summary.map((part) => part.text).filter(Boolean).join("\n");
+}
+
+function stripReplayReadonlyFields(item: ResponseOutputItem): ResponseInputItem {
+  const { id: _id, status: _status, created_by: _createdBy, ...rest } = item as unknown as Record<string, unknown>;
+  return rest as unknown as ResponseInputItem;
+}
+
+function toReplayInputItem(item: ResponseOutputItem): ResponseInputItem | undefined {
+  if (item.type === "reasoning") {
+    if (!item.encrypted_content) {
+      return undefined;
+    }
+
+    return {
+      type: "reasoning",
+      encrypted_content: item.encrypted_content,
+      summary: item.summary,
+    } as unknown as ResponseInputItem;
+  }
+
+  if (item.type === "message") {
+    const text = textFromOutputMessage(item);
+    if (!text) {
+      return undefined;
+    }
+
+    return {
+      type: "message",
+      role: "assistant",
+      content: text,
+      ...(item.phase !== undefined && { phase: item.phase }),
+    };
+  }
+
+  if (item.type === "function_call") {
+    return {
+      type: "function_call",
+      call_id: item.call_id,
+      name: item.name,
+      arguments: item.arguments,
+      ...(item.namespace !== undefined && { namespace: item.namespace }),
+    };
+  }
+
+  return stripReplayReadonlyFields(item);
+}
+
 // ── Message translation ─────────────────────────────────────────────────────
 
 /**
  * Convert our provider-agnostic messages into Responses API input items.
  *
  * For assistant messages that carry `providerMetadata` from a previous
- * OpenAI response, we replay the raw output items directly — this preserves
- * reasoning items that reasoning models need for continuity. For messages
- * without metadata (e.g. from a different provider or a legacy session), we
- * translate from the ContentBlock format.
+ * OpenAI response, we replay sanitized output items. Responses created with
+ * `store: false` are not persisted server-side, so replaying service-assigned
+ * item ids (especially reasoning ids) can make the API try to look them up and
+ * fail. Reasoning continuity is preserved via encrypted_content when available.
+ * For messages without metadata (e.g. from a different provider or a legacy
+ * session), we translate from the ContentBlock format.
  */
 function toResponsesInput(messages: ProviderMessage[]): ResponseInputItem[] {
   const items: ResponseInputItem[] = [];
@@ -111,10 +178,13 @@ function toResponsesInput(messages: ProviderMessage[]): ResponseInputItem[] {
         } as ResponseInputItem);
       }
     } else {
-      // Assistant message — prefer raw output items if available
+      // Assistant message — prefer sanitized OpenAI output items if available.
       if (isOpenAIMetadata(msg.providerMetadata)) {
         for (const item of msg.providerMetadata.outputItems) {
-          items.push(item as ResponseInputItem);
+          const replayItem = toReplayInputItem(item);
+          if (replayItem) {
+            items.push(replayItem);
+          }
         }
         continue;
       }
@@ -181,20 +251,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function openAIReasoningOption(options: Record<string, unknown> | undefined): ResponseCreateParamsStreaming["reasoning"] {
+function openAIReasoningOption(options: Record<string, unknown> | undefined): ResponseCreateParamsStreaming["reasoning"] | undefined {
   const reasoning = options?.reasoning;
   if (isRecord(reasoning)) {
     return reasoning as ResponseCreateParamsStreaming["reasoning"];
   }
-  return { summary: "auto" };
+  return undefined;
 }
 
-function openAIIncludeOption(options: Record<string, unknown> | undefined): ResponseCreateParamsStreaming["include"] {
+function openAIIncludeOption(options: Record<string, unknown> | undefined): ResponseCreateParamsStreaming["include"] | undefined {
   const include = options?.include;
   if (Array.isArray(include) && include.every((value) => typeof value === "string")) {
     return include as ResponseCreateParamsStreaming["include"];
   }
-  return ["reasoning.encrypted_content"];
+  return undefined;
 }
 
 function contentFromOutputItems(outputItems: ResponseOutputItem[]): ContentBlock[] {
@@ -247,6 +317,8 @@ export class OpenAIProvider implements Provider {
     providerOptions?: Record<string, unknown>;
     signal?: AbortSignal;
   }): Promise<ProviderStream> {
+    const reasoning = openAIReasoningOption(params.providerOptions);
+    const include = openAIIncludeOption(params.providerOptions);
     const responseStream = this.client.responses.stream(
       {
         model: params.model,
@@ -256,8 +328,8 @@ export class OpenAIProvider implements Provider {
         max_output_tokens: params.maxTokens,
         parallel_tool_calls: true,
         store: false,
-        reasoning: openAIReasoningOption(params.providerOptions),
-        include: openAIIncludeOption(params.providerOptions),
+        ...(reasoning && { reasoning }),
+        ...(include && { include }),
       },
       { signal: params.signal },
     );
@@ -303,6 +375,7 @@ class OpenAIStream implements ProviderStream {
 
   async *[Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
     const startedTools = new Set<string>();
+    const streamedReasoningOutputIndexes = new Set<number>();
     // Track any open assistant text/reasoning block so transitions are explicit.
     let openBlock: "text" | "reasoning" | undefined;
 
@@ -314,6 +387,7 @@ class OpenAIStream implements ProviderStream {
         // provider reasoning events so the TUI can render them as thinking blocks.
         case "response.reasoning_text.delta":
         case "response.reasoning_summary_text.delta": {
+          streamedReasoningOutputIndexes.add(event.output_index);
           if (event.delta === "") {
             break;
           }
@@ -396,6 +470,18 @@ class OpenAIStream implements ProviderStream {
         case "response.output_item.done": {
           // Capture all completed output items (reasoning, messages, tool calls)
           this.outputItems.push(event.item);
+
+          if (event.item.type === "reasoning" && !streamedReasoningOutputIndexes.has(event.output_index)) {
+            const reasoningText = textFromReasoningItem(event.item);
+            if (reasoningText) {
+              if (openBlock) {
+                openBlock = undefined;
+                yield { type: "block_stop" };
+              }
+              yield { type: "reasoning_start", text: reasoningText };
+              yield { type: "block_stop" };
+            }
+          }
 
           if (event.item.type === "function_call") {
             const itemId = event.item.id ?? event.item.call_id;

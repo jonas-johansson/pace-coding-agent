@@ -29,7 +29,6 @@ export type ModelMetadata = {
     inputTokenThreshold: number;
     pricing: PricingConfig;
   };
-  defaultVariant?: string;
   variants?: Record<string, ModelVariant>;
 };
 
@@ -120,7 +119,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 200_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
-    defaultVariant: "thinking-8k",
     variants: ANTHROPIC_BUDGET_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 1,
@@ -133,7 +131,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
-    defaultVariant: "adaptive",
     variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 3,
@@ -146,7 +143,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
-    defaultVariant: "adaptive",
     variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
@@ -159,7 +155,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
-    defaultVariant: "adaptive",
     variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
@@ -172,7 +167,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
-    defaultVariant: "adaptive",
     variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
@@ -185,7 +179,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 200_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
-    defaultVariant: "thinking-8k",
     variants: ANTHROPIC_BUDGET_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 1,
@@ -198,7 +191,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
-    defaultVariant: "adaptive",
     variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 3,
@@ -211,7 +203,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
-    defaultVariant: "adaptive",
     variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
@@ -224,7 +215,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
-    defaultVariant: "adaptive",
     variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
@@ -237,7 +227,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 16_000,
     supportsImages: true,
-    defaultVariant: "adaptive",
     variants: ANTHROPIC_ADAPTIVE_THINKING_VARIANTS,
     pricing: {
       inputPerMTok: 5,
@@ -272,7 +261,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_050_000,
     maxOutputTokens: 128_000,
     supportsImages: true,
-    defaultVariant: "medium",
     variants: GPT_5_5_REASONING_VARIANTS,
     pricing: {
       inputPerMTok: 5.00,
@@ -294,7 +282,6 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_050_000,
     maxOutputTokens: 128_000,
     supportsImages: true,
-    defaultVariant: "medium",
     variants: GPT_5_5_REASONING_VARIANTS,
     pricing: {
       inputPerMTok: 5.00,

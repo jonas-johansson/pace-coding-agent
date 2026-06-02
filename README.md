@@ -39,7 +39,7 @@ export FIREWORKS_API_KEY=...           # fireworks/* models
 
 ## Models
 
-Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the full `provider/model` string. For models with variants, use **Ctrl+T** or `/variant <variant>` to cycle provider-native options such as OpenAI reasoning effort.
+Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the full `provider/model` string. Models default to an unset variant, so Pace sends no explicit reasoning effort, thinking level, or similar provider-native options unless you select a variant. For models with variants, use **Ctrl+T** or `/variant <variant>` to cycle provider-native options such as OpenAI reasoning effort; the cycle includes the unset variant.
 
 | Model ID |
 |---|
@@ -63,7 +63,7 @@ Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the
 | Key | Action |
 |---|---|
 | **Tab** / **Shift+Tab** | Cycle models forward / backward |
-| **Ctrl+T** | Cycle the current model's variant |
+| **Ctrl+T** | Cycle the current model's variant, including unset |
 | **Escape** | Cancel the running prompt |
 | **Ctrl+V** | Paste image from clipboard |
 | **Ctrl+C** | Clear input, or press twice to exit |
@@ -76,7 +76,7 @@ Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the
 |---|---|
 | `/new` | Start a fresh conversation |
 | `/model <model-id>[:variant]` | Switch model (or list models without args) |
-| `/variant [variant]` | Show or switch the current model's variant |
+| `/variant [variant|unset]` | Show, switch, or unset the current model's variant |
 | `/sessions` | List saved sessions for this project |
 | `/resume <id>` | Resume a saved session |
 | `/undo` | Rewind to before the last user message |
@@ -94,7 +94,7 @@ Switch models at any time with **Tab** or `/model <model-id>`. Model IDs use the
 
 Pace reads global configuration from `~/.config/pace/config.json`.
 
-Choose the startup model and the models that **Tab** / **Shift+Tab** cycle through with full `provider/model` IDs. Models with variants can use `provider/model:variant` entries:
+Choose the startup model and the models that **Tab** / **Shift+Tab** cycle through with full `provider/model` IDs. Omit `:variant` for the unset/default selection, or use `provider/model:variant` to select a provider-native variant explicitly:
 
 ```json
 {
@@ -108,7 +108,7 @@ Choose the startup model and the models that **Tab** / **Shift+Tab** cycle throu
 }
 ```
 
-Pace remembers the last variant used for each model in memory, so cycling away from a model and back restores that model's previous variant during the current run.
+Pace remembers the last explicit variant used for each model in memory, so cycling away from a model and back restores that model's previous variant during the current run. Use Ctrl+T until the model label has no `:variant`, or run `/variant unset`, to return to the provider default without sending explicit variant options.
 
 To display estimated costs in a specific currency, configure a USD conversion rate, display format, and how many fraction digits:
 

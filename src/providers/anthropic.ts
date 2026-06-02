@@ -125,12 +125,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function anthropicThinkingOption(options: Record<string, unknown> | undefined): Anthropic.ThinkingConfigParam {
+function anthropicThinkingOption(options: Record<string, unknown> | undefined): Anthropic.ThinkingConfigParam | undefined {
   const thinking = options?.thinking;
   if (isRecord(thinking)) {
     return thinking as unknown as Anthropic.ThinkingConfigParam;
   }
-  return { type: "enabled", budget_tokens: 8_192, display: "summarized" };
+  return undefined;
 }
 
 function anthropicOutputConfigOption(options: Record<string, unknown> | undefined): Anthropic.OutputConfig | undefined {
@@ -179,6 +179,7 @@ export class AnthropicProvider implements Provider {
         cache_control: { type: "ephemeral" as const },
       },
     ];
+    const thinking = anthropicThinkingOption(params.providerOptions);
     const outputConfig = anthropicOutputConfigOption(params.providerOptions);
 
     const anthropicStream = await this.client.messages.stream(
@@ -189,7 +190,7 @@ export class AnthropicProvider implements Provider {
         messages: toAnthropicMessages(params.messages),
         tools: toAnthropicTools(params.tools),
         cache_control: { type: "ephemeral" },
-        thinking: anthropicThinkingOption(params.providerOptions),
+        ...(thinking && { thinking }),
         ...(outputConfig && { output_config: outputConfig }),
       },
       { signal: params.signal },
