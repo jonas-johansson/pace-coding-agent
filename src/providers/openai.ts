@@ -210,8 +210,11 @@ function contentFromOutputItems(outputItems: ResponseOutputItem[]): ContentBlock
 export class OpenAIProvider implements Provider {
   private client: OpenAI;
 
-  constructor() {
-    this.client = new OpenAI();
+  constructor(options?: { apiKey?: string; baseURL?: string }) {
+    this.client = new OpenAI({
+      ...(options?.apiKey && { apiKey: options.apiKey }),
+      ...(options?.baseURL && { baseURL: options.baseURL }),
+    });
   }
 
   async stream(params: {

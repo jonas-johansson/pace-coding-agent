@@ -118,6 +118,7 @@ async function getProjectFiles(): Promise<string[]> {
 let anthropicProvider: AnthropicProvider | undefined;
 let openCodeZenProvider: OpenCodeZenProvider | undefined;
 let openCodeZenAnthropicProvider: AnthropicProvider | undefined;
+let openCodeZenOpenAIProvider: OpenAIProvider | undefined;
 let openAIProvider: OpenAIProvider | undefined;
 let fireworksProvider: FireworksProvider | undefined;
 let lmStudioProvider: LmStudioProvider | undefined;
@@ -142,6 +143,24 @@ function getProvider(config: ModelConfig): Provider {
           });
         }
         return openCodeZenAnthropicProvider;
+      }
+      if (config.providerModel.startsWith("gpt-")) {
+        // GPT-5.x models on OpenCode Zen are served via the OpenAI Responses
+        // API (not Chat Completions), which is required to surface reasoning.
+        // Reuse the OpenAIProvider pointed at the Zen base URL.
+        if (!openCodeZenOpenAIProvider) {
+          const apiKey = process.env.OPENCODE_ZEN_API_KEY ?? process.env.OPENCODE_API_KEY;
+          if (!apiKey) {
+            throw new Error(
+              "Missing API key for OpenCode Zen. Set the OPENCODE_ZEN_API_KEY or OPENCODE_API_KEY environment variable.",
+            );
+          }
+          openCodeZenOpenAIProvider = new OpenAIProvider({
+            apiKey,
+            baseURL: process.env.OPENCODE_ZEN_BASE_URL ?? "https://opencode.ai/zen/v1",
+          });
+        }
+        return openCodeZenOpenAIProvider;
       }
       if (!openCodeZenProvider) openCodeZenProvider = new OpenCodeZenProvider();
       return openCodeZenProvider;
