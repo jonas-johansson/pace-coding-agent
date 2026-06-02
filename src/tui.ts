@@ -2992,7 +2992,7 @@ function regionToRows(regions: ContentRegion[], innerWidth: number): StyledSegme
 function renderUserBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
   const theme = themes.user;
   const innerWidth = Math.max(1, columns - 4);
-  const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
+  const content = sanitizedContent.trimStart().replace(/\n+$/, "");
   const rows: StyledSegment[][] = [[]]; // top padding
 
   if (block.title) {
@@ -3013,7 +3013,7 @@ function renderUserBlock(block: RenderBlock, columns: number, sanitizedContent: 
 function renderAssistantBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
   const theme = themes.assistant;
   const innerWidth = Math.max(1, columns - 4);
-  const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
+  const content = sanitizedContent.trimStart().replace(/\n+$/, "");
   const result: string[] = [];
 
   if (block.title && content) {
@@ -3045,7 +3045,7 @@ function renderAssistantBlock(block: RenderBlock, columns: number, sanitizedCont
 function renderReasoningBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
   const theme = themes.reasoning;
   const innerWidth = Math.max(1, columns - 4);
-  const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
+  const content = sanitizedContent.trimStart().replace(/\n+$/, "");
   const collapsed = block.collapsed === true;
   const title = block.title ?? "Reasoning";
 
@@ -3087,7 +3087,7 @@ function renderInlineToolBlock(block: RenderBlock, columns: number, spinnerFrame
 /** Render a tool block as a gray panel (has content to show). */
 function renderPanelToolBlock(block: RenderBlock, columns: number, spinnerFrame: string, sanitizedContent: string) {
   const theme = themes.tool;
-  const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
+  const content = sanitizedContent.trimStart().replace(/\n+$/, "");
   const indicator = renderStateIndicator(block.state, content, spinnerFrame, theme);
   // Indicator text is a single plain character (no ANSI).
   const indicatorWidth = indicator ? displayWidth(indicator.text) : 0;
@@ -3130,7 +3130,7 @@ function renderPanelToolBlock(block: RenderBlock, columns: number, spinnerFrame:
 function renderErrorBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
   const theme = themes.error;
   const innerWidth = Math.max(1, columns - 4);
-  const content = sanitizedContent.replace(/^\n+/, "").replace(/\n+$/, "");
+  const content = sanitizedContent.trimStart().replace(/\n+$/, "");
   const rows: StyledSegment[][] = [[]]; // top padding
 
   if (block.title) {

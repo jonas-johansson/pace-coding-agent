@@ -13,5 +13,5 @@ export function reasoningDisplayTitle(text: string): string {
 export function reasoningDisplayContent(text: string): string {
   const match = text.match(REASONING_TITLE_PATTERN);
   if (!match) return text;
-  return text.slice(match[0].length).replace(/^\n+/, "");
+  return text.slice(match[0].length).trimStart();
 }
