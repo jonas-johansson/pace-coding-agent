@@ -73,6 +73,7 @@ import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
 import { sendDesktopNotification } from "./notify";
 import { onEvent } from "./events";
 import { loadPaceConfig } from "./config";
+import { loadPreferences, savePreferences } from "./preferences";
 import {
   initMcpServers,
   shutdownMcpServers,
@@ -229,6 +230,7 @@ function updateCurrentModelVariant(variantId: string | undefined) {
     updatedAt: new Date().toISOString(),
   };
   tui.setModel(formatCurrentModelSelection());
+  schedulePreferenceSave();
 }
 
 function selectModel(modelId: string, explicitVariantId?: string) {
@@ -257,6 +259,10 @@ const tui = new Tui({
   onShiftTab: cycleModelReverse,
   onCycleVariant: cycleModelVariant,
   onEscape: cancelPrompt,
+  onExit: async () => {
+    await flushPreferenceSave();
+    await shutdownMcpServers();
+  },
   onPasteImage: handlePasteImage,
   slashCommands: () => [
     { label: "/new", detail: "Start a new conversation", kind: "command", insertText: "/new " },
@@ -289,6 +295,7 @@ const tui = new Tui({
     onPick: (id) => selectModel(id),
     onCycleChange: (ids) => {
       cycleModelSelections = (ids.length > 0 ? ids : AVAILABLE_MODEL_IDS).map((modelId) => ({ modelId }));
+      schedulePreferenceSave();
     },
   },
   sessionOverlay: {
@@ -479,6 +486,83 @@ function formatError(error: unknown) {
   return error instanceof Error ? error.stack ?? error.message : String(error);
 }
 
+// ── Preference persistence ───────────────────────────────────────────────────
+
+function buildPreferences() {
+  const variantByModel: Record<string, string> = {};
+  for (const [modelId, variantId] of lastVariantByModelId) {
+    variantByModel[modelId] = variantId;
+  }
+
+  return {
+    cycleModels: cycleModelSelections.map(formatModelSelection),
+    ...(Object.keys(variantByModel).length > 0 && { variantByModel }),
+    currentModel: formatCurrentModelSelection(),
+  };
+}
+
+let preferenceSaveTimer: NodeJS.Timeout | undefined;
+let preferenceSaveInFlight: Promise<void> = Promise.resolve();
+
+/** Persist current preferences, coalescing rapid changes via a short debounce. */
+function schedulePreferenceSave() {
+  if (preferenceSaveTimer) {
+    clearTimeout(preferenceSaveTimer);
+  }
+  preferenceSaveTimer = setTimeout(() => {
+    preferenceSaveTimer = undefined;
+    void flushPreferenceSave();
+  }, 400);
+}
+
+/** Write preferences immediately, cancelling any pending debounced write. */
+function flushPreferenceSave(): Promise<void> {
+  if (preferenceSaveTimer) {
+    clearTimeout(preferenceSaveTimer);
+    preferenceSaveTimer = undefined;
+  }
+  const snapshot = buildPreferences();
+  preferenceSaveInFlight = preferenceSaveInFlight
+    .catch(() => undefined)
+    .then(() => savePreferences(snapshot))
+    .catch(() => undefined);
+  return preferenceSaveInFlight;
+}
+
+function applyStoredPreferences(preferences: {
+  cycleModels?: string[];
+  variantByModel?: Record<string, string>;
+  currentModel?: string;
+}) {
+  if (preferences.cycleModels) {
+    const restored = preferences.cycleModels
+      .map((entry) => parseModelSelection(entry))
+      .filter((selection): selection is ModelSelection => selection !== undefined);
+    if (restored.length > 0) {
+      cycleModelSelections = restored;
+    }
+  }
+
+  if (preferences.variantByModel) {
+    for (const [modelId, variantId] of Object.entries(preferences.variantByModel)) {
+      if (getModelVariant(modelId, variantId)) {
+        lastVariantByModelId.set(modelId, variantId);
+      }
+    }
+  }
+
+  if (preferences.currentModel) {
+    const selection = parseModelSelection(preferences.currentModel);
+    if (selection) {
+      selectModelSelection(selection);
+    }
+  }
+
+  if (!cycleModelSelections.some((selection) => selection.modelId === currentModelId)) {
+    selectModelSelection(cycleModelSelections[0]);
+  }
+}
+
 function modelSelectionMatchesCurrent(selection: ModelSelection): boolean {
   return selection.modelId === currentModelId
     && (selection.variantId === undefined || selection.variantId === currentModelVariantId());
@@ -605,6 +689,7 @@ async function handleCommand(command: string): Promise<boolean> {
       return true;
     case "/exit":
     case "/quit": {
+      await flushPreferenceSave();
       await shutdownMcpServers();
       tui.stop();
       process.exit(0);
@@ -1549,17 +1634,33 @@ const exampleTable = `| Command | Description |
 | /skill:<name> [args] | Run a discovered skill with optional arguments. Use /skills to see available skills.`;
 
 async function main() {
-  tui.start();
+  // Resolve config + persisted preferences before the first render so the
+  // status bar shows the correct (last-used) model on the very first frame,
+  // with no flash of the default model. Errors are buffered and surfaced
+  // after the TUI starts.
+  const startupErrors: Array<{ title: string; content: string }> = [];
 
   try {
     const paceConfig = await loadPaceConfig();
     tui.setCostDisplayConfig(paceConfig.cost);
     applyConfiguredModels(paceConfig);
   } catch (error) {
-    tui.addBlock({ role: "error", title: "Pace config", content: formatError(error) });
+    startupErrors.push({ title: "Pace config", content: formatError(error) });
+  }
+
+  try {
+    applyStoredPreferences(await loadPreferences());
+  } catch (error) {
+    startupErrors.push({ title: "Pace preferences", content: formatError(error) });
   }
 
   updateContextInfo();
+
+  tui.start();
+
+  for (const { title, content } of startupErrors) {
+    tui.addBlock({ role: "error", title, content });
+  }
 
   // Initialise Shiki in the background. The hand-rolled tokenizer remains
   // active until the promise resolves, then Shiki takes over automatically.

@@ -391,18 +391,24 @@ export function formatModelSelection(selection: ModelSelection): string {
 }
 
 export function parseModelSelection(input: string): ModelSelection | undefined {
+  // Try the "modelId:variantId" form first. The exact-match fallback below is
+  // lenient for known providers (it accepts arbitrary model names via default
+  // metadata), so it would otherwise swallow a valid variant suffix and treat
+  // e.g. "opencode/gpt-5.5:xhigh" as a whole model id with no variant.
+  const lastColonIndex = input.lastIndexOf(":");
+  if (lastColonIndex !== -1) {
+    const modelId = input.slice(0, lastColonIndex);
+    const variantId = input.slice(lastColonIndex + 1);
+    const model = getModelConfig(modelId);
+    if (model && variantId && model.variants?.[variantId]) {
+      return { modelId: model.id, variantId };
+    }
+  }
+
   const exactModel = getModelConfig(input);
   if (exactModel) return { modelId: exactModel.id };
 
-  const lastColonIndex = input.lastIndexOf(":");
-  if (lastColonIndex === -1) return undefined;
-
-  const modelId = input.slice(0, lastColonIndex);
-  const variantId = input.slice(lastColonIndex + 1);
-  const model = getModelConfig(modelId);
-  if (!model || !variantId || !model.variants?.[variantId]) return undefined;
-
-  return { modelId: model.id, variantId };
+  return undefined;
 }
 
 function createModels(): Record<string, ModelConfig> {
