@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
-cd "$(dirname "$0")/.."
+PACE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-if [ ! -f dist/app.js ] || [ -n "$(find src -name '*.ts' -newer dist/app.js -print -quit)" ]; then
-  npm run build
+if [ ! -f "$PACE_DIR/dist/app.js" ] || [ -n "$(find "$PACE_DIR/src" -name '*.ts' -newer "$PACE_DIR/dist/app.js" -print -quit)" ]; then
+  (cd "$PACE_DIR" && npm run build)
 fi
 
-node dist/app.js
+node "$PACE_DIR/dist/app.js"
