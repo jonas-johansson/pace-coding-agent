@@ -100,6 +100,19 @@ const ANTHROPIC_ADAPTIVE_THINKING_VARIANTS: Record<string, ModelVariant> = {
   max: anthropicAdaptiveThinkingVariant("max"),
 };
 
+const KIMI_VARIANTS: Record<string, ModelVariant> = {
+  think: {
+    id: "think",
+    label: "thinking: preserved",
+    providerOptions: { thinking: { type: "enabled", keep: "all" } },
+  },
+  nothink: {
+    id: "nothink",
+    label: "thinking: disabled",
+    providerOptions: { thinking: { type: "disabled" } },
+  },
+};
+
 const ANTHROPIC_BUDGET_THINKING_VARIANTS: Record<string, ModelVariant> = {
   nothink: ANTHROPIC_NOTHINK_VARIANT,
   "thinking-8k": {
@@ -239,6 +252,7 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 262_144,
     maxOutputTokens: 32_000,
     supportsImages: true,
+    variants: KIMI_VARIANTS,
     pricing: {
       inputPerMTok: 0.95,
       cacheWritePerMTok: 0,
@@ -250,6 +264,7 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 262_144,
     maxOutputTokens: 32_000,
     supportsImages: true,
+    variants: KIMI_VARIANTS,
     pricing: {
       inputPerMTok: 0.95,
       cacheWritePerMTok: 0,

@@ -295,6 +295,7 @@ export class FireworksProvider implements Provider {
       top_k: 40,
       presence_penalty: 0,
       frequency_penalty: 0,
+      ...params.providerOptions,
     };
 
     const response = await fetchWithRetry(

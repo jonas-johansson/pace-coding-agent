@@ -272,6 +272,7 @@ export class OpenCodeZenProvider implements Provider {
       stream: true,
       // Include usage in the streamed response
       stream_options: { include_usage: true },
+      ...params.providerOptions,
     };
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
