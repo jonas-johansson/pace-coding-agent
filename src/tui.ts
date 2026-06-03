@@ -3289,7 +3289,7 @@ function renderSegment(segment: StyledSegment, theme: BlockTheme) {
     case "italic":
       return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${ITALIC}${segment.text}`;
     case "code":
-      return `${RESET}${bg(theme.bg)}${fg(118)}${segment.text}`;
+      return `${RESET}${bg(theme.bg)}${fg(120)}${segment.text}`;
     case "tableBorder":
       return `${RESET}${bg(theme.bg)}${fg(245)}${segment.text}`;
     case "sh-raw": {
