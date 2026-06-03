@@ -443,6 +443,14 @@ export class Tui {
     this.requestRender();
   }
 
+  setInput(text: string) {
+    this.input = text;
+    this.inputCursor = Array.from(text).length;
+    this.inputScrollRow = 0;
+    this.deactivateHistory();
+    this.requestRender();
+  }
+
   get isFocused(): boolean {
     return this.focused;
   }

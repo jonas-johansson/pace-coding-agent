@@ -773,11 +773,26 @@ async function handleCommand(command: string): Promise<boolean> {
       return true;
     }
     case "/undo": {
+      const path = getActivePath(activeSession);
+      let lastUserText = "";
+      for (let i = path.length - 1; i >= 0; i -= 1) {
+        const entry = path[i];
+        if (entry.type === "user") {
+          const texts: string[] = [];
+          for (const block of entry.content) {
+            if (block.type === "text") {
+              texts.push(block.text);
+            }
+          }
+          lastUserText = texts.join("");
+          break;
+        }
+      }
+
       const previousActiveEntryId = activeSession.activeEntryId;
       const nextSession = undoLastUserTurn(activeSession);
 
       if (nextSession.activeEntryId === previousActiveEntryId) {
-        tui.addBlock({ role: "assistant", title: "Undo", content: "No user turn to undo." });
         return true;
       }
 
@@ -785,7 +800,7 @@ async function handleCommand(command: string): Promise<boolean> {
       await saveSession(activeSession);
       rebuildTuiFromSession();
       refreshSessionStatsFromSession();
-      tui.addBlock({ role: "assistant", title: "Undo", content: "Rewound to before the last user message." });
+      tui.setInput(lastUserText);
       return true;
     }
     case "/skills": {
