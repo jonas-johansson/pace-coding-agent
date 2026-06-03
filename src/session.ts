@@ -200,7 +200,7 @@ export async function listSessions(cwd: string): Promise<SessionListItem[]> {
   return sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export function createSession(cwd: string, currentModelId: string): Session {
+export function createSession(cwd: string, currentModelId: string, currentModelVariant?: string): Session {
   const now = new Date().toISOString();
   const id = randomUUID();
   setCurrentSessionId(id);
@@ -213,6 +213,7 @@ export function createSession(cwd: string, currentModelId: string): Session {
     createdAt: now,
     updatedAt: now,
     currentModelId,
+    ...(currentModelVariant !== undefined && { currentModelVariant }),
     activeEntryId: null,
     entries: [],
   };

@@ -684,7 +684,7 @@ async function handleCommand(command: string): Promise<boolean> {
 
   switch (name) {
     case "/new":
-      activateSession(createSession(process.cwd(), currentModelId));
+      activateSession(createSession(process.cwd(), currentModelId, currentModelVariantId()));
       return true;
     case "/exit":
     case "/quit": {
