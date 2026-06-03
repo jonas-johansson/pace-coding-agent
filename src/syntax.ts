@@ -23,15 +23,7 @@
  *   "code"          — plain (unrecognised) token
  */
 
-import {
-  createHighlighterCoreSync,
-  type HighlighterCore,
-  type ThemedToken,
-  type ThemeRegistrationAny,
-  type LanguageRegistration,
-} from "shiki/core";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
-import { bundledLanguages, bundledThemes } from "shiki";
+import type { HighlighterCore, ThemedToken, ThemeRegistrationAny, LanguageRegistration } from "shiki/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -153,6 +145,10 @@ export function onHighlighterReady(cb: () => void): void {
  * while Shiki loads in the background.
  */
 export async function initHighlighter(): Promise<void> {
+  const { createJavaScriptRegexEngine } = await import("shiki/engine/javascript");
+  const { bundledLanguages, bundledThemes } = await import("shiki");
+  const { createHighlighterCoreSync } = await import("shiki/core");
+
   const engine = createJavaScriptRegexEngine();
 
   const [themeModule, ...langModules] = await Promise.all([

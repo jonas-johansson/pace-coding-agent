@@ -64,11 +64,6 @@ import {
   type ModelSelection,
   type ModelVariant,
 } from "./models";
-import { AnthropicProvider } from "./providers/anthropic";
-import { OpenCodeZenProvider } from "./providers/opencode-zen";
-import { OpenAIProvider } from "./providers/openai";
-import { FireworksProvider } from "./providers/fireworks";
-import { LmStudioProvider } from "./providers/lmstudio";
 import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
 import { sendDesktopNotification } from "./notify";
 import { onEvent } from "./events";
@@ -121,20 +116,24 @@ async function getProjectFiles(): Promise<string[]> {
 
 // ── Provider instances (lazily created) ──────────────────────────────────────
 
-let anthropicProvider: AnthropicProvider | undefined;
-let openCodeZenProvider: OpenCodeZenProvider | undefined;
-let openCodeZenAnthropicProvider: AnthropicProvider | undefined;
-let openCodeZenOpenAIProvider: OpenAIProvider | undefined;
-let openAIProvider: OpenAIProvider | undefined;
-let fireworksProvider: FireworksProvider | undefined;
-let lmStudioProvider: LmStudioProvider | undefined;
+let anthropicProvider: Provider | undefined;
+let openCodeZenProvider: Provider | undefined;
+let openCodeZenAnthropicProvider: Provider | undefined;
+let openCodeZenOpenAIProvider: Provider | undefined;
+let openAIProvider: Provider | undefined;
+let fireworksProvider: Provider | undefined;
+let lmStudioProvider: Provider | undefined;
 
-function getProvider(config: ModelConfig): Provider {
+async function getProvider(config: ModelConfig): Promise<Provider> {
   switch (config.provider) {
-    case "anthropic":
-      if (!anthropicProvider) anthropicProvider = new AnthropicProvider();
+    case "anthropic": {
+      if (!anthropicProvider) {
+        const { AnthropicProvider } = await import("./providers/anthropic");
+        anthropicProvider = new AnthropicProvider();
+      }
       return anthropicProvider;
-    case "opencode":
+    }
+    case "opencode": {
       if (config.providerModel.startsWith("claude-")) {
         if (!openCodeZenAnthropicProvider) {
           const apiKey = process.env.OPENCODE_ZEN_API_KEY ?? process.env.OPENCODE_API_KEY;
@@ -143,6 +142,7 @@ function getProvider(config: ModelConfig): Provider {
               "Missing API key for OpenCode Zen. Set the OPENCODE_ZEN_API_KEY or OPENCODE_API_KEY environment variable.",
             );
           }
+          const { AnthropicProvider } = await import("./providers/anthropic");
           openCodeZenAnthropicProvider = new AnthropicProvider({
             apiKey,
             baseURL: process.env.OPENCODE_ZEN_ANTHROPIC_BASE_URL ?? "https://opencode.ai/zen",
@@ -161,6 +161,7 @@ function getProvider(config: ModelConfig): Provider {
               "Missing API key for OpenCode Zen. Set the OPENCODE_ZEN_API_KEY or OPENCODE_API_KEY environment variable.",
             );
           }
+          const { OpenAIProvider } = await import("./providers/openai");
           openCodeZenOpenAIProvider = new OpenAIProvider({
             apiKey,
             baseURL: process.env.OPENCODE_ZEN_BASE_URL ?? "https://opencode.ai/zen/v1",
@@ -168,17 +169,33 @@ function getProvider(config: ModelConfig): Provider {
         }
         return openCodeZenOpenAIProvider;
       }
-      if (!openCodeZenProvider) openCodeZenProvider = new OpenCodeZenProvider();
+      if (!openCodeZenProvider) {
+        const { OpenCodeZenProvider } = await import("./providers/opencode-zen");
+        openCodeZenProvider = new OpenCodeZenProvider();
+      }
       return openCodeZenProvider;
-    case "openai":
-      if (!openAIProvider) openAIProvider = new OpenAIProvider();
+    }
+    case "openai": {
+      if (!openAIProvider) {
+        const { OpenAIProvider } = await import("./providers/openai");
+        openAIProvider = new OpenAIProvider();
+      }
       return openAIProvider;
-    case "fireworks":
-      if (!fireworksProvider) fireworksProvider = new FireworksProvider();
+    }
+    case "fireworks": {
+      if (!fireworksProvider) {
+        const { FireworksProvider } = await import("./providers/fireworks");
+        fireworksProvider = new FireworksProvider();
+      }
       return fireworksProvider;
-    case "lmstudio":
-      if (!lmStudioProvider) lmStudioProvider = new LmStudioProvider();
+    }
+    case "lmstudio": {
+      if (!lmStudioProvider) {
+        const { LmStudioProvider } = await import("./providers/lmstudio");
+        lmStudioProvider = new LmStudioProvider();
+      }
       return lmStudioProvider;
+    }
   }
 }
 
@@ -1375,7 +1392,7 @@ async function prompt(
 
   const modelConfig = currentModelConfig();
   const modelVariant = currentModelVariant();
-  const provider = getProvider(modelConfig);
+  const provider = await getProvider(modelConfig);
   const toolDefs = getProviderToolDefinitions();
 
   try {

@@ -1,6 +1,8 @@
 {
 	"scripts": {
-		"lint": "tsc --noEmit"
+		"lint": "tsc --noEmit",
+		"build": "tsc -p tsconfig.build.json",
+		"start": "node dist/app.js"
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.94.0",

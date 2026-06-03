@@ -1,4 +1,3 @@
-import TurndownService from "turndown";
 import { z } from "zod";
 import { defineTool, throwIfAborted, type ToolOutput } from "./core";
 
@@ -22,7 +21,8 @@ function buildAcceptHeader(format: "text" | "markdown" | "html"): string {
   }
 }
 
-function htmlToMarkdown(html: string): string {
+async function htmlToMarkdown(html: string): Promise<string> {
+  const { default: TurndownService } = await import("turndown");
   const td = new TurndownService({
     headingStyle: "atx",
     hr: "---",
@@ -152,7 +152,7 @@ export const webFetchTool = defineTool({
 
       switch (format) {
         case "markdown":
-          output = isHtml ? htmlToMarkdown(content) : content;
+          output = isHtml ? await htmlToMarkdown(content) : content;
           break;
         case "text":
           output = isHtml ? htmlToText(content) : content;
