@@ -14,6 +14,7 @@ import {
 } from "./output";
 
 const BASH_DEFAULT_TIMEOUT = 30_000;
+const BASH_MAX_TIMEOUT = 600_000;
 const BASH_SIGKILL_GRACE_MS = 2_000;
 const BASH_FORCE_RETURN_GRACE_MS = 1_000;
 
@@ -29,11 +30,19 @@ export const bashTool = defineTool({
   concurrency: "exclusive",
   inputSchema: z.object({
     command: z.string(),
+    timeout: z
+      .number()
+      .default(30)
+      .optional()
+      .describe("Maximum time to wait in seconds (max 600). Defaults to 30."),
   }),
   titleFormatter: (input) => `bash: ${input.command ?? ""}`,
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
-    const timeoutMs = (BASH_DEFAULT_TIMEOUT / 1000) * 1000;
+    const timeoutMs = Math.min(
+      (input.timeout ?? BASH_DEFAULT_TIMEOUT / 1000) * 1000,
+      BASH_MAX_TIMEOUT,
+    );
     try {
       // Use spawn with detached: true so the shell and all its children
       // form their own process group. This lets us kill the entire tree
