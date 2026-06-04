@@ -257,6 +257,7 @@ export class Tui {
   private focused = true;
   private exitConfirmPresses = 0;
   private collapseOverrides = new Map<string, boolean>();
+  private sessionTitle = "";
 
   // ── Suggestion popup state ──
   private slashItems: SuggestionItem[] = [];
@@ -435,6 +436,11 @@ export class Tui {
 
   setCwd(cwd: string) {
     this.cwd = cwd;
+    this.requestRender();
+  }
+
+  setSessionTitle(title: string) {
+    this.sessionTitle = title;
     this.requestRender();
   }
 
@@ -2074,7 +2080,8 @@ export class Tui {
       ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex)
       : [];
     const popupRows = suggestionPopup.length;
-    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows);
+    const headerRows = this.sessionTitle ? 2 : 0;
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows - headerRows);
     const renderedBlocks: string[] = [];
     const blockLineMap: number[] = [];
     const spinnerFrame = SPINNER_FRAMES[this.spinnerFrame];
@@ -2241,10 +2248,11 @@ export class Tui {
     const statusLine = this.renderStatusLine(columns, maxScroll);
 
     const inputSection = input.lines;
+    const headerLines = headerRows > 0 ? [this.renderHeaderLine(columns), blackLine(columns)] : [];
 
     const lines = statusRows > 0
-      ? [...messageLines, ...suggestionPopup, ...inputSection, statusLine]
-      : [...messageLines, ...suggestionPopup, ...inputSection];
+      ? [...headerLines, ...messageLines, ...suggestionPopup, ...inputSection, statusLine]
+      : [...headerLines, ...messageLines, ...suggestionPopup, ...inputSection];
     this.screenColumns = columns;
     // Defer screenLines computation — it runs clipAnsi + stripAnsi on
     // every row and is only needed for mouse selection / copy.  Store
@@ -2258,7 +2266,7 @@ export class Tui {
     this.lastMessageRows = messageRows;
     this.emptyPrefixLines = emptyPrefixLines;
 
-    const cursorRow = Math.min(rows, messageRows + suggestionPopup.length + input.cursorRow);
+    const cursorRow = Math.min(rows, headerRows + messageRows + popupRows + input.cursorRow);
     this.flushFrame(lines, rows, columns, cursorRow, input.cursorCol);
   }
 
@@ -2412,6 +2420,13 @@ export class Tui {
       `${bg(235)}${fg(contextFgColor)}${contextText}` +
       `${bg(235)}${fg(109)}${modelText}${RESET}`
     );
+  }
+
+  private renderHeaderLine(columns: number): string {
+    const text = truncateToWidth(this.sessionTitle, Math.max(1, columns - 4));
+    const visible = displayWidth(text);
+    const pad = Math.max(0, columns - 2 - visible);
+    return `${bg(CANVAS_BG)}${fg(245)}  ${text}${RESET}${bg(CANVAS_BG)}${" ".repeat(pad)}${RESET}`;
   }
 
   private renderSuggestionPopup(columns: number, matches: SuggestionItem[], selectedIndex: number): string[] {

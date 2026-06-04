@@ -509,6 +509,7 @@ function activateSession(session: Session) {
   tui.setModel(formatCurrentModelSelection());
   clearPendingInputState();
   rebuildTuiFromSession();
+  tui.setSessionTitle(session.title ?? "");
   refreshSessionStatsFromSession();
 }
 
@@ -623,6 +624,7 @@ function maybeGenerateSessionTitleFromFirstMessage(
         title,
         updatedAt: new Date().toISOString(),
       };
+      tui.setSessionTitle(title);
       await saveSession(activeSession);
     } catch (error) {
       // Session naming is best-effort. Keep the first-message preview fallback.
