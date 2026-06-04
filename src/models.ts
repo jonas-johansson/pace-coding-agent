@@ -314,6 +314,12 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
       },
     },
   },
+  "lmstudio/google/gemma-4-12b": {
+    contextWindow: 128_000,
+    maxOutputTokens: 8_192,
+    supportsImages: true,
+    pricing: ZERO_PRICING,
+  },
   // "lmstudio/google/gemma-4-26b-a4b": {
   //   contextWindow: 32_768,
   //   maxOutputTokens: 8_192,

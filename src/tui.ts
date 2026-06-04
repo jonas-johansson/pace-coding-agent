@@ -1575,6 +1575,8 @@ export class Tui {
     switch (data) {
       case "\u0003": // Ctrl+C
       case "\x1b": // Esc
+      case "q":
+      case "Q":
         this.closeSessionOverlay();
         return;
       case "\r": // Enter — resume highlighted session

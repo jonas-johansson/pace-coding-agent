@@ -25,7 +25,7 @@ type OaiContentPart =
 type OaiMessage =
   | { role: "system"; content: string }
   | { role: "user"; content: string | OaiContentPart[] }
-  | { role: "assistant"; content?: string | null; tool_calls?: OaiToolCall[] }
+  | { role: "assistant"; content?: string | null; reasoning_content?: string | null; tool_calls?: OaiToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
 type OaiToolCall = {
@@ -46,6 +46,7 @@ type OaiTool = {
 type OaiStreamDelta = {
   role?: string;
   content?: string | null;
+  reasoning_content?: string | null;
   tool_calls?: Array<{
     index: number;
     id?: string;
@@ -73,6 +74,26 @@ type OaiStreamChunk = {
     };
   } | null;
 };
+
+// ── Provider metadata ────────────────────────────────────────────────────────
+
+/**
+ * Shape of the `providerMetadata` stored on AssistantMessages originating
+ * from this provider. Captures `reasoning_content` so it can be replayed on
+ * subsequent turns — the model needs its prior chain-of-thought for continuity.
+ */
+type LmStudioMetadata = {
+  provider: "lmstudio";
+  reasoningContent?: string;
+};
+
+function isLmStudioMetadata(v: unknown): v is LmStudioMetadata {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    (v as Record<string, unknown>).provider === "lmstudio"
+  );
+}
 
 function toOaiMessages(system: string, messages: ProviderMessage[]): OaiMessage[] {
   const result: OaiMessage[] = [{ role: "system", content: system }];
@@ -142,9 +163,15 @@ function toOaiMessages(system: string, messages: ProviderMessage[]): OaiMessage[
         }
       }
 
+      // Replay reasoning_content from providerMetadata so the model can
+      // reference its prior chain-of-thought across tool-calling turns.
+      const meta = msg.providerMetadata;
+      const reasoning = isLmStudioMetadata(meta) ? meta.reasoningContent : undefined;
+
       const assistantMsg: OaiMessage = {
         role: "assistant",
         content: textParts.length > 0 ? textParts.join("\n") : null,
+        ...(reasoning && { reasoning_content: reasoning }),
         ...(toolCalls.length > 0 && { tool_calls: toolCalls }),
       };
       result.push(assistantMsg);
@@ -262,6 +289,7 @@ class LmStudioStream implements ProviderStream {
 
   private finishReason: string | null = null;
   private fullTextContent = "";
+  private fullReasoningContent = "";
   private completedToolCalls: PendingToolCall[] = [];
   private pendingToolCalls = new Map<number, PendingToolCall>();
   private usage: UsageInfo = {
@@ -278,7 +306,8 @@ class LmStudioStream implements ProviderStream {
 
   async *[Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
     const startedTools = new Set<string>();
-    let inTextBlock = false;
+    // Track any open assistant text/reasoning block so transitions are explicit.
+    let openBlock: "text" | "reasoning" | undefined;
 
     for await (const line of parseSseLines(this.reader)) {
       let chunk: OaiStreamChunk;
@@ -306,9 +335,34 @@ class LmStudioStream implements ProviderStream {
 
       const delta = choice.delta;
 
+      // ── Reasoning content (thinking) ──
+      // Models like Gemma 4 emit thinking content in `reasoning_content`
+      // rather than `content`. Surface it with dedicated events so the UI
+      // can make clear that it is reasoning, not final answer text.
+      if (delta.reasoning_content != null && delta.reasoning_content !== "") {
+        if (openBlock === "text") {
+          yield { type: "block_stop" };
+          openBlock = undefined;
+        }
+
+        if (openBlock !== "reasoning") {
+          openBlock = "reasoning";
+          yield { type: "reasoning_start", text: delta.reasoning_content };
+        } else {
+          yield { type: "reasoning_delta", text: delta.reasoning_content };
+        }
+        this.fullReasoningContent += delta.reasoning_content;
+      }
+
+      // ── Text content ──
       if (delta.content != null && delta.content !== "") {
-        if (!inTextBlock) {
-          inTextBlock = true;
+        if (openBlock === "reasoning") {
+          yield { type: "block_stop" };
+          openBlock = undefined;
+        }
+
+        if (openBlock !== "text") {
+          openBlock = "text";
           yield { type: "text_start", text: delta.content };
         } else {
           yield { type: "text_delta", text: delta.content };
@@ -316,9 +370,11 @@ class LmStudioStream implements ProviderStream {
         this.fullTextContent += delta.content;
       }
 
+      // ── Tool calls ──
       if (delta.tool_calls) {
-        if (inTextBlock) {
-          inTextBlock = false;
+        // If we were in an assistant text/reasoning block, close it before starting tool calls.
+        if (openBlock) {
+          openBlock = undefined;
           yield { type: "block_stop" };
         }
 
@@ -352,7 +408,8 @@ class LmStudioStream implements ProviderStream {
       }
     }
 
-    if (inTextBlock) {
+    // Close any open assistant text/reasoning block.
+    if (openBlock) {
       yield { type: "block_stop" };
     }
 
@@ -398,10 +455,15 @@ class LmStudioStream implements ProviderStream {
     const stopReason: "end_turn" | "tool_use" =
       this.finishReason === "tool_calls" ? "tool_use" : "end_turn";
 
+    const metadata: LmStudioMetadata | undefined = this.fullReasoningContent
+      ? { provider: "lmstudio", reasoningContent: this.fullReasoningContent }
+      : undefined;
+
     return {
       content,
       stopReason,
       usage: this.usage,
+      ...(metadata && { providerMetadata: metadata }),
     };
   }
 }
