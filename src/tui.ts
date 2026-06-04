@@ -3494,13 +3494,13 @@ function renderMarkdownTableRows(table: MarkdownTable, width: number) {
   }
 
   const rows: StyledSegment[][] = [];
-  rows.push(renderTableRule(widths));
+  rows.push(renderTableRule(widths, "top"));
   rows.push(...renderTableDataRow(normalized.header, widths, normalized.alignments, true));
-  rows.push(renderTableRule(widths));
-  for (const row of normalized.rows) {
-    rows.push(...renderTableDataRow(row, widths, normalized.alignments, false));
+  rows.push(renderTableRule(widths, "middle"));
+  for (let i = 0; i < normalized.rows.length; i++) {
+    rows.push(...renderTableDataRow(normalized.rows[i], widths, normalized.alignments, false));
+    rows.push(renderTableRule(widths, i < normalized.rows.length - 1 ? "middle" : "bottom"));
   }
-  rows.push(renderTableRule(widths));
   return rows;
 }
 
@@ -3569,8 +3569,14 @@ function measureTableCell(cell: string) {
   return parseMarkdownLine(cell).reduce((total, segment) => total + displayWidth(segment.text), 0);
 }
 
-function renderTableRule(widths: number[]): StyledSegment[] {
-  return [{ text: `|${widths.map((width) => "-".repeat(width + 2)).join("|")}|`, style: "tableBorder" }];
+function renderTableRule(widths: number[], position: "top" | "middle" | "bottom"): StyledSegment[] {
+  const [left, sep, right] =
+    position === "top"
+      ? ["┌", "┬", "┐"]
+      : position === "middle"
+        ? ["├", "┼", "┤"]
+        : ["└", "┴", "┘"];
+  return [{ text: `${left}${widths.map((width) => "─".repeat(width + 2)).join(sep)}${right}`, style: "tableBorder" }];
 }
 
 function renderTableDataRow(cells: string[], widths: number[], alignments: TableAlignment[], isHeader: boolean) {
@@ -3583,13 +3589,13 @@ function renderTableDataRow(cells: string[], widths: number[], alignments: Table
   const result: StyledSegment[][] = [];
 
   for (let rowIndex = 0; rowIndex < height; rowIndex += 1) {
-    const row: StyledSegment[] = [{ text: "|", style: "tableBorder" }];
+    const row: StyledSegment[] = [{ text: "│", style: "tableBorder" }];
     for (let columnIndex = 0; columnIndex < widths.length; columnIndex += 1) {
       const cellRow = wrappedCells[columnIndex][rowIndex] ?? [];
       row.push({ text: " ", style: "normal" });
       row.push(...alignTableSegments(cellRow, widths[columnIndex], alignments[columnIndex]));
       row.push({ text: " ", style: "normal" });
-      row.push({ text: "|", style: "tableBorder" });
+      row.push({ text: "│", style: "tableBorder" });
     }
     result.push(row);
   }
@@ -4222,7 +4228,7 @@ function charWidth(char: string) {
     return 0;
   }
 
-  return isWide(codePoint) ? 2 : 1;
+  return isWide(codePoint) || isEmojiPresentation(codePoint) ? 2 : 1;
 }
 
 function isCombining(codePoint: number) {
@@ -4247,6 +4253,45 @@ function isWide(codePoint: number) {
     (codePoint >= 0xff00 && codePoint <= 0xff60) ||
     (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
     (codePoint >= 0x1f000 && codePoint <= 0x1faff)
+  );
+}
+
+function isEmojiPresentation(codePoint: number) {
+  return (
+    codePoint === 0x2b50 ||
+    codePoint === 0x231a ||
+    codePoint === 0x231b ||
+    (codePoint >= 0x23e9 && codePoint <= 0x23ec) ||
+    codePoint === 0x23f0 ||
+    codePoint === 0x23f3 ||
+    (codePoint >= 0x25fd && codePoint <= 0x25fe) ||
+    (codePoint >= 0x2614 && codePoint <= 0x2615) ||
+    (codePoint >= 0x2648 && codePoint <= 0x2653) ||
+    codePoint === 0x267f ||
+    codePoint === 0x2693 ||
+    codePoint === 0x26a1 ||
+    (codePoint >= 0x26aa && codePoint <= 0x26ab) ||
+    (codePoint >= 0x26bd && codePoint <= 0x26be) ||
+    (codePoint >= 0x26c4 && codePoint <= 0x26c5) ||
+    codePoint === 0x26ce ||
+    codePoint === 0x26d4 ||
+    codePoint === 0x26ea ||
+    (codePoint >= 0x26f2 && codePoint <= 0x26f3) ||
+    codePoint === 0x26f5 ||
+    codePoint === 0x26fa ||
+    codePoint === 0x26fd ||
+    codePoint === 0x2705 ||
+    (codePoint >= 0x270a && codePoint <= 0x270b) ||
+    codePoint === 0x2728 ||
+    codePoint === 0x274c ||
+    codePoint === 0x274e ||
+    (codePoint >= 0x2753 && codePoint <= 0x2755) ||
+    codePoint === 0x2757 ||
+    (codePoint >= 0x2795 && codePoint <= 0x2797) ||
+    codePoint === 0x27b0 ||
+    codePoint === 0x27bf ||
+    (codePoint >= 0x2b1b && codePoint <= 0x2b1c) ||
+    codePoint === 0x2b55
   );
 }
 
