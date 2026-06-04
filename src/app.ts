@@ -1359,6 +1359,11 @@ async function executeToolUseBatch(
 }
 
 async function handleUserInput(userMessage: string) {
+  if (promptRunning) {
+    tui.setStatus("Agent is still running");
+    return;
+  }
+
   if (userMessage.startsWith("/")) {
     await handleCommand(userMessage.trim());
     return;
@@ -1392,11 +1397,6 @@ async function handleUserInput(userMessage: string) {
       refreshCwd();
     }
 
-    return;
-  }
-
-  if (promptRunning) {
-    tui.setStatus("Agent is still running");
     return;
   }
 
@@ -1891,11 +1891,13 @@ async function main() {
 
 process.on("uncaughtException", (error: unknown) => {
   tui.addBlock({ role: "error", title: "Uncaught exception", content: formatError(error) });
+  promptRunning = false;
   tui.setRunning(false, "idle");
 });
 
 process.on("unhandledRejection", (reason: unknown) => {
   tui.addBlock({ role: "error", title: "Unhandled rejection", content: formatError(reason) });
+  promptRunning = false;
   tui.setRunning(false, "idle");
 });
 

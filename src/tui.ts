@@ -739,7 +739,12 @@ export class Tui {
 
       // Ctrl+O — open the model picker overlay
       if (char === "\u000f") {
-        this.openModelOverlay();
+        if (this.running) {
+          this.status = "agent is still running";
+          this.requestRender();
+        } else {
+          this.openModelOverlay();
+        }
         continue;
       }
 
@@ -1361,6 +1366,12 @@ export class Tui {
     const item = matches[this.suggestionIndex];
     if (this.suggestionMode === "slash") {
       if (item.executeOnAccept) {
+        if (this.running) {
+          this.status = "agent is still running";
+          this.dismissSuggestions();
+          this.requestRender();
+          return;
+        }
         this.input = item.insertText;
         this.inputCursor = this.input.length;
         this.dismissSuggestions();
