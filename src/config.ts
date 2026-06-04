@@ -21,6 +21,7 @@ export type PaceConfig = {
   cost: CostDisplayConfig;
   defaultModel?: string;
   cycleModels?: string[];
+  sessionTitleModel?: string;
 };
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -48,10 +49,12 @@ const paceConfigSchema = z.object({
   cost: costDisplayConfigSchema.optional(),
   defaultModel: z.string().optional(),
   cycleModels: z.array(z.string()).min(1).optional(),
+  sessionTitleModel: z.string().optional(),
 }).transform((config) => ({
   cost: config.cost ?? DEFAULT_COST_DISPLAY_CONFIG,
   ...(config.defaultModel !== undefined && { defaultModel: config.defaultModel }),
   ...(config.cycleModels !== undefined && { cycleModels: config.cycleModels }),
+  ...(config.sessionTitleModel !== undefined && { sessionTitleModel: config.sessionTitleModel }),
 }));
 
 // ── Loading ──────────────────────────────────────────────────────────────────

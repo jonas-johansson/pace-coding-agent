@@ -105,11 +105,14 @@ Choose the startup model and the models that **Tab** / **Shift+Tab** cycle throu
     "opencode/gpt-5.5:high",
     "opencode/kimi-k2.6",
     "openai/gpt-5.5:xhigh"
-  ]
+  ],
+  "sessionTitleModel": "opencode/deepseek-v4-flash:nothink"
 }
 ```
 
 Pace remembers the last explicit variant used for each model in memory, so cycling away from a model and back restores that model's previous variant during the current run. Use Ctrl+T until the model label has no `:variant`, or run `/variant unset`, to return to the provider default without sending explicit variant options.
+
+Pace uses `sessionTitleModel` to auto-name new sessions after the first user message. Choose a cheap, fast text model; for models with thinking variants, prefer a no-thinking variant such as `opencode/deepseek-v4-flash:nothink`. If title generation fails, Pace falls back to showing a preview of the first user message.
 
 To display estimated costs in a specific currency, configure a USD conversion rate, display format, and how many fraction digits:
 

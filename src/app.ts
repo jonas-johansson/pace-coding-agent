@@ -227,6 +227,12 @@ let cycleModelSelections: ModelSelection[] = [
   { modelId: "opencode/kimi-k2.6" },
   { modelId: "opencode/claude-opus-4-8" },
 ];
+const DEFAULT_SESSION_TITLE_MODEL = "opencode/deepseek-v4-flash";
+const DEFAULT_SESSION_TITLE_MODEL_VARIANT = "nothink";
+let sessionTitleModelSelection: ModelSelection = {
+  modelId: DEFAULT_SESSION_TITLE_MODEL,
+  variantId: DEFAULT_SESSION_TITLE_MODEL_VARIANT,
+};
 let activeSession = createSession(process.cwd(), currentModelId);
 
 type ResolvedModelVariant = ModelVariant & { id: string };
@@ -523,6 +529,110 @@ function formatError(error: unknown) {
   return error instanceof Error ? error.stack ?? error.message : String(error);
 }
 
+function formatErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+const SESSION_TITLE_SYSTEM_PROMPT = `Generate a short, descriptive session title for a coding assistant conversation.
+
+Rules:
+- Return only the title.
+- Use 2 to 6 words.
+- Use Title Case or natural concise wording.
+- Do not use quotes.
+- Do not end with punctuation.
+- If the message is vague, summarize the likely task.`;
+
+function sessionTitlePromptContent(contentBlocks: Array<ImageBlock | { type: "text"; text: string }>): string {
+  const parts = contentBlocks.map((block) => block.type === "text" ? block.text : "[Image attached]");
+  return parts.join("\n\n").replace(/\s+/g, " ").trim() || "[No text provided]";
+}
+
+function sanitizeSessionTitle(raw: string): string | undefined {
+  let title = raw
+    .replace(/^[\s#*_`~>\-:]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  title = title.replace(/^(?:session\s+title|title)\s*:\s*/i, "").trim();
+  title = title.replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "").trim();
+  title = title.replace(/[.!?;:]+$/g, "").trim();
+
+  if (!title || /[\r\n]/.test(title)) {
+    return undefined;
+  }
+
+  const maxLength = 60;
+  if (Array.from(title).length > maxLength) {
+    const truncated = Array.from(title).slice(0, maxLength).join("");
+    title = truncated.replace(/\s+\S*$/, "").trim() || truncated.trim();
+  }
+
+  return title || undefined;
+}
+
+function maybeGenerateSessionTitleFromFirstMessage(
+  sessionId: string,
+  contentBlocks: Array<ImageBlock | { type: "text"; text: string }>,
+): void {
+  void (async () => {
+    try {
+      const modelConfig = getModelConfig(sessionTitleModelSelection.modelId);
+      if (!modelConfig) {
+        return;
+      }
+
+      const modelVariant = getModelVariant(modelConfig.id, sessionTitleModelSelection.variantId);
+      const provider = await getProvider(modelConfig);
+      const stream = await provider.stream({
+        model: modelConfig.providerModel,
+        system: SESSION_TITLE_SYSTEM_PROMPT,
+        messages: [{
+          role: "user",
+          content: [{ type: "text", text: sessionTitlePromptContent(contentBlocks) }],
+        }],
+        tools: [],
+        maxTokens: 32,
+        ...(modelVariant?.providerOptions && { providerOptions: modelVariant.providerOptions }),
+      });
+
+      for await (const _event of stream) {
+        // Consume the stream so finalMessage() can return the complete response.
+      }
+
+      const response = await stream.finalMessage();
+      const rawTitle = response.content
+        .filter((block): block is { type: "text"; text: string } => block.type === "text")
+        .map((block) => block.text)
+        .join(" ");
+      const title = sanitizeSessionTitle(rawTitle);
+
+      if (!title) {
+        if (activeSession.id === sessionId && !activeSession.title) {
+          tui.setStatus("Session title failed: title model returned no text");
+        }
+        return;
+      }
+
+      if (activeSession.id !== sessionId || activeSession.title) {
+        return;
+      }
+
+      activeSession = {
+        ...activeSession,
+        title,
+        updatedAt: new Date().toISOString(),
+      };
+      await saveSession(activeSession);
+    } catch (error) {
+      // Session naming is best-effort. Keep the first-message preview fallback.
+      if (activeSession.id === sessionId && !activeSession.title) {
+        tui.setStatus(`Session title failed: ${formatErrorMessage(error)}`);
+      }
+    }
+  })();
+}
+
 // ── Preference persistence ───────────────────────────────────────────────────
 
 function buildPreferences() {
@@ -660,7 +770,15 @@ function formatVariantList() {
   ].join("\n");
 }
 
-function applyConfiguredModels(config: { defaultModel?: string; cycleModels?: string[] }) {
+function applyConfiguredModels(config: { defaultModel?: string; cycleModels?: string[]; sessionTitleModel?: string }) {
+  if (config.sessionTitleModel !== undefined) {
+    const selection = parseModelSelection(config.sessionTitleModel);
+    if (!selection) {
+      throw new Error(`Invalid sessionTitleModel. Expected provider/model or provider/model:variant for a supported provider: ${config.sessionTitleModel}`);
+    }
+    sessionTitleModelSelection = selection;
+  }
+
   if (config.cycleModels) {
     const parsed = config.cycleModels.map((modelSelection) => ({ raw: modelSelection, parsed: parseModelSelection(modelSelection) }));
     const invalid = parsed.filter((entry) => !entry.parsed).map((entry) => entry.raw);
@@ -1339,6 +1457,9 @@ async function prompt(
   contentBlocks?: (ImageBlock | { type: "text"; text: string })[],
 ) {
   tui.addBlock({ role: "user", content: displayText });
+  const shouldGenerateSessionTitle = !activeSession.title
+    && !getActivePath(activeSession).some((entry) => entry.type === "user");
+  const sessionTitleSessionId = activeSession.id;
   const turnDraft = createTurnDraft(activeSession);
   let turnDraftCommitted = false;
 
@@ -1352,11 +1473,17 @@ async function prompt(
     await saveSession(activeSession);
   };
 
+  const userContentBlocks = contentBlocks && contentBlocks.length > 0
+    ? contentBlocks
+    : [{ type: "text" as const, text: displayText }];
+
   appendTurnDraftEntry(turnDraft, createUserEntry({
-    content: contentBlocks && contentBlocks.length > 0
-      ? contentBlocks
-      : [{ type: "text", text: displayText }],
+    content: userContentBlocks,
   }));
+
+  if (shouldGenerateSessionTitle) {
+    maybeGenerateSessionTitleFromFirstMessage(sessionTitleSessionId, userContentBlocks);
+  }
 
   const abortController = new AbortController();
   currentAbortController = abortController;
