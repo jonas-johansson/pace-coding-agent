@@ -539,11 +539,19 @@ const SESSION_TITLE_SYSTEM_PROMPT = `Generate a short, descriptive session title
 
 Rules:
 - Return only the title.
-- Use 2 to 6 words.
-- Use Title Case or natural concise wording.
+- Use 2 to 8 words.
 - Do not use quotes.
 - Do not end with punctuation.
-- If the message is vague, summarize the likely task.`;
+- If the message is vague, summarize the likely task.
+
+Examples:
+- Free memory and storage check
+- Multi-select entities
+- Latest tech news update
+- GTA 6 release date
+- Project overview
+- Dark/Light theme toggle
+`;
 
 function sessionTitlePromptContent(contentBlocks: Array<ImageBlock | { type: "text"; text: string }>): string {
   const parts = contentBlocks.map((block) => block.type === "text" ? block.text : "[Image attached]");
