@@ -243,15 +243,15 @@ export class OpenCodeZenProvider implements Provider {
   private apiKey: string;
   private baseUrl: string;
 
-  constructor() {
-    const key = process.env.OPENCODE_ZEN_API_KEY ?? process.env.OPENCODE_API_KEY;
+  constructor(options?: { apiKey?: string; baseUrl?: string }) {
+    const key = options?.apiKey ?? process.env.OPENCODE_ZEN_API_KEY ?? process.env.OPENCODE_API_KEY;
     if (!key) {
       throw new Error(
         "Missing API key for OpenCode Zen. Set the OPENCODE_ZEN_API_KEY or OPENCODE_API_KEY environment variable.",
       );
     }
     this.apiKey = key;
-    this.baseUrl = process.env.OPENCODE_ZEN_BASE_URL ?? DEFAULT_BASE_URL;
+    this.baseUrl = options?.baseUrl ?? process.env.OPENCODE_ZEN_BASE_URL ?? DEFAULT_BASE_URL;
   }
 
   async stream(params: {

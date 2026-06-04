@@ -118,6 +118,7 @@ async function getProjectFiles(): Promise<string[]> {
 
 let anthropicProvider: Provider | undefined;
 let openCodeZenProvider: Provider | undefined;
+let openCodeGoProvider: Provider | undefined;
 let openCodeZenAnthropicProvider: Provider | undefined;
 let openCodeZenOpenAIProvider: Provider | undefined;
 let openAIProvider: Provider | undefined;
@@ -168,6 +169,24 @@ async function getProvider(config: ModelConfig): Promise<Provider> {
           });
         }
         return openCodeZenOpenAIProvider;
+      }
+      if (config.providerModel.startsWith("deepseek-v4-")) {
+        // DeepSeek V4 models are currently served by the OpenCode Go
+        // Chat Completions endpoint, not the regular Zen endpoint.
+        if (!openCodeGoProvider) {
+          const apiKey = process.env.OPENCODE_GO_API_KEY ?? process.env.OPENCODE_ZEN_API_KEY ?? process.env.OPENCODE_API_KEY;
+          if (!apiKey) {
+            throw new Error(
+              "Missing API key for OpenCode Go. Set the OPENCODE_GO_API_KEY, OPENCODE_ZEN_API_KEY, or OPENCODE_API_KEY environment variable.",
+            );
+          }
+          const { OpenCodeZenProvider } = await import("./providers/opencode-zen");
+          openCodeGoProvider = new OpenCodeZenProvider({
+            apiKey,
+            baseUrl: process.env.OPENCODE_GO_BASE_URL ?? "https://opencode.ai/zen/go/v1",
+          });
+        }
+        return openCodeGoProvider;
       }
       if (!openCodeZenProvider) {
         const { OpenCodeZenProvider } = await import("./providers/opencode-zen");

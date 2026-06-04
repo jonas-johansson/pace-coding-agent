@@ -113,6 +113,19 @@ const KIMI_VARIANTS: Record<string, ModelVariant> = {
   },
 };
 
+const DEEPSEEK_VARIANTS: Record<string, ModelVariant> = {
+  think: {
+    id: "think",
+    label: "thinking: enabled",
+    providerOptions: { thinking: { type: "enabled" } },
+  },
+  nothink: {
+    id: "nothink",
+    label: "thinking: disabled",
+    providerOptions: { thinking: { type: "disabled" } },
+  },
+};
+
 const ANTHROPIC_BUDGET_THINKING_VARIANTS: Record<string, ModelVariant> = {
   nothink: ANTHROPIC_NOTHINK_VARIANT,
   "thinking-8k": {
@@ -259,6 +272,37 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
       cacheReadPerMTok: 0.16,
       outputPerMTok: 4.00,
     },
+  },
+  "opencode/deepseek-v4-pro": {
+    contextWindow: 1_000_000,
+    maxOutputTokens: 384_000,
+    supportsImages: false,
+    variants: DEEPSEEK_VARIANTS,
+    pricing: {
+      inputPerMTok: 1.74,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.0145,
+      outputPerMTok: 3.48,
+    },
+  },
+  "opencode/deepseek-v4-flash": {
+    contextWindow: 1_000_000,
+    maxOutputTokens: 384_000,
+    supportsImages: false,
+    variants: DEEPSEEK_VARIANTS,
+    pricing: {
+      inputPerMTok: 0.14,
+      cacheWritePerMTok: 0,
+      cacheReadPerMTok: 0.0028,
+      outputPerMTok: 0.28,
+    },
+  },
+  "opencode/deepseek-v4-flash-free": {
+    contextWindow: 1_000_000,
+    maxOutputTokens: 384_000,
+    supportsImages: false,
+    variants: DEEPSEEK_VARIANTS,
+    pricing: ZERO_PRICING,
   },
   "fireworks/kimi-k2.6": {
     contextWindow: 262_144,
