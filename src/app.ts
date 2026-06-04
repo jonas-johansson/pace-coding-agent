@@ -170,9 +170,10 @@ async function getProvider(config: ModelConfig): Promise<Provider> {
         }
         return openCodeZenOpenAIProvider;
       }
-      if (config.providerModel.startsWith("deepseek-v4-")) {
-        // DeepSeek V4 models are currently served by the OpenCode Go
-        // Chat Completions endpoint, not the regular Zen endpoint.
+      if (config.providerModel.startsWith("deepseek-v4-") && !config.providerModel.endsWith("-free")) {
+        // DeepSeek V4 paid models are served by the OpenCode Go
+        // Chat Completions endpoint. Free variants use the regular Zen
+        // Chat Completions endpoint instead.
         if (!openCodeGoProvider) {
           const apiKey = process.env.OPENCODE_GO_API_KEY ?? process.env.OPENCODE_ZEN_API_KEY ?? process.env.OPENCODE_API_KEY;
           if (!apiKey) {
