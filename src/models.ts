@@ -124,6 +124,11 @@ const DEEPSEEK_VARIANTS: Record<string, ModelVariant> = {
     label: "thinking: disabled",
     providerOptions: { thinking: { type: "disabled" } },
   },
+  max: {
+    id: "max",
+    label: "reasoning effort: max",
+    providerOptions: { thinking: { type: "enabled" }, reasoning_effort: "max" },
+  },
 };
 
 const ANTHROPIC_BUDGET_THINKING_VARIANTS: Record<string, ModelVariant> = {
