@@ -304,6 +304,7 @@ export class Tui {
     }
 
     this.open = true;
+    this.setWindowTitle("Pace");
     process.stdin.setEncoding("utf8");
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
@@ -442,6 +443,10 @@ export class Tui {
   setSessionTitle(title: string) {
     this.sessionTitle = title;
     this.requestRender();
+  }
+
+  setWindowTitle(title: string) {
+    process.stdout.write(`\x1b]0;${title}\x07`);
   }
 
   setImageCount(count: number) {
