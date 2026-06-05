@@ -1767,19 +1767,8 @@ export class Tui {
   }
 
   private handleInputClick(col: number, row: number): boolean {
-    const rows = Math.max(process.stdout.rows ?? 24, 1);
-    const statusRows = rows > 1 ? STATUS_ROWS : 0;
-    const columns = Math.max(process.stdout.columns ?? 80, 1);
-    const maxInputRows = Math.max(1, rows - statusRows - MIN_MESSAGE_ROWS);
-    const input = this.renderInputLine(columns, maxInputRows);
-    const popupRows = this.suggestionActive
-      ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex).length
-      : 0;
-    const headerRows = this.sessionTitle ? 2 : 0;
-    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows - headerRows);
-
-    const inputStartRow = headerRows + messageRows + popupRows + 1;
-    const inputEndRow = inputStartRow + input.lines.length - 1;
+    const { rows, columns, statusRows, input, inputStartRow, inputEndRow } = this.computeLayout();
+    const maxInputRows = this.maxInputRows(rows, statusRows);
 
     if (row < inputStartRow || row > inputEndRow) {
       return false;
@@ -1810,18 +1799,7 @@ export class Tui {
   }
 
   private isInputPosition(col: number, row: number): boolean {
-    const rows = Math.max(process.stdout.rows ?? 24, 1);
-    const statusRows = rows > 1 ? STATUS_ROWS : 0;
-    const columns = Math.max(process.stdout.columns ?? 80, 1);
-    const maxInputRows = Math.max(1, rows - statusRows - MIN_MESSAGE_ROWS);
-    const input = this.renderInputLine(columns, maxInputRows);
-    const popupRows = this.suggestionActive
-      ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex).length
-      : 0;
-    const headerRows = this.sessionTitle ? 2 : 0;
-    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows - headerRows);
-    const inputStartRow = headerRows + messageRows + popupRows + 1;
-    const inputEndRow = inputStartRow + input.lines.length - 1;
+    const { inputStartRow, inputEndRow } = this.computeLayout();
     return row >= inputStartRow && row <= inputEndRow;
   }
 
@@ -1834,18 +1812,8 @@ export class Tui {
       return undefined;
     }
 
-    const rows = Math.max(process.stdout.rows ?? 24, 1);
-    const statusRows = rows > 1 ? STATUS_ROWS : 0;
-    const columns = Math.max(process.stdout.columns ?? 80, 1);
-    const maxInputRows = Math.max(1, rows - statusRows - MIN_MESSAGE_ROWS);
-    const input = this.renderInputLine(columns, maxInputRows);
-    const popupRows = this.suggestionActive
-      ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex).length
-      : 0;
-    const headerRows = this.sessionTitle ? 2 : 0;
-    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows - headerRows);
-    const inputStartRow = headerRows + messageRows + popupRows + 1;
-    const inputEndRow = inputStartRow + input.lines.length - 1;
+    const { rows, columns, statusRows, input, inputStartRow, inputEndRow } = this.computeLayout();
+    const maxInputRows = this.maxInputRows(rows, statusRows);
 
     const { start, end } = normalizeSelection(this.selection);
     if (start.row < inputStartRow || end.row > inputEndRow) {
@@ -2036,6 +2004,30 @@ export class Tui {
     return Math.max(1, rows - statusRows - MIN_MESSAGE_ROWS);
   }
 
+  private headerRows() {
+    return this.sessionTitle ? 2 : 0;
+  }
+
+  /**
+   * Computes the vertical layout of the screen: how many rows each region
+   * occupies and where the input box starts/ends. Shared by the render loop
+   * and the mouse hit-testing helpers so the two never drift apart.
+   */
+  private computeLayout() {
+    const rows = Math.max(process.stdout.rows ?? 24, 1);
+    const columns = Math.max(process.stdout.columns ?? 80, 1);
+    const statusRows = this.statusRows(rows);
+    const input = this.renderInputLine(columns, this.maxInputRows(rows, statusRows));
+    const popupRows = this.suggestionActive
+      ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex).length
+      : 0;
+    const headerRows = this.headerRows();
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows - headerRows);
+    const inputStartRow = headerRows + messageRows + popupRows + 1;
+    const inputEndRow = inputStartRow + input.lines.length - 1;
+    return { rows, columns, statusRows, input, popupRows, headerRows, messageRows, inputStartRow, inputEndRow };
+  }
+
   private submitInput() {
     const submitted = this.input.trimEnd();
     if (!submitted.trim()) {
@@ -2106,7 +2098,7 @@ export class Tui {
       ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex)
       : [];
     const popupRows = suggestionPopup.length;
-    const headerRows = this.sessionTitle ? 2 : 0;
+    const headerRows = this.headerRows();
     const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows - headerRows);
     const renderedBlocks: string[] = [];
     const blockLineMap: number[] = [];
