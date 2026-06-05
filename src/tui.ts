@@ -22,6 +22,7 @@ export type ContextInfo = {
 };
 
 import { homedir } from "os";
+import { basename } from "path";
 import { DEFAULT_COST_DISPLAY_CONFIG, type CostDisplayConfig } from "./config";
 import { tokenizeCode, hexToAnsi256, onHighlighterReady } from "./syntax.js";
 import { fuzzyMatch } from "./fuzzy.js";
@@ -2441,7 +2442,10 @@ export class Tui {
   }
 
   private renderHeaderLine(columns: number): string {
-    const text = truncateToWidth(this.sessionTitle, Math.max(1, columns - 2));
+    const cwdDir = this.cwd ? basename(this.cwd) : "";
+    const parts = [this.sessionTitle, cwdDir].filter(Boolean);
+    const label = parts.length > 1 ? parts.join(" · ") : (parts[0] ?? "");
+    const text = truncateToWidth(label, Math.max(1, columns - 2));
     const visible = displayWidth(text);
     const totalPad = Math.max(0, columns - 2 - visible);
     const leftPad = Math.floor(totalPad / 2);
