@@ -3543,14 +3543,21 @@ function computeTableColumnWidths(header: string[], rows: string[][], innerWidth
   }
 
   const borderAndPaddingWidth = columnCount * 3 + 1;
-  const minimumContentWidth = columnCount;
+  const minWidths = Array.from({ length: columnCount }, (_, columnIndex) =>
+    Math.max(
+      1,
+      measureTableCellMinWidth(header[columnIndex] ?? ""),
+      ...rows.map((row) => measureTableCellMinWidth(row[columnIndex] ?? "")),
+    ),
+  );
+  const minimumContentWidth = sumNumbers(minWidths);
   if (innerWidth < borderAndPaddingWidth + minimumContentWidth) {
     return undefined;
   }
 
   const widths = Array.from({ length: columnCount }, (_, columnIndex) =>
     Math.max(
-      1,
+      minWidths[columnIndex],
       measureTableCell(header[columnIndex] ?? ""),
       ...rows.map((row) => measureTableCell(row[columnIndex] ?? "")),
     ),
@@ -3564,7 +3571,7 @@ function computeTableColumnWidths(header: string[], rows: string[][], innerWidth
         widestIndex = index;
       }
     }
-    if (widths[widestIndex] <= 1) {
+    if (widths[widestIndex] <= minWidths[widestIndex]) {
       return undefined;
     }
     widths[widestIndex] -= 1;
@@ -3575,6 +3582,16 @@ function computeTableColumnWidths(header: string[], rows: string[][], innerWidth
 
 function measureTableCell(cell: string) {
   return parseMarkdownLine(cell).reduce((total, segment) => total + displayWidth(segment.text), 0);
+}
+
+function measureTableCellMinWidth(cell: string): number {
+  let maxWidth = 1;
+  for (const segment of parseMarkdownLine(cell)) {
+    for (const char of segment.text) {
+      maxWidth = Math.max(maxWidth, charWidth(char));
+    }
+  }
+  return maxWidth;
 }
 
 function renderTableRule(widths: number[], position: "top" | "middle" | "bottom"): StyledSegment[] {
@@ -4234,6 +4251,13 @@ function charWidth(char: string) {
 
   if (isCombining(codePoint) || codePoint === 0x200d || (codePoint >= 0xfe00 && codePoint <= 0xfe0f)) {
     return 0;
+  }
+
+  // U+1F5A7 (🖧) lives in the emoji block, but many terminals render it
+  // with text presentation as a single-cell symbol. Treat it as narrow so
+  // table borders do not drift when this glyph appears in a cell.
+  if (codePoint === 0x1f5a7) {
+    return 1;
   }
 
   return isWide(codePoint) || isEmojiPresentation(codePoint) ? 2 : 1;
