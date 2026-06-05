@@ -510,7 +510,7 @@ function activateSession(session: Session) {
   clearPendingInputState();
   rebuildTuiFromSession();
   tui.setSessionTitle(session.title ?? "");
-  tui.setWindowTitle(session.title ? `Pace | ${session.title}` : "Pace");
+  tui.setWindowTitle(formatSessionWindowTitle(session.title));
   refreshSessionStatsFromSession();
 }
 
@@ -525,6 +525,10 @@ function refreshCwd() {
 
 function rebuildTuiFromSession() {
   tui.setBlocks(sessionToRenderBlocks(activeSession));
+}
+
+function formatSessionWindowTitle(title: string | undefined) {
+  return title || "Pace";
 }
 
 function formatError(error: unknown) {
@@ -634,7 +638,7 @@ function maybeGenerateSessionTitleFromFirstMessage(
         updatedAt: new Date().toISOString(),
       };
       tui.setSessionTitle(title);
-      tui.setWindowTitle(`Pace | ${title}`);
+      tui.setWindowTitle(formatSessionWindowTitle(title));
       await saveSession(activeSession);
     } catch (error) {
       // Session naming is best-effort. Keep the first-message preview fallback.
@@ -1300,7 +1304,13 @@ async function executeToolUseBlock(
 
   try {
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-    const rawToolOutput = await toolToExecute.execute(inputParseResult.data, signal);
+    let streamedToolContent = "";
+    const rawToolOutput = await toolToExecute.execute(inputParseResult.data, signal, {
+      onOutput: (chunk) => {
+        streamedToolContent += chunk;
+        tui.updateBlock(blockId, { content: streamedToolContent });
+      },
+    });
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
     const toolOutput = toolToExecute.truncateOutput === false
       ? rawToolOutput
@@ -1387,7 +1397,13 @@ async function handleUserInput(userMessage: string) {
     const blockId = tui.addBlock({ role: "tool", title: `bash: ${command}`, content: "", state: "running" });
 
     try {
-      const rawOutput = await bashTool.execute({ command }, undefined);
+      let streamedToolContent = "";
+      const rawOutput = await bashTool.execute({ command }, undefined, {
+        onOutput: (chunk) => {
+          streamedToolContent += chunk;
+          tui.updateBlock(blockId, { content: streamedToolContent });
+        },
+      });
       const output = await truncateToolOutputIfNeeded(rawOutput, "bash");
       const content = formatToolResultBody(output);
       tui.updateBlock(blockId, { content, state: output.is_error ? "error" : "done" });

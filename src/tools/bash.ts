@@ -37,7 +37,7 @@ export const bashTool = defineTool({
       .describe("Maximum time to wait in seconds (max 600). Defaults to 30."),
   }),
   titleFormatter: (input) => `bash: ${input.command ?? ""}`,
-  execute: async (input, signal): Promise<ToolOutput> => {
+  execute: async (input, signal, context): Promise<ToolOutput> => {
     throwIfAborted(signal);
     const timeoutMs = Math.min(
       (input.timeout ?? BASH_DEFAULT_TIMEOUT / 1000) * 1000,
@@ -72,6 +72,7 @@ export const bashTool = defineTool({
       const captureChunk = (chunk: string, streamName: "stdout" | "stderr") => {
         if (!captureOutput) return;
         fullOutputStream?.write(chunk);
+        context?.onOutput?.(chunk);
         outputBytes += Buffer.byteLength(chunk, "utf8");
 
         if (shouldPersistLargeOutput) {

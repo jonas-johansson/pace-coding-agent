@@ -22,6 +22,15 @@ export type ToolDisplayBlock = {
   content: string;
 }
 
+export type ToolExecutionContext = {
+  /**
+   * Called by tools that can produce incremental user-visible output while
+   * they are still running. The final ToolOutput remains the source of truth
+   * for what is sent back to the model.
+   */
+  onOutput?: (content: string) => void;
+}
+
 type ZodObjectSchema = z.ZodObject<z.core.$ZodShape>;
 
 export type ToolConcurrency = "safe" | "exclusive";
@@ -30,7 +39,7 @@ export type ToolDescriptor<T extends ZodObjectSchema = ZodObjectSchema> = {
   name: string;
   description: string;
   inputSchema: T;
-  execute: (input: z.infer<T>, signal?: AbortSignal) => Promise<ToolOutput>;
+  execute: (input: z.infer<T>, signal?: AbortSignal, context?: ToolExecutionContext) => Promise<ToolOutput>;
   concurrency?: ToolConcurrency;
   titleFormatter?: (input: Partial<z.infer<T>>) => string;
   /**
