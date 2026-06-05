@@ -236,6 +236,7 @@ export class Tui {
   private blockLineMap: number[] = [];
   private lastMessageStart = 0;
   private lastMessageRows = 0;
+  private lastMessageScreenStartRow = 1;
   private emptyPrefixLines = 0;
   private contextInfo: ContextInfo | undefined;
   private cost = 0;
@@ -504,12 +505,15 @@ export class Tui {
     if (!position) {
       return;
     }
-    if (position.row > this.lastMessageRows) {
+
+    const messageRow = position.row - this.lastMessageScreenStartRow;
+    if (messageRow < 0 || messageRow >= this.lastMessageRows) {
       return;
     }
+
     // Subtract the empty prefix lines that were prepended to fill the
     // screen when there are fewer rendered block lines than message rows.
-    const renderedIndex = this.lastMessageStart + (position.row - 1) - this.emptyPrefixLines;
+    const renderedIndex = this.lastMessageStart + messageRow - this.emptyPrefixLines;
     if (renderedIndex < 0 || renderedIndex >= this.blockLineMap.length) {
       return;
     }
@@ -1771,9 +1775,10 @@ export class Tui {
     const popupRows = this.suggestionActive
       ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex).length
       : 0;
-    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows);
+    const headerRows = this.sessionTitle ? 2 : 0;
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows - headerRows);
 
-    const inputStartRow = messageRows + popupRows + 1;
+    const inputStartRow = headerRows + messageRows + popupRows + 1;
     const inputEndRow = inputStartRow + input.lines.length - 1;
 
     if (row < inputStartRow || row > inputEndRow) {
@@ -1813,8 +1818,9 @@ export class Tui {
     const popupRows = this.suggestionActive
       ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex).length
       : 0;
-    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows);
-    const inputStartRow = messageRows + popupRows + 1;
+    const headerRows = this.sessionTitle ? 2 : 0;
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows - headerRows);
+    const inputStartRow = headerRows + messageRows + popupRows + 1;
     const inputEndRow = inputStartRow + input.lines.length - 1;
     return row >= inputStartRow && row <= inputEndRow;
   }
@@ -1836,8 +1842,9 @@ export class Tui {
     const popupRows = this.suggestionActive
       ? this.renderSuggestionPopup(columns, this.getSuggestionMatches(), this.suggestionIndex).length
       : 0;
-    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows);
-    const inputStartRow = messageRows + popupRows + 1;
+    const headerRows = this.sessionTitle ? 2 : 0;
+    const messageRows = Math.max(0, rows - statusRows - input.lines.length - popupRows - headerRows);
+    const inputStartRow = headerRows + messageRows + popupRows + 1;
     const inputEndRow = inputStartRow + input.lines.length - 1;
 
     const { start, end } = normalizeSelection(this.selection);
@@ -2283,6 +2290,7 @@ export class Tui {
     this.blockLineMap = blockLineMap;
     this.lastMessageStart = start;
     this.lastMessageRows = messageRows;
+    this.lastMessageScreenStartRow = headerRows + 1;
     this.emptyPrefixLines = emptyPrefixLines;
 
     const cursorRow = Math.min(rows, headerRows + messageRows + popupRows + input.cursorRow);
