@@ -2,7 +2,7 @@ import { readFile, stat } from "fs/promises";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve, extname } from "path";
-import { Tui } from "./tui";
+import { Tui, formatSessionCost } from "./tui";
 import { sessionToRenderBlocks } from "./session-view";
 import { reasoningDisplayContent, reasoningDisplayTitle, reasoningTitle } from "./reasoning";
 import {
@@ -68,7 +68,7 @@ import {
 import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
 import { sendDesktopNotification } from "./notify";
 import { onEvent } from "./events";
-import { loadPaceConfig } from "./config";
+import { loadPaceConfig, DEFAULT_COST_DISPLAY_CONFIG } from "./config";
 import { loadPreferences, savePreferences } from "./preferences";
 import {
   initMcpServers,
@@ -856,6 +856,7 @@ function formatSessionList(sessions: SessionListItem[]): string {
       `\`${session.id}\`${marker}`,
       formatSessionTimestamp(session.updatedAt),
       String(session.entryCount),
+      formatSessionCost(session.cost, DEFAULT_COST_DISPLAY_CONFIG),
       escapeTableCell(session.currentModelId),
       escapeTableCell(session.title ?? ""),
     ];
@@ -864,8 +865,8 @@ function formatSessionList(sessions: SessionListItem[]): string {
   return [
     `Project: ${formatCwd(process.cwd())}`,
     "",
-    "| Session | Updated | Entries | Model | Title |",
-    "|---|---|---:|---|---|",
+    "| Session | Updated | Entries | Cost | Model | Title |",
+    "|---|---|---:|---:|---|---|",
     ...rows.map((row) => `| ${row.join(" | ")} |`),
     "",
     "Use `/resume <session-id>` to resume a session. `*` marks the active session.",
@@ -960,6 +961,7 @@ async function handleCommand(command: string): Promise<boolean> {
         currentModelId: session.currentModelId,
         title: session.title,
         isActive: session.id === activeSession.id,
+        cost: session.cost,
       })));
       return true;
     }

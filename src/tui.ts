@@ -67,6 +67,7 @@ export type SessionOverlayItem = {
   currentModelId: string;
   title?: string;
   isActive?: boolean;
+  cost?: number;
 };
 
 /** Callbacks and data wiring for the session picker overlay. */
@@ -2625,6 +2626,7 @@ export class Tui {
       id: item.id.slice(0, 8),
       name: sanitizeSingleLine(item.title ?? "").trim(),
       entries: String(item.entryCount),
+      cost: item.cost !== undefined ? formatSessionCost(item.cost, this.costDisplayConfig) : "",
       fgColor: baseFg,
       activeColor: item.isActive ? 41 : baseFg,
       activeMarker: item.isActive ? "●" : " ",
@@ -4098,6 +4100,7 @@ type SessionOverlayColumns = {
   id: string;
   name: string;
   entries: string;
+  cost: string;
   fgColor: number;
   activeColor: number;
   activeMarker?: string;
@@ -4106,22 +4109,24 @@ type SessionOverlayColumns = {
 function renderSessionOverlayColumns(options: SessionOverlayColumns): string {
   const dateWidth = 16;
   const idWidth = 8;
-  const entriesWidth = 7;
+  const entriesWidth = 4;
+  const costWidth = 9;
   const gap = 2;
   const leftPadding = 2;
   const markerWidth = 1;
-  const fixedWidth = leftPadding + markerWidth + gap + dateWidth + gap + idWidth + gap + gap + entriesWidth;
+  const fixedWidth = leftPadding + markerWidth + gap + dateWidth + gap + idWidth + gap + gap + entriesWidth + gap + costWidth;
   const nameWidth = Math.max(0, options.columns - fixedWidth);
 
   const marker = options.activeMarker ?? " ";
   const date = padRight(truncateToWidth(options.date, dateWidth), dateWidth);
   const id = padRight(truncateToWidth(options.id, idWidth), idWidth);
   const name = padRight(truncateToWidth(options.name, nameWidth), nameWidth);
-  const entries = padLeft(truncateToWidth(options.entries, entriesWidth), entriesWidth);
-  const visible = leftPadding + markerWidth + gap + dateWidth + gap + idWidth + gap + nameWidth + gap + entriesWidth;
+  const entries = padRight(truncateToWidth(options.entries, entriesWidth), entriesWidth);
+  const cost = padLeft(truncateToWidth(options.cost, costWidth), costWidth);
+  const visible = leftPadding + markerWidth + gap + dateWidth + gap + idWidth + gap + nameWidth + gap + entriesWidth + gap + costWidth;
   const trailing = Math.max(0, options.columns - visible);
 
-  return `${bg(options.bgColor)}${" ".repeat(leftPadding)}${fg(options.activeColor)}${marker}${fg(options.fgColor)}${" ".repeat(gap)}${date}${" ".repeat(gap)}${id}${fg(151)}${" ".repeat(gap)}${name}${fg(options.fgColor)}${" ".repeat(gap)}${entries}${" ".repeat(trailing)}${RESET}`;
+  return `${bg(options.bgColor)}${" ".repeat(leftPadding)}${fg(options.activeColor)}${marker}${fg(options.fgColor)}${" ".repeat(gap)}${date}${" ".repeat(gap)}${id}${fg(151)}${" ".repeat(gap)}${name}${fg(options.fgColor)}${" ".repeat(gap)}${entries}${" ".repeat(gap)}${fg(187)}${cost}${" ".repeat(trailing)}${RESET}`;
 }
 
 function padRight(text: string, width: number): string {
@@ -4347,9 +4352,16 @@ function formatContextInfo(info: ContextInfo): string {
   return `${used} (${percent}%)`;
 }
 
-function formatCost(cost: number, config: CostDisplayConfig): string {
+export function formatCost(cost: number, config: CostDisplayConfig): string {
   const convertedCost = cost * config.conversionRate;
   const amount = formatCostAmount(convertedCost, config.fractionDigits);
+  return config.format.replaceAll("{amount}", amount);
+}
+
+/** Format a cost for display in session listings, always rounded to 3 decimals. */
+export function formatSessionCost(cost: number, config: CostDisplayConfig): string {
+  const convertedCost = cost * config.conversionRate;
+  const amount = convertedCost.toFixed(3);
   return config.format.replaceAll("{amount}", amount);
 }
 

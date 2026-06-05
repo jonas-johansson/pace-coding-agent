@@ -86,6 +86,7 @@ export type SessionListItem = {
   title?: string;
   activeEntryId: string | null;
   entryCount: number;
+  cost: number;
   filePath: string;
 };
 
@@ -493,6 +494,10 @@ function validateLoadedSession(
 
 function toSessionListItem(session: Session, filePath: string): SessionListItem {
   const title = session.title ?? firstUserMessagePreview(session);
+  const cost = session.entries.reduce(
+    (sum, entry) => sum + (entry.type === "assistant" ? entry.cost : 0),
+    0,
+  );
 
   return {
     id: session.id,
@@ -504,6 +509,7 @@ function toSessionListItem(session: Session, filePath: string): SessionListItem 
     ...(title !== undefined && { title }),
     activeEntryId: session.activeEntryId,
     entryCount: session.entries.length,
+    cost,
     filePath,
   };
 }
