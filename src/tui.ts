@@ -142,6 +142,8 @@ const INVERSE = "\x1b[7m";
 const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
 const CLEAR_SCREEN = "\x1b[2J";
+const ENTER_ALT_SCREEN = "\x1b[?1049h";
+const LEAVE_ALT_SCREEN = "\x1b[?1049l";
 const ENABLE_MOUSE = "\x1b[?1002h\x1b[?1006h";
 const DISABLE_MOUSE = "\x1b[?1000l\x1b[?1002l\x1b[?1006l";
 const ENABLE_FOCUS = "\x1b[?1004h";
@@ -313,7 +315,7 @@ export class Tui {
     process.stdin.on("data", this.handleData);
     process.stdout.on("resize", this.handleResize);
     process.once("exit", this.handleExit);
-    process.stdout.write(`${CLEAR_SCREEN}${HIDE_CURSOR}${ENABLE_MOUSE}${ENABLE_FOCUS}`);
+    process.stdout.write(`${ENTER_ALT_SCREEN}${CLEAR_SCREEN}${HIDE_CURSOR}${ENABLE_MOUSE}${ENABLE_FOCUS}`);
     this.render();
   }
 
@@ -330,7 +332,7 @@ export class Tui {
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }
-    process.stdout.write(`${RESET}${DISABLE_MOUSE}${DISABLE_FOCUS}${SHOW_CURSOR}\n`);
+    process.stdout.write(`${RESET}${DISABLE_MOUSE}${DISABLE_FOCUS}${SHOW_CURSOR}${LEAVE_ALT_SCREEN}\n`);
   }
 
   addBlock(block: Omit<RenderBlock, "id">) {
@@ -624,7 +626,7 @@ export class Tui {
   };
 
   private handleExit = () => {
-    process.stdout.write(`${RESET}${DISABLE_MOUSE}${DISABLE_FOCUS}${SHOW_CURSOR}`);
+    process.stdout.write(`${RESET}${DISABLE_MOUSE}${DISABLE_FOCUS}${SHOW_CURSOR}${LEAVE_ALT_SCREEN}`);
   };
 
   private handleData = (data: string) => {
