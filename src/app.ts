@@ -24,6 +24,7 @@ import {
   type ContentBlock as SessionContentBlock,
   type Session,
   type SessionListItem,
+  type TextBlock,
   type ThinkingBlock,
 } from "./session";
 import { initHighlighter } from "./syntax";
@@ -531,6 +532,48 @@ function formatSessionWindowTitle(title: string | undefined) {
   return title || "Pace";
 }
 
+function getLastAssistantText(session: Session): string | undefined {
+  for (let i = session.entries.length - 1; i >= 0; i -= 1) {
+    const entry = session.entries[i];
+    if (entry.type === "assistant") {
+      const texts = entry.content
+        .filter((block): block is { type: "text"; text: string } => block.type === "text")
+        .map((block) => block.text);
+      if (texts.length > 0) {
+        return texts.join("");
+      }
+    }
+  }
+  return undefined;
+}
+
+function getLastParagraphFirstSentence(text: string): string | undefined {
+  const paragraphs = text.split("\n").map((p) => p.trim()).filter((p) => p.length > 0);
+  const lastParagraph = paragraphs[paragraphs.length - 1];
+  if (!lastParagraph) {
+    return undefined;
+  }
+
+  const endChars = [",", ".", "!", "?", ":", ";"];
+  let endIndex = lastParagraph.length;
+  for (const char of endChars) {
+    const idx = lastParagraph.indexOf(char);
+    if (idx !== -1 && idx < endIndex) {
+      endIndex = idx;
+    }
+  }
+
+  const sentence = lastParagraph.slice(0, endIndex).trim();
+  return sentence.length > 0 ? sentence : undefined;
+}
+
+function sendDoneNotification(session: Session): void {
+  const title = session.title ?? "Pace";
+  const lastText = getLastAssistantText(session);
+  const body = getLastParagraphFirstSentence(lastText ?? "") ?? "Done";
+  sendDesktopNotification(title, body);
+}
+
 function formatError(error: unknown) {
   return error instanceof Error ? error.stack ?? error.message : String(error);
 }
@@ -1025,7 +1068,6 @@ async function handleCommand(command: string): Promise<boolean> {
 
         promptRunning = true;
         tui.setRunning(true, "reasoning");
-        const startTime = Date.now();
 
         try {
           const displayText = skillArgs
@@ -1038,8 +1080,7 @@ async function handleCommand(command: string): Promise<boolean> {
           promptRunning = false;
           tui.setRunning(false, "idle");
           if (!tui.isFocused) {
-            const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-            sendDesktopNotification("Pace", `Agent finished in ${elapsedSec}s.`);
+            sendDoneNotification(activeSession);
           }
         }
 
@@ -1419,8 +1460,6 @@ async function handleUserInput(userMessage: string) {
   promptRunning = true;
   tui.setRunning(true, "reasoning");
 
-  const startTime = Date.now();
-
   try {
     // Parse user input for images
     const parsed = await parseUserInput(userMessage);
@@ -1474,8 +1513,7 @@ async function handleUserInput(userMessage: string) {
     promptRunning = false;
     tui.setRunning(false, "idle");
     if (!tui.isFocused) {
-      const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-      sendDesktopNotification("Pace", `Agent finished in ${elapsedSec}s.`);
+      sendDoneNotification(activeSession);
     }
   }
 }
