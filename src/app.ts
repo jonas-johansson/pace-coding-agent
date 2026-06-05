@@ -574,8 +574,9 @@ Rules:
 - Return only the title.
 - Use 2 to 8 words.
 - Do not use quotes.
-- Do not end with punctuation.
+- Do not end with punctuation or colon.
 - If the message is vague, summarize the likely task.
+- Do not assume framework or tech stack.
 
 Examples:
 - Free memory and storage check
