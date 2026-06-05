@@ -547,30 +547,15 @@ function getLastAssistantText(session: Session): string | undefined {
   return undefined;
 }
 
-function getLastParagraphFirstSentence(text: string): string | undefined {
+function getFirstParagraph(text: string): string | undefined {
   const paragraphs = text.split("\n").map((p) => p.trim()).filter((p) => p.length > 0);
-  const lastParagraph = paragraphs[paragraphs.length - 1];
-  if (!lastParagraph) {
-    return undefined;
-  }
-
-  const endChars = [",", ".", "!", "?", ":", ";"];
-  let endIndex = lastParagraph.length;
-  for (const char of endChars) {
-    const idx = lastParagraph.indexOf(char);
-    if (idx !== -1 && idx < endIndex) {
-      endIndex = idx;
-    }
-  }
-
-  const sentence = lastParagraph.slice(0, endIndex).trim();
-  return sentence.length > 0 ? sentence : undefined;
+  return paragraphs.length > 0 ? paragraphs[0] : undefined;
 }
 
 function sendDoneNotification(session: Session): void {
   const title = session.title ?? "Pace";
   const lastText = getLastAssistantText(session);
-  const body = getLastParagraphFirstSentence(lastText ?? "") ?? "Done";
+  const body = getFirstParagraph(lastText ?? "") ?? "Done";
   sendDesktopNotification(title, body);
 }
 
