@@ -36,7 +36,13 @@ export const bashTool = defineTool({
       .optional()
       .describe("Maximum time to wait in seconds (max 600). Defaults to 30."),
   }),
-  titleFormatter: (input) => `bash: ${input.command ?? ""}`,
+  titleFormatter: (input) => {
+    const cmd = input.command ?? "";
+    if (input.timeout !== undefined && input.timeout !== 30) {
+      return `bash: [timeout=${input.timeout}] ${cmd}`;
+    }
+    return `bash: ${cmd}`;
+  },
   execute: async (input, signal, context): Promise<ToolOutput> => {
     throwIfAborted(signal);
     const timeoutMs = Math.min(
