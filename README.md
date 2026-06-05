@@ -36,7 +36,8 @@ export FIREWORKS_API_KEY=...           # fireworks/* models
 - Slash commands
 - Tables
 - Token usage and cost in your currency
-- Ultra-fast boot
+- Fast boot
+- Table rendering
 
 ## Models
 
