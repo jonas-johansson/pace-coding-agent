@@ -549,7 +549,8 @@ function getLastAssistantText(session: Session): string | undefined {
 
 function getFirstParagraph(text: string): string | undefined {
   const paragraphs = text.split("\n").map((p) => p.trim()).filter((p) => p.length > 0);
-  return paragraphs.length > 0 ? paragraphs[0] : undefined;
+  if (paragraphs.length === 0) return undefined;
+  return paragraphs[0].replace(/\*\*/g, "");
 }
 
 function sendDoneNotification(session: Session): void {
