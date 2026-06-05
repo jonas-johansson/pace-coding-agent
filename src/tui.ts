@@ -2441,10 +2441,12 @@ export class Tui {
   }
 
   private renderHeaderLine(columns: number): string {
-    const text = truncateToWidth(this.sessionTitle, Math.max(1, columns - 4));
+    const text = truncateToWidth(this.sessionTitle, Math.max(1, columns - 2));
     const visible = displayWidth(text);
-    const pad = Math.max(0, columns - 2 - visible);
-    return `${bg(CANVAS_BG)}${fg(245)}  ${text}${RESET}${bg(CANVAS_BG)}${" ".repeat(pad)}${RESET}`;
+    const totalPad = Math.max(0, columns - 2 - visible);
+    const leftPad = Math.floor(totalPad / 2);
+    const rightPad = totalPad - leftPad;
+    return `${bg(CANVAS_BG)}${fg(245)}${" ".repeat(leftPad)}${text}${" ".repeat(rightPad)}${RESET}`;
   }
 
   private renderSuggestionPopup(columns: number, matches: SuggestionItem[], selectedIndex: number): string[] {
