@@ -1786,12 +1786,12 @@ async function prompt(
       if (assistantMessagePushed && pendingToolUseIds.length > 0) {
         for (const toolUseId of currentToolUseOrder) {
           const toolResult = completedToolResults.get(toolUseId)
-            ?? makeToolErrorResult(toolUseId, "Cancelled by user");
+            ?? makeToolErrorResult(toolUseId, "Tool execution was cancelled by the user.");
           appendToolResultToDraft(toolResult);
         }
       }
 
-      if (anyAssistantMessagePushed && !isTurnDraftEmpty(turnDraft)) {
+      if (!isTurnDraftEmpty(turnDraft)) {
         await commitAndSaveTurnDraft();
       }
 
