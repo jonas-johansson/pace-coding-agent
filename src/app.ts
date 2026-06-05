@@ -1863,7 +1863,17 @@ const exampleTable = `| Command | Description |
 | /mcp | List connected MCP servers and their tools. |
 | /skill:<name> [args] | Run a discovered skill with optional arguments. Use /skills to see available skills.`;
 
+function parseCliArgs(): { resume: boolean } {
+  // process.argv is [node, script, ...args]
+  const args = process.argv.slice(2);
+  return {
+    resume: args.includes("--resume") || args.includes("-r"),
+  };
+}
+
 async function main() {
+  const cliArgs = parseCliArgs();
+
   // Resolve config + persisted preferences before the first render so the
   // status bar shows the correct (last-used) model on the very first frame,
   // with no flash of the default model. Errors are buffered and surfaced
@@ -1885,6 +1895,20 @@ async function main() {
   }
 
   updateContextInfo();
+
+  // If --resume was passed, load the most recent session for this project.
+  if (cliArgs.resume) {
+    try {
+      const sessions = await listSessions(process.cwd());
+      if (sessions.length > 0) {
+        const mostRecent = sessions[0]; // listSessions sorts by updatedAt desc
+        const session = await loadSession(createProjectKey(process.cwd()), mostRecent.id);
+        activateSession(session);
+      }
+    } catch (error) {
+      startupErrors.push({ title: "Resume session", content: formatError(error) });
+    }
+  }
 
   tui.start();
 
