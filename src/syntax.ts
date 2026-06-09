@@ -55,7 +55,7 @@ export type SyntaxSegment = {
 // Shiki integration
 // ---------------------------------------------------------------------------
 
-const THEME = "dark-plus";
+let currentShikiTheme = "dark-plus";
 
 const SHIKI_LANGS = [
   "typescript",
@@ -152,7 +152,7 @@ export async function initHighlighter(): Promise<void> {
   const engine = createJavaScriptRegexEngine();
 
   const [themeModule, ...langModules] = await Promise.all([
-    bundledThemes[THEME]() as Promise<{ default: ThemeRegistrationAny }>,
+    (bundledThemes as Record<string, () => Promise<{ default: ThemeRegistrationAny }>>)[currentShikiTheme](),
     ...SHIKI_LANGS.map((l) =>
       (bundledLanguages as Record<string, () => Promise<{ default: LanguageRegistration | LanguageRegistration[] }>>)[l]()
     ),
@@ -166,6 +166,30 @@ export async function initHighlighter(): Promise<void> {
 
   for (const cb of readyCallbacks) cb();
   readyCallbacks.length = 0;
+}
+
+export async function setShikiTheme(themeName: string): Promise<void> {
+  if (!shiki) {
+    currentShikiTheme = themeName;
+    return;
+  }
+  if (shiki.getLoadedThemes().includes(themeName)) {
+    currentShikiTheme = themeName;
+    return;
+  }
+
+  try {
+    const { bundledThemes } = await import("shiki");
+    const mod = await (bundledThemes as Record<string, () => Promise<{ default: ThemeRegistrationAny }>>)[themeName]();
+    await shiki.loadTheme(mod.default);
+    currentShikiTheme = themeName;
+  } catch {
+    // Non-fatal: keep current theme if new one fails to load
+  }
+}
+
+export function getCurrentShikiTheme(): string {
+  return currentShikiTheme;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +232,7 @@ function tokenizeWithShiki(lines: string[], lang: string): SyntaxSegment[][] {
   const code = lines.join("\n");
   const tokenLines: ThemedToken[][] = shiki!.codeToTokensBase(code, {
     lang,
-    theme: THEME,
+    theme: currentShikiTheme,
   });
 
   // codeToTokensBase may return a trailing empty line; align to input lines.

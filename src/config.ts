@@ -17,11 +17,17 @@ export type CostDisplayConfig = {
   fractionDigits?: number;
 };
 
+export type ThemeConfig = {
+  name: string;
+  shikiTheme?: string;
+};
+
 export type PaceConfig = {
   cost: CostDisplayConfig;
   defaultModel?: string;
   cycleModels?: string[];
   sessionTitleModel?: string;
+  theme?: ThemeConfig;
 };
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -31,8 +37,13 @@ export const DEFAULT_COST_DISPLAY_CONFIG: CostDisplayConfig = {
   format: "${amount}",
 };
 
+export const DEFAULT_THEME_CONFIG: ThemeConfig = {
+  name: "system",
+};
+
 export const DEFAULT_PACE_CONFIG: PaceConfig = {
   cost: DEFAULT_COST_DISPLAY_CONFIG,
+  theme: DEFAULT_THEME_CONFIG,
 };
 
 // ── Schema ───────────────────────────────────────────────────────────────────
@@ -45,16 +56,23 @@ const costDisplayConfigSchema = z.object({
   fractionDigits: z.number().int().min(0).max(20).optional(),
 });
 
+const themeConfigSchema = z.object({
+  name: z.string().default(DEFAULT_THEME_CONFIG.name),
+  shikiTheme: z.string().optional(),
+}).optional();
+
 const paceConfigSchema = z.object({
   cost: costDisplayConfigSchema.optional(),
   defaultModel: z.string().optional(),
   cycleModels: z.array(z.string()).min(1).optional(),
   sessionTitleModel: z.string().optional(),
+  theme: themeConfigSchema,
 }).transform((config) => ({
   cost: config.cost ?? DEFAULT_COST_DISPLAY_CONFIG,
   ...(config.defaultModel !== undefined && { defaultModel: config.defaultModel }),
   ...(config.cycleModels !== undefined && { cycleModels: config.cycleModels }),
   ...(config.sessionTitleModel !== undefined && { sessionTitleModel: config.sessionTitleModel }),
+  theme: config.theme ?? DEFAULT_THEME_CONFIG,
 }));
 
 // ── Loading ──────────────────────────────────────────────────────────────────

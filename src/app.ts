@@ -68,7 +68,10 @@ import {
 import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
 import { sendDesktopNotification } from "./notify";
 import { onEvent } from "./events";
-import { loadPaceConfig, DEFAULT_COST_DISPLAY_CONFIG } from "./config";
+import { loadPaceConfig, DEFAULT_COST_DISPLAY_CONFIG, type ThemeConfig, DEFAULT_THEME_CONFIG } from "./config";
+import { loadTheme } from "./themes";
+import { setTuiTheme } from "./tui";
+import { setShikiTheme } from "./syntax";
 import { loadPreferences, savePreferences } from "./preferences";
 import {
   initMcpServers,
@@ -236,6 +239,8 @@ let sessionTitleModelSelection: ModelSelection = {
 };
 let activeSession = createSession(process.cwd(), currentModelId);
 
+let currentThemeName = DEFAULT_THEME_CONFIG.name;
+
 type ResolvedModelVariant = ModelVariant & { id: string };
 
 function currentModelConfig(): ModelConfig {
@@ -322,6 +327,8 @@ const tui = new Tui({
     { label: "/skills", detail: "List available skills", kind: "command", insertText: "/skills " },
     { label: "/skill:<name>", detail: "Load and run a skill", kind: "command", insertText: "/skill:" },
     { label: "/mcp", detail: "List connected MCP servers and tools", kind: "command", insertText: "/mcp" },
+    { label: "/theme", detail: "Show or switch theme", kind: "command", insertText: "/theme " },
+    { label: "/themes", detail: "List available themes", kind: "command", insertText: "/themes", executeOnAccept: true },
   ],
   fileSuggestions: getProjectFiles,
   modelOverlay: {
@@ -566,6 +573,37 @@ function formatError(error: unknown) {
 
 function formatErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function listCustomThemes(): Promise<string[]> {
+  try {
+    const { readdir } = await import("fs/promises");
+    const themeDir = join(homedir(), ".config", "pace", "themes");
+    const files = await readdir(themeDir);
+    return files
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => f.slice(0, -5));
+  } catch {
+    return [];
+  }
+}
+
+async function switchTheme(themeName: string) {
+  try {
+    const themeConfig: ThemeConfig = { name: themeName };
+    const newTheme = await loadTheme(themeConfig);
+    currentThemeName = newTheme.name;
+    setTuiTheme(newTheme);
+    tui.invalidateRenderCache();
+    await setShikiTheme(newTheme.shikiTheme);
+    tui.setStatus(`Theme: ${newTheme.name}`);
+  } catch (error) {
+    tui.addBlock({
+      role: "error",
+      title: "Theme error",
+      content: `Failed to switch theme: ${formatError(error)}`,
+    });
+  }
 }
 
 const SESSION_TITLE_SYSTEM_PROMPT = `Generate a short, descriptive session title for a coding assistant conversation.
@@ -1021,6 +1059,22 @@ async function handleCommand(command: string): Promise<boolean> {
         title: "MCP Servers",
         content: formatMcpListing(),
       });
+      return true;
+    }
+    case "/themes":
+    case "/theme": {
+      const requestedTheme = args[0];
+      if (!requestedTheme) {
+        const customThemes = await listCustomThemes();
+        const allThemes = ["system", "dark", "light", ...customThemes];
+        tui.addBlock({
+          role: "assistant",
+          title: "Themes",
+          content: `Current theme: ${currentThemeName}\n\nAvailable themes:\n${allThemes.map((t) => (t === currentThemeName ? `* ${t}` : `- ${t}`)).join("\n")}\n\nUsage: /theme <theme-name>`,
+        });
+        return true;
+      }
+      await switchTheme(requestedTheme);
       return true;
     }
     default: {
@@ -1859,6 +1913,7 @@ const exampleTable = `| Command | Description |
 | /new | Start a new conversation, clearing all history and context. |
 | /model <model-id>[:variant] | Switch to a different model. Use without arguments to list available models. |
 | /variant [variant] | Show or switch the current model's variant. |
+| /theme <theme-name> | Switch to a different theme. Use without arguments to list available themes. |
 | /sessions | List saved sessions for the current project. |
 | /resume <session-id> | Resume a saved session by id. |
 | /undo | Rewind to before the last user message. |
@@ -1887,6 +1942,11 @@ async function main() {
     const paceConfig = await loadPaceConfig();
     tui.setCostDisplayConfig(paceConfig.cost);
     applyConfiguredModels(paceConfig);
+    const themeConfig = paceConfig.theme ?? DEFAULT_THEME_CONFIG;
+    const theme = await loadTheme(themeConfig);
+    currentThemeName = theme.name;
+    setTuiTheme(theme);
+    await setShikiTheme(theme.shikiTheme);
   } catch (error) {
     startupErrors.push({ title: "Pace config", content: formatError(error) });
   }
@@ -1914,6 +1974,20 @@ async function main() {
   }
 
   tui.start();
+
+  process.on("SIGUSR2", async () => {
+    try {
+      const newConfig = await loadPaceConfig();
+      const newTheme = await loadTheme(newConfig.theme ?? DEFAULT_THEME_CONFIG);
+      currentThemeName = newTheme.name;
+      setTuiTheme(newTheme);
+      tui.invalidateRenderCache();
+      await setShikiTheme(newTheme.shikiTheme);
+      tui.setStatus(`Theme reloaded: ${newTheme.name}`);
+    } catch (error) {
+      tui.setStatus(`Theme reload failed: ${formatError(error)}`);
+    }
+  });
 
   for (const { title, content } of startupErrors) {
     tui.addBlock({ role: "error", title, content });

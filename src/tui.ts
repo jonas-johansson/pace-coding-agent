@@ -1,4 +1,4 @@
-type BlockRole = "user" | "assistant" | "reasoning" | "tool" | "error";
+import { type BlockRole, type BlockTheme, type TuiTheme, BUILT_IN_THEMES } from "./themes.js";
 
 export type BlockState = "running" | "done" | "error";
 
@@ -129,13 +129,6 @@ type ParsedMarkdownTable = {
   nextIndex: number;
 };
 
-type BlockTheme = {
-  fg: number;
-  bg: number;
-  accent: number;
-  bold: number;
-};
-
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
 const NO_BOLD = "\x1b[22m";
@@ -170,36 +163,23 @@ const STATUS_ROWS = 1;
 const MIN_MESSAGE_ROWS = 1;
 const INSERT_NEWLINE_KEYS = new Set(["\x1b[13;2u", "\x1b[13;2~", "\x1b[27;2;13~"]);
 const MAX_SUGGESTION_ROWS = 6;
-const SUGGESTION_BG = 235;
 
 // ── Model picker overlay ──
-const OVERLAY_BG = 235;
-const OVERLAY_CHROME_BG = 237;
-const OVERLAY_SEL_BG = 238;
 /** Header rows above the list: title, search, separator. */
 const OVERLAY_HEADER_ROWS = 3;
 /** Footer rows below the list: hint line. */
 const OVERLAY_FOOTER_ROWS = 1;
 
-/** Pitch black background used for the main canvas (assistant text, inline tools). */
-const CANVAS_BG = 234;
-/** Slightly gray background for tool panels that show content. */
-const PANEL_BG = 235;
+let currentTheme: TuiTheme = BUILT_IN_THEMES.dark;
 
-const themes: Record<BlockRole, BlockTheme> = {
-  user: { fg: 231, bg: 24, accent: 117, bold: 230 },
-  assistant: { fg: 255, bg: CANVAS_BG, accent: 221, bold: 215 },
-  reasoning: { fg: 245, bg: CANVAS_BG, accent: 179, bold: 179 },
-  tool: { fg: 252, bg: PANEL_BG, accent: 117, bold: 230 },
-  error: { fg: 231, bg: 88, accent: 217, bold: 223 },
-};
+export function setTuiTheme(theme: TuiTheme) {
+  currentTheme = theme;
+  cachedBlackLineColumns = -1;
+}
 
-/** Theme used for inline tool lines (single-line, no content) rendered on the canvas. */
-const inlineToolTheme: BlockTheme = { fg: 245, bg: CANVAS_BG, accent: 117, bold: 230 };
-
-const DONE_GLYPH = { glyph: "✓", color: 151 };
-const ERROR_GLYPH = { glyph: "✗", color: 217 };
-const TOOL_ARROW = "→";
+export function getCurrentTuiTheme(): TuiTheme {
+  return currentTheme;
+}
 
 /** Cache entry for a single block's rendered output. */
 type BlockRenderCacheEntry = {
@@ -454,6 +434,15 @@ export class Tui {
     process.stdout.write(`\x1b]0;${title}\x07`);
   }
 
+  invalidateRenderCache() {
+    this.blockRenderCache.clear();
+    this.previousFrameLines = [];
+    this.previousRawLines = [];
+    this.cachedLogoColumns = -1;
+    this.cachedLogoRows = -1;
+    this.requestRender();
+  }
+
   setImageCount(count: number) {
     this.imageCount = count;
     this.requestRender();
@@ -636,6 +625,11 @@ export class Tui {
   };
 
   private handleData = (data: string) => {
+    // Ignore OSC 11 (background color query) responses that may arrive mid-session
+    if (data.startsWith("\x1b]11;")) {
+      return;
+    }
+
     if (this.modelOverlayActive) {
       this.handleModelOverlayKey(data);
       return;
@@ -2398,7 +2392,7 @@ export class Tui {
       const rightPad = Math.max(0, columns - leftPad - logoWidth);
       const padded = logoLine + " ".repeat(Math.max(0, logoWidth - logoLine.length));
       lines.push(
-        `${bg(CANVAS_BG)}${" ".repeat(leftPad)}${fg(117)}${padded}${RESET}${bg(CANVAS_BG)}${" ".repeat(rightPad)}${RESET}`,
+        `${bg(currentTheme.canvas.bg)}${" ".repeat(leftPad)}${fg(currentTheme.logoColor)}${padded}${RESET}${bg(currentTheme.canvas.bg)}${" ".repeat(rightPad)}${RESET}`,
       );
     }
 
@@ -2431,14 +2425,14 @@ export class Tui {
     const leftPadded = `${" ".repeat(horizontalPadding)}${leftVisible}`;
     const leftPaddedWidth = displayWidth(leftPadded);
     const gapWidth = Math.max(0, columns - leftPaddedWidth - rightWidth);
-    const fgColor = this.running ? 229 : 250;
-    const contextFgColor = this.contextInfo && this.contextInfo.usedTokens / this.contextInfo.contextWindow >= 0.8 ? 217 : 245;
+    const fgColor = this.running ? currentTheme.status.runningFg : currentTheme.status.fg;
+    const contextFgColor = this.contextInfo && this.contextInfo.usedTokens / this.contextInfo.contextWindow >= 0.8 ? currentTheme.status.contextWarnFg : currentTheme.status.contextFg;
     return (
-      `${bg(235)}${fg(fgColor)}${leftPadded}${" ".repeat(gapWidth)}` +
-      `${bg(235)}${fg(246)}${cwdText}` +
-      `${bg(235)}${fg(187)}${costText}` +
-      `${bg(235)}${fg(contextFgColor)}${contextText}` +
-      `${bg(235)}${fg(109)}${modelText}${RESET}`
+      `${bg(currentTheme.status.bg)}${fg(fgColor)}${leftPadded}${" ".repeat(gapWidth)}` +
+      `${bg(currentTheme.status.bg)}${fg(currentTheme.status.fg)}${cwdText}` +
+      `${bg(currentTheme.status.bg)}${fg(currentTheme.status.costFg)}${costText}` +
+      `${bg(currentTheme.status.bg)}${fg(contextFgColor)}${contextText}` +
+      `${bg(currentTheme.status.bg)}${fg(currentTheme.status.modelFg)}${modelText}${RESET}`
     );
   }
 
@@ -2451,7 +2445,7 @@ export class Tui {
     const totalPad = Math.max(0, columns - 2 - visible);
     const leftPad = Math.floor(totalPad / 2);
     const rightPad = totalPad - leftPad;
-    return `${bg(CANVAS_BG)}${fg(245)}${" ".repeat(leftPad)}${text}${" ".repeat(rightPad)}${RESET}`;
+    return `${bg(currentTheme.canvas.bg)}${fg(245)}${" ".repeat(leftPad)}${text}${" ".repeat(rightPad)}${RESET}`;
   }
 
   private renderSuggestionPopup(columns: number, matches: SuggestionItem[], selectedIndex: number): string[] {
@@ -2463,21 +2457,21 @@ export class Tui {
       const isSelected = i === selectedIndex;
       const prefix = isSelected ? `${INVERSE}` : "";
       const suffix = isSelected ? `${RESET}` : "";
-      const labelColor = item.kind === "command" ? fg(117) : fg(252);
+      const labelColor = item.kind === "command" ? fg(currentTheme.blocks.user.accent) : fg(currentTheme.blocks.tool.fg);
       const label = item.label.padEnd(20, " ");
       const detail = item.detail;
       const text = `  ${label} ${detail}`;
       const clipped = clipAnsi(text, columns - 4);
       const pad = Math.max(0, columns - 4 - visibleLength(clipped));
       lines.push(
-        `${bg(SUGGESTION_BG)}  ${prefix}${labelColor}${clipped}${suffix}${" ".repeat(pad)}  ${RESET}`,
+        `${bg(currentTheme.suggestion.bg)}  ${prefix}${labelColor}${clipped}${suffix}${" ".repeat(pad)}  ${RESET}`,
       );
     }
     if (matches.length > MAX_SUGGESTION_ROWS) {
       const remaining = matches.length - MAX_SUGGESTION_ROWS;
       const moreText = `  … and ${remaining} more  `;
       const pad = Math.max(0, columns - visibleLength(moreText));
-      lines.push(`${bg(SUGGESTION_BG)}${fg(245)}${moreText}${" ".repeat(pad)}${RESET}`);
+      lines.push(`${bg(currentTheme.suggestion.bg)}${fg(currentTheme.overlay.dimFg)}${moreText}${" ".repeat(pad)}${RESET}`);
     }
     return lines;
   }
@@ -2500,17 +2494,17 @@ export class Tui {
     // Title bar.
     const count = this.modelOverlaySelected.size;
     const title = `  Select models  ·  ${count} in cycle  ·  ${items.length}/${this.modelOverlayItems.length} shown`;
-    lines.push(overlayChromeLine(`${BOLD}${fg(252)}${title}`, columns));
+    lines.push(overlayChromeLine(`${BOLD}${fg(currentTheme.overlay.brightFg)}${title}`, columns));
 
     // Search line.
-    lines.push(overlayLine(`${fg(245)}  Search: ${fg(252)}${this.modelOverlayQuery}`, columns));
+    lines.push(overlayLine(`${fg(currentTheme.overlay.fg)}  Search: ${fg(currentTheme.overlay.brightFg)}${this.modelOverlayQuery}`, columns));
 
     // Separator.
-    lines.push(`${bg(OVERLAY_BG)}${fg(240)}${"─".repeat(columns)}${RESET}`);
+    lines.push(`${bg(currentTheme.overlay.bg)}${fg(240)}${"─".repeat(columns)}${RESET}`);
 
     // List window.
     if (items.length === 0) {
-      lines.push(overlayLine(`${fg(244)}  No models match "${this.modelOverlayQuery}"`, columns));
+      lines.push(overlayLine(`${fg(currentTheme.overlay.dimFg)}  No models match "${this.modelOverlayQuery}"`, columns));
       for (let i = 1; i < listRows; i++) {
         lines.push(overlayLine("", columns));
       }
@@ -2527,7 +2521,7 @@ export class Tui {
 
     // Footer hint.
     const hint = "  ↑/↓ move   space toggle cycle   enter switch now   esc close";
-    lines.push(overlayChromeLine(`${fg(245)}${hint}`, columns));
+    lines.push(overlayChromeLine(`${fg(currentTheme.overlay.fg)}${hint}`, columns));
 
     // Guarantee exactly `rows` lines.
     while (lines.length < rows) {
@@ -2539,7 +2533,7 @@ export class Tui {
 
   private renderModelOverlayRow(entry: ModelOverlayEntry, isCursor: boolean, columns: number): string {
     const { item, positions } = entry;
-    const rowBg = isCursor ? OVERLAY_SEL_BG : OVERLAY_BG;
+    const rowBg = isCursor ? currentTheme.overlay.selBg : currentTheme.overlay.bg;
     const isCurrent = item.id === this.model;
     const isSelected = this.modelOverlaySelected.has(item.id);
 
@@ -2562,9 +2556,9 @@ export class Tui {
 
     let line = `${bg(rowBg)}`;
     line += `${fg(isCurrent ? 41 : baseFg)}  ${marker} `;
-    line += `${fg(isSelected ? 114 : 244)}${checkbox} `;
-    line += highlightModelId(item.id, positions, baseFg, 117);
-    line += `${fg(245)}${" ".repeat(gap)}${meta}${" ".repeat(trailing)}`;
+    line += `${fg(isSelected ? currentTheme.glyphs.done.color : 244)}${checkbox} `;
+    line += highlightModelId(item.id, positions, baseFg, currentTheme.logoColor);
+    line += `${fg(currentTheme.overlay.fg)}${" ".repeat(gap)}${meta}${" ".repeat(trailing)}`;
     line += RESET;
     return line;
   }
@@ -2584,14 +2578,14 @@ export class Tui {
     const lines: string[] = [];
 
     const title = `  Select session  ·  ${items.length} saved`;
-    lines.push(overlayChromeLine(`${BOLD}${fg(252)}${title}`, columns));
+    lines.push(overlayChromeLine(`${BOLD}${fg(currentTheme.overlay.brightFg)}${title}`, columns));
 
-    lines.push(overlayLine(`${fg(245)}  Project sessions for ${fg(252)}${this.cwd || "current directory"}`, columns));
+    lines.push(overlayLine(`${fg(currentTheme.overlay.fg)}  Project sessions for ${fg(currentTheme.overlay.brightFg)}${this.cwd || "current directory"}`, columns));
 
-    lines.push(`${bg(OVERLAY_BG)}${fg(240)}${"─".repeat(columns)}${RESET}`);
+    lines.push(`${bg(currentTheme.overlay.bg)}${fg(240)}${"─".repeat(columns)}${RESET}`);
 
     if (items.length === 0) {
-      lines.push(overlayLine(`${fg(244)}  No sessions found`, columns));
+      lines.push(overlayLine(`${fg(currentTheme.overlay.dimFg)}  No sessions found`, columns));
       for (let i = 1; i < listRows; i++) {
         lines.push(overlayLine("", columns));
       }
@@ -2607,7 +2601,7 @@ export class Tui {
     }
 
     const hint = "  ↑/↓ or J/K move   enter resume   esc close";
-    lines.push(overlayChromeLine(`${fg(245)}${hint}`, columns));
+    lines.push(overlayChromeLine(`${fg(currentTheme.overlay.fg)}${hint}`, columns));
 
     while (lines.length < rows) {
       lines.push(overlayLine("", columns));
@@ -2617,7 +2611,7 @@ export class Tui {
   }
 
   private renderSessionOverlayRow(item: SessionOverlayItem, isCursor: boolean, columns: number): string {
-    const rowBg = isCursor ? OVERLAY_SEL_BG : OVERLAY_BG;
+    const rowBg = isCursor ? currentTheme.overlay.selBg : currentTheme.overlay.bg;
     const baseFg = isCursor ? 255 : 250;
     return renderSessionOverlayColumns({
       columns,
@@ -2672,8 +2666,8 @@ export class Tui {
     const cursorRowInView = cursorLine - this.inputScrollRow;
     const cursorCol = Math.max(1, Math.min(columns, horizontalPadding + layout.cursorCol + 1));
     const isBashCommand = this.input.startsWith("!");
-    const inputBg = isBashCommand ? 237 : 236;
-    const inputFg = isBashCommand ? 179 : 252;
+    const inputBg = isBashCommand ? currentTheme.input.bashBg : currentTheme.input.bg;
+    const inputFg = isBashCommand ? currentTheme.input.bashFg : currentTheme.input.fg;
     const renderedContent = visibleRows.map((line) => {
       const prefix = " ".repeat(horizontalPadding);
       const highlighted = highlightInputLine(line, inputFg);
@@ -2720,7 +2714,7 @@ function highlightInputLine(line: string, inputFg: number): string {
             j++;
           }
           const word = line.slice(i, j);
-          const color = ch === "/" ? 117 : 151;
+          const color = ch === "/" ? currentTheme.blocks.user.accent : currentTheme.glyphs.done.color;
           segments.push({ text: word, color });
           index = j;
           found = true;
@@ -3051,7 +3045,7 @@ function regionToRows(regions: ContentRegion[], innerWidth: number): StyledSegme
 
 /** Render a user message as a boxed card with padding (keeps existing look). */
 function renderUserBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
-  const theme = themes.user;
+  const theme = currentTheme.blocks.user;
   const innerWidth = Math.max(1, columns - 4);
   const content = sanitizedContent.trimStart().replace(/\n+$/, "");
   const rows: StyledSegment[][] = [[]]; // top padding
@@ -3072,7 +3066,7 @@ function renderUserBlock(block: RenderBlock, columns: number, sanitizedContent: 
 
 /** Render assistant text inline on the black canvas — no box, no padding rows. */
 function renderAssistantBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
-  const theme = themes.assistant;
+  const theme = currentTheme.blocks.assistant;
   const innerWidth = Math.max(1, columns - 4);
   const content = sanitizedContent.trimStart().replace(/\n+$/, "");
   const result: string[] = [];
@@ -3104,7 +3098,7 @@ function renderAssistantBlock(block: RenderBlock, columns: number, sanitizedCont
 
 /** Render model reasoning as a muted, collapsible reasoning line. */
 function renderReasoningBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
-  const theme = themes.reasoning;
+  const theme = currentTheme.blocks.reasoning;
   const innerWidth = Math.max(1, columns - 4);
   const content = sanitizedContent.trimStart().replace(/\n+$/, "");
   const collapsed = block.collapsed === true;
@@ -3126,7 +3120,7 @@ function reasoningTitleSegments(title: string, state: "collapsed" | "expanded"):
 
 /** Render a tool block as a single inline line: `title  ✓` */
 function renderInlineToolBlock(block: RenderBlock, columns: number, spinnerFrame: string) {
-  const theme = inlineToolTheme;
+  const theme = currentTheme.blocks.inlineTool;
   const title = block.title ?? block.role;
   const indicator = renderInlineStateIndicator(block.state, spinnerFrame);
   // Indicator text is always a single plain character (no ANSI).
@@ -3147,7 +3141,7 @@ function renderInlineToolBlock(block: RenderBlock, columns: number, spinnerFrame
 
 /** Render a tool block as a gray panel (has content to show). */
 function renderPanelToolBlock(block: RenderBlock, columns: number, spinnerFrame: string, sanitizedContent: string) {
-  const theme = themes.tool;
+  const theme = currentTheme.blocks.tool;
   const content = sanitizedContent.trimStart().replace(/\n+$/, "");
   const indicator = renderStateIndicator(block.state, content, spinnerFrame, theme);
   // Indicator text is a single plain character (no ANSI).
@@ -3189,7 +3183,7 @@ function renderPanelToolBlock(block: RenderBlock, columns: number, spinnerFrame:
 
 /** Render an error block as a panel with the error theme. */
 function renderErrorBlock(block: RenderBlock, columns: number, sanitizedContent: string) {
-  const theme = themes.error;
+  const theme = currentTheme.blocks.error;
   const innerWidth = Math.max(1, columns - 4);
   const content = sanitizedContent.trimStart().replace(/\n+$/, "");
   const rows: StyledSegment[][] = [[]]; // top padding
@@ -3242,16 +3236,16 @@ function renderStateIndicator(
 
   if (state === "error") {
     return {
-      text: ERROR_GLYPH.glyph,
-      rendered: `${RESET}${bg(theme.bg)}${fg(ERROR_GLYPH.color)}${BOLD}${ERROR_GLYPH.glyph}`,
+      text: currentTheme.glyphs.error.glyph,
+      rendered: `${RESET}${bg(theme.bg)}${fg(currentTheme.glyphs.error.color)}${BOLD}${currentTheme.glyphs.error.glyph}`,
     };
   }
 
   // state === "done": show a checkmark only when there is no body to render
   if (!content) {
     return {
-      text: DONE_GLYPH.glyph,
-      rendered: `${RESET}${bg(theme.bg)}${fg(DONE_GLYPH.color)}${BOLD}${DONE_GLYPH.glyph}`,
+      text: currentTheme.glyphs.done.glyph,
+      rendered: `${RESET}${bg(theme.bg)}${fg(currentTheme.glyphs.done.color)}${BOLD}${currentTheme.glyphs.done.glyph}`,
     };
   }
 
@@ -3270,21 +3264,21 @@ function renderInlineStateIndicator(
   if (state === "running") {
     return {
       text: spinnerFrame,
-      rendered: `${RESET}${bg(CANVAS_BG)}${fg(229)}${spinnerFrame}`,
+      rendered: `${RESET}${bg(currentTheme.canvas.bg)}${fg(currentTheme.status.runningFg)}${spinnerFrame}`,
     };
   }
 
   if (state === "error") {
     return {
-      text: ERROR_GLYPH.glyph,
-      rendered: `${RESET}${bg(CANVAS_BG)}${fg(ERROR_GLYPH.color)}${BOLD}${ERROR_GLYPH.glyph}`,
+      text: currentTheme.glyphs.error.glyph,
+      rendered: `${RESET}${bg(currentTheme.canvas.bg)}${fg(currentTheme.glyphs.error.color)}${BOLD}${currentTheme.glyphs.error.glyph}`,
     };
   }
 
   // done
   return {
-    text: DONE_GLYPH.glyph,
-    rendered: `${RESET}${bg(CANVAS_BG)}${fg(DONE_GLYPH.color)}${DONE_GLYPH.glyph}`,
+    text: currentTheme.glyphs.done.glyph,
+    rendered: `${RESET}${bg(currentTheme.canvas.bg)}${fg(currentTheme.glyphs.done.color)}${currentTheme.glyphs.done.glyph}`,
   };
 }
 
@@ -4042,19 +4036,19 @@ let cachedBlackLineColumns = -1;
 function blackLine(columns: number) {
   if (columns !== cachedBlackLineColumns) {
     cachedBlackLineColumns = columns;
-    cachedBlackLine = `${bg(CANVAS_BG)}${" ".repeat(columns)}${RESET}`;
+    cachedBlackLine = `${bg(currentTheme.canvas.bg)}${" ".repeat(columns)}${RESET}`;
   }
   return cachedBlackLine;
 }
 
 function overlayLine(content: string, columns: number) {
   const pad = Math.max(0, columns - visibleLength(content));
-  return `${bg(OVERLAY_BG)}${content}${" ".repeat(pad)}${RESET}`;
+  return `${bg(currentTheme.overlay.bg)}${content}${" ".repeat(pad)}${RESET}`;
 }
 
 function overlayChromeLine(content: string, columns: number) {
   const pad = Math.max(0, columns - visibleLength(content));
-  return `${bg(OVERLAY_CHROME_BG)}${content}${" ".repeat(pad)}${RESET}`;
+  return `${bg(currentTheme.overlay.chromeBg)}${content}${" ".repeat(pad)}${RESET}`;
 }
 
 /** Render a model id, brightening fuzzy-matched character positions. */
@@ -4126,7 +4120,7 @@ function renderSessionOverlayColumns(options: SessionOverlayColumns): string {
   const visible = leftPadding + markerWidth + gap + dateWidth + gap + idWidth + gap + nameWidth + gap + entriesWidth + gap + costWidth;
   const trailing = Math.max(0, options.columns - visible);
 
-  return `${bg(options.bgColor)}${" ".repeat(leftPadding)}${fg(options.activeColor)}${marker}${fg(options.fgColor)}${" ".repeat(gap)}${date}${" ".repeat(gap)}${id}${fg(151)}${" ".repeat(gap)}${name}${fg(options.fgColor)}${" ".repeat(gap)}${entries}${" ".repeat(gap)}${fg(187)}${cost}${" ".repeat(trailing)}${RESET}`;
+  return `${bg(options.bgColor)}${" ".repeat(leftPadding)}${fg(options.activeColor)}${marker}${fg(options.fgColor)}${" ".repeat(gap)}${date}${" ".repeat(gap)}${id}${fg(currentTheme.blocks.user.accent)}${" ".repeat(gap)}${name}${fg(options.fgColor)}${" ".repeat(gap)}${entries}${" ".repeat(gap)}${fg(currentTheme.status.costFg)}${cost}${" ".repeat(trailing)}${RESET}`;
 }
 
 function padRight(text: string, width: number): string {
@@ -4140,13 +4134,13 @@ function padLeft(text: string, width: number): string {
 function plainLine(text: string, columns: number) {
   const textWidth = text.length > 0 ? visibleLength(text) : 0;
   const pad = Math.max(0, columns - textWidth);
-  return `${bg(CANVAS_BG)}${text}${" ".repeat(pad)}${RESET}`;
+  return `${bg(currentTheme.canvas.bg)}${text}${" ".repeat(pad)}${RESET}`;
 }
 
 function padAnsi(text: string, columns: number) {
   const pad = Math.max(0, columns - visibleLength(text));
   if (pad <= 0) return text;
-  return `${text}${bg(CANVAS_BG)}${" ".repeat(pad)}${RESET}`;
+  return `${text}${bg(currentTheme.canvas.bg)}${" ".repeat(pad)}${RESET}`;
 }
 
 function sanitizeContent(text: string) {
