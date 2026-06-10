@@ -68,10 +68,11 @@ import {
 import { readClipboardImage, type SupportedImageMediaType } from "./clipboard";
 import { sendDesktopNotification } from "./notify";
 import { onEvent } from "./events";
-import { loadPaceConfig, DEFAULT_COST_DISPLAY_CONFIG, type ThemeConfig, DEFAULT_THEME_CONFIG } from "./config";
-import { loadTheme } from "./themes";
+import { loadPaceConfig, DEFAULT_COST_DISPLAY_CONFIG } from "./config";
+import { BUILT_IN_THEMES, resolveTheme } from "./themes";
 import { setTuiTheme } from "./tui";
 import { setShikiTheme } from "./syntax";
+import { detectTerminalBackground } from "./terminal-utils";
 import { loadPreferences, savePreferences } from "./preferences";
 import {
   initMcpServers,
@@ -238,8 +239,6 @@ let sessionTitleModelSelection: ModelSelection = {
   variantId: DEFAULT_SESSION_TITLE_MODEL_VARIANT,
 };
 let activeSession = createSession(process.cwd(), currentModelId);
-
-let currentThemeName = DEFAULT_THEME_CONFIG.name;
 
 type ResolvedModelVariant = ModelVariant & { id: string };
 
@@ -575,35 +574,13 @@ function formatErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function listCustomThemes(): Promise<string[]> {
-  try {
-    const { readdir } = await import("fs/promises");
-    const themeDir = join(homedir(), ".config", "pace", "themes");
-    const files = await readdir(themeDir);
-    return files
-      .filter((f) => f.endsWith(".json"))
-      .map((f) => f.slice(0, -5));
-  } catch {
-    return [];
-  }
-}
-
-async function switchTheme(themeName: string) {
-  try {
-    const themeConfig: ThemeConfig = { name: themeName };
-    const newTheme = await loadTheme(themeConfig);
-    currentThemeName = newTheme.name;
-    setTuiTheme(newTheme);
-    tui.invalidateRenderCache();
-    await setShikiTheme(newTheme.shikiTheme);
-    tui.setStatus(`Theme: ${newTheme.name}`);
-  } catch (error) {
-    tui.addBlock({
-      role: "error",
-      title: "Theme error",
-      content: `Failed to switch theme: ${formatError(error)}`,
-    });
-  }
+function switchTheme(themeName: string) {
+  const newTheme = resolveTheme(themeName);
+  setTuiTheme(newTheme);
+  tui.invalidateRenderCache();
+  // Fire-and-forget: Shiki theme loading is non-critical for TUI rendering.
+  void setShikiTheme(newTheme.shikiTheme);
+  tui.setStatus(`Theme: ${newTheme.name}`);
 }
 
 const SESSION_TITLE_SYSTEM_PROMPT = `Generate a short, descriptive session title for a coding assistant conversation.
@@ -1065,16 +1042,23 @@ async function handleCommand(command: string): Promise<boolean> {
     case "/theme": {
       const requestedTheme = args[0];
       if (!requestedTheme) {
-        const customThemes = await listCustomThemes();
-        const allThemes = ["system", "dark", "light", ...customThemes];
+        const allThemes = ["dark", "light"];
         tui.addBlock({
           role: "assistant",
           title: "Themes",
-          content: `Current theme: ${currentThemeName}\n\nAvailable themes:\n${allThemes.map((t) => (t === currentThemeName ? `* ${t}` : `- ${t}`)).join("\n")}\n\nUsage: /theme <theme-name>`,
+          content: `Available themes:\n${allThemes.map((t) => `- ${t}`).join("\n")}\n\nUsage: /theme dark|light`,
         });
         return true;
       }
-      await switchTheme(requestedTheme);
+      if (requestedTheme !== "dark" && requestedTheme !== "light") {
+        tui.addBlock({
+          role: "error",
+          title: "Unknown theme",
+          content: `Unknown theme: ${requestedTheme}\n\nAvailable themes: dark, light`,
+        });
+        return true;
+      }
+      switchTheme(requestedTheme);
       return true;
     }
     default: {
@@ -1942,11 +1926,10 @@ async function main() {
     const paceConfig = await loadPaceConfig();
     tui.setCostDisplayConfig(paceConfig.cost);
     applyConfiguredModels(paceConfig);
-    const themeConfig = paceConfig.theme ?? DEFAULT_THEME_CONFIG;
-    const theme = await loadTheme(themeConfig);
-    currentThemeName = theme.name;
+    const bg = detectTerminalBackground();
+    const theme = bg === "light" ? BUILT_IN_THEMES.light : BUILT_IN_THEMES.dark;
     setTuiTheme(theme);
-    await setShikiTheme(theme.shikiTheme);
+    void setShikiTheme(theme.shikiTheme);
   } catch (error) {
     startupErrors.push({ title: "Pace config", content: formatError(error) });
   }
@@ -1976,17 +1959,7 @@ async function main() {
   tui.start();
 
   process.on("SIGUSR2", async () => {
-    try {
-      const newConfig = await loadPaceConfig();
-      const newTheme = await loadTheme(newConfig.theme ?? DEFAULT_THEME_CONFIG);
-      currentThemeName = newTheme.name;
-      setTuiTheme(newTheme);
-      tui.invalidateRenderCache();
-      await setShikiTheme(newTheme.shikiTheme);
-      tui.setStatus(`Theme reloaded: ${newTheme.name}`);
-    } catch (error) {
-      tui.setStatus(`Theme reload failed: ${formatError(error)}`);
-    }
+    // Reload config on SIGHUP/USR2 (no theme reload — theme is session-only).
   });
 
   for (const { title, content } of startupErrors) {
