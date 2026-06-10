@@ -3230,7 +3230,7 @@ function renderStateIndicator(
   if (state === "running") {
     return {
       text: spinnerFrame,
-      rendered: `${RESET}${bg(theme.bg)}${fg(229)}${spinnerFrame}`,
+      rendered: `${RESET}${bg(theme.bg)}${fg(currentTheme.status.runningFg)}${spinnerFrame}`,
     };
   }
 
@@ -3306,18 +3306,33 @@ function renderBlockRow(segments: StyledSegment[], theme: BlockTheme, columns: n
   return `${base}  ${content}${RESET}${bg(theme.bg)}${fg(theme.fg)}${" ".repeat(rightPadding)}${RESET}`;
 }
 
-// Syntax-highlight token colors (chosen for readability on dark backgrounds).
-const syntaxColors: Partial<Record<SegmentStyle, number>> = {
-  "sh-keyword": 204,   // soft red
-  "sh-string": 151,    // pale green
-  "sh-number": 179,    // tan / gold
-  "sh-comment": 245,   // gray (dim)
-  "sh-type": 81,       // cyan
-  "sh-function": 117,  // light blue
-  "sh-operator": 186,  // light yellow
-  "sh-punctuation": 250, // light gray
-  "sh-property": 187,  // pale lavender
-};
+// Map shell syntax token styles to the active theme's syntax palette. Colors
+// are theme-aware so they stay readable on both dark and light backgrounds.
+function syntaxColorFor(style: SegmentStyle): number | undefined {
+  const syntax = currentTheme.syntax;
+  switch (style) {
+    case "sh-keyword":
+      return syntax.keyword;
+    case "sh-string":
+      return syntax.string;
+    case "sh-number":
+      return syntax.number;
+    case "sh-comment":
+      return syntax.comment;
+    case "sh-type":
+      return syntax.type;
+    case "sh-function":
+      return syntax.function;
+    case "sh-operator":
+      return syntax.operator;
+    case "sh-punctuation":
+      return syntax.punctuation;
+    case "sh-property":
+      return syntax.property;
+    default:
+      return undefined;
+  }
+}
 
 function renderSegment(segment: StyledSegment, theme: BlockTheme) {
   if (!segment.text) {
@@ -3328,13 +3343,13 @@ function renderSegment(segment: StyledSegment, theme: BlockTheme) {
     case "title":
       return `${RESET}${bg(theme.bg)}${fg(theme.accent)}${BOLD}${segment.text}`;
     case "heading":
-      return `${RESET}${bg(theme.bg)}${fg(220)}${BOLD}${segment.text}`;
+      return `${RESET}${bg(theme.bg)}${fg(currentTheme.syntax.heading)}${BOLD}${segment.text}`;
     case "bold":
       return `${RESET}${bg(theme.bg)}${fg(theme.bold)}${BOLD}${segment.text}`;
     case "italic":
       return `${RESET}${bg(theme.bg)}${fg(theme.fg)}${ITALIC}${segment.text}`;
     case "code":
-      return `${RESET}${bg(theme.bg)}${fg(120)}${segment.text}`;
+      return `${RESET}${bg(theme.bg)}${fg(currentTheme.syntax.code)}${segment.text}`;
     case "tableBorder":
       return `${RESET}${bg(theme.bg)}${fg(245)}${segment.text}`;
     case "sh-raw": {
@@ -3344,7 +3359,7 @@ function renderSegment(segment: StyledSegment, theme: BlockTheme) {
       return `${RESET}${bg(theme.bg)}${fg(ansiColor)}${bold}${italic}${segment.text}`;
     }
     default: {
-      const syntaxColor = syntaxColors[segment.style];
+      const syntaxColor = syntaxColorFor(segment.style);
       if (syntaxColor !== undefined) {
         return `${RESET}${bg(theme.bg)}${fg(syntaxColor)}${segment.text}`;
       }
