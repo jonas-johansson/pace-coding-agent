@@ -131,6 +131,49 @@ const DEEPSEEK_VARIANTS: Record<string, ModelVariant> = {
   },
 };
 
+const FABLE_5_EFFORT_VARIANTS: Record<string, ModelVariant> = {
+  low: {
+    id: "low",
+    label: "effort: low",
+    providerOptions: {
+      thinking: { display: "summarized" },
+      output_config: { effort: "low" },
+    },
+  },
+  medium: {
+    id: "medium",
+    label: "effort: medium",
+    providerOptions: {
+      thinking: { display: "summarized" },
+      output_config: { effort: "medium" },
+    },
+  },
+  high: {
+    id: "high",
+    label: "effort: high",
+    providerOptions: {
+      thinking: { display: "summarized" },
+      output_config: { effort: "high" },
+    },
+  },
+  xhigh: {
+    id: "xhigh",
+    label: "effort: xhigh",
+    providerOptions: {
+      thinking: { display: "summarized" },
+      output_config: { effort: "xhigh" },
+    },
+  },
+  max: {
+    id: "max",
+    label: "effort: max",
+    providerOptions: {
+      thinking: { display: "summarized" },
+      output_config: { effort: "max" },
+    },
+  },
+};
+
 const ANTHROPIC_BUDGET_THINKING_VARIANTS: Record<string, ModelVariant> = {
   nothink: ANTHROPIC_NOTHINK_VARIANT,
   "thinking-8k": {
@@ -264,6 +307,18 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
       cacheWritePerMTok: 6.25,
       cacheReadPerMTok: 0.50,
       outputPerMTok: 25,
+    },
+  },
+  "opencode/claude-fable-5": {
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    supportsImages: true,
+    variants: FABLE_5_EFFORT_VARIANTS,
+    pricing: {
+      inputPerMTok: 10.00,
+      cacheWritePerMTok: 12.50,
+      cacheReadPerMTok: 1.00,
+      outputPerMTok: 50.00,
     },
   },
   "opencode/kimi-k2.6": {

@@ -230,6 +230,7 @@ let currentModelId: string = DEFAULT_MODEL_ID;
 const lastVariantByModelId = new Map<string, string>();
 let cycleModelSelections: ModelSelection[] = [
   { modelId: "opencode/kimi-k2.6" },
+  { modelId: "opencode/claude-fable-5" },
   { modelId: "opencode/claude-opus-4-8" },
 ];
 const DEFAULT_SESSION_TITLE_MODEL = "opencode/deepseek-v4-flash";
