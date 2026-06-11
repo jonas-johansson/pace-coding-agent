@@ -28,7 +28,7 @@ const MAX_READ_BYTES_LABEL = `${MAX_READ_BYTES / 1024}KB`;
 
 export const readTool = defineTool({
   name: "read",
-  description: "Read content from a file at a specified path.",
+  description: "Read content from a file at a specified path. Contents are returned with each line prefixed by its line number. This tool can read image files and return them as file attachments.",
   concurrency: "safe",
   inputSchema: z.object({
     path: z.string().describe("Absolute or relative file path."),

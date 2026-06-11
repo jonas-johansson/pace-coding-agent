@@ -28,7 +28,7 @@ type OaiMessage =
   | { role: "system"; content: string }
   | { role: "user"; content: string | OaiContentPart[] }
   | { role: "assistant"; content?: string | null; reasoning_content?: string | null; tool_calls?: OaiToolCall[] }
-  | { role: "tool"; tool_call_id: string; content: string };
+  | { role: "tool"; tool_call_id: string; content: string | OaiContentPart[] };
 
 type OaiToolCall = {
   id: string;
@@ -108,7 +108,7 @@ function toOaiMessages(system: string, messages: ProviderMessage[]): OaiMessage[
       // multi-part content when images are present). Tool results become
       // separate role:"tool" messages.
       const contentParts: OaiContentPart[] = [];
-      const toolResults: { tool_call_id: string; content: string; is_error?: boolean }[] = [];
+      const toolResults: { tool_call_id: string; content: string | OaiContentPart[] }[] = [];
       let hasImages = false;
 
       for (const block of msg.content) {
@@ -125,11 +125,30 @@ function toOaiMessages(system: string, messages: ProviderMessage[]): OaiMessage[
           });
         } else {
           // tool_result
-          const text = block.content.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-          toolResults.push({
-            tool_call_id: block.tool_use_id,
-            content: block.is_error ? `Error: ${text}` : text,
-          });
+          if (block.content.some((p) => p.type === "image")) {
+            // Multi-part tool result with images for vision-capable models.
+            const parts: OaiContentPart[] = [];
+            for (const part of block.content) {
+              if (part.type === "text") {
+                parts.push({ type: "text", text: block.is_error ? `Error: ${part.text}` : part.text });
+              } else if (part.type === "image") {
+                parts.push({
+                  type: "image_url",
+                  image_url: {
+                    url: `data:${part.mediaType};base64,${part.data}`,
+                    detail: "auto",
+                  },
+                });
+              }
+            }
+            toolResults.push({ tool_call_id: block.tool_use_id, content: parts });
+          } else {
+            const text = block.content.filter((p) => p.type === "text").map((p) => p.text).join("\n");
+            toolResults.push({
+              tool_call_id: block.tool_use_id,
+              content: block.is_error ? `Error: ${text}` : text,
+            });
+          }
         }
       }
 
