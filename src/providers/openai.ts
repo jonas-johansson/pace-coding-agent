@@ -24,6 +24,7 @@ import type {
   ResponseInputItem,
   ResponseOutputItem,
   ResponseStreamEvent,
+  ResponseFunctionCallOutputItemList,
   FunctionTool,
   ResponseCreateParamsStreaming,
 } from "openai/resources/responses/responses";
@@ -159,12 +160,33 @@ function toResponsesInput(messages: ProviderMessage[]): ResponseInputItem[] {
             parts.length = 0;
           }
 
-          const text = block.content.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-          items.push({
-            type: "function_call_output",
-            call_id: block.tool_use_id,
-            output: block.is_error ? `Error: ${text}` : text,
-          });
+          const hasImage = block.content.some((p) => p.type === "image");
+          if (hasImage) {
+            const outputParts: ResponseFunctionCallOutputItemList = [];
+            for (const part of block.content) {
+              if (part.type === "text") {
+                outputParts.push({ type: "input_text", text: block.is_error ? `Error: ${part.text}` : part.text });
+              } else if (part.type === "image") {
+                outputParts.push({
+                  type: "input_image",
+                  image_url: `data:${part.mediaType};base64,${part.data}`,
+                  detail: "auto",
+                });
+              }
+            }
+            items.push({
+              type: "function_call_output",
+              call_id: block.tool_use_id,
+              output: outputParts,
+            });
+          } else {
+            const text = block.content.filter((p) => p.type === "text").map((p) => p.text).join("\n");
+            items.push({
+              type: "function_call_output",
+              call_id: block.tool_use_id,
+              output: block.is_error ? `Error: ${text}` : text,
+            });
+          }
         }
       }
 
