@@ -159,7 +159,7 @@ function toResponsesInput(messages: ProviderMessage[]): ResponseInputItem[] {
             parts.length = 0;
           }
 
-          const text = block.content.map((p) => p.text).join("\n");
+          const text = block.content.filter((p) => p.type === "text").map((p) => p.text).join("\n");
           items.push({
             type: "function_call_output",
             call_id: block.tool_use_id,

@@ -51,6 +51,7 @@ import type {
   ContentBlock as ProviderContentBlock,
   ToolUseBlock,
   ToolResultContent,
+  ToolResultPart,
   ImageBlock,
 } from "./provider";
 import {
@@ -1394,9 +1395,11 @@ async function executeToolUseBlock(
     return {
       type: "tool_result",
       tool_use_id: contentBlock.id,
-      content: toolOutput.content
-        .filter((p): p is { type: "text"; text: string } => p.type === "text")
-        .map((p) => ({ type: "text" as const, text: p.text })),
+      content: toolOutput.content.reduce<ToolResultPart[]>((acc, p) => {
+        if (p.type === "text") acc.push({ type: "text", text: p.text });
+        else if (p.type === "image" && p.source.type === "base64") acc.push({ type: "image", mediaType: p.source.media_type, data: p.source.data });
+        return acc;
+      }, []),
       ...(toolOutput.is_error && { is_error: true }),
     };
   } catch (error: unknown) {

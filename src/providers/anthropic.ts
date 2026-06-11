@@ -81,7 +81,11 @@ function toAnthropicMessages(messages: ProviderMessage[]): Anthropic.MessagePara
         return {
           type: "tool_result" as const,
           tool_use_id: block.tool_use_id,
-          content: block.content.map((p) => ({ type: "text" as const, text: p.text })),
+          content: block.content.map((p) =>
+            p.type === "image"
+              ? { type: "image" as const, source: { type: "base64" as const, media_type: p.mediaType, data: p.data } }
+              : { type: "text" as const, text: p.text }
+          ),
           ...(block.is_error && { is_error: true }),
         };
       });

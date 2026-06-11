@@ -446,7 +446,7 @@ function isProviderAssistantContentBlock(block: ContentBlock): block is Provider
 }
 
 function isProviderToolResultPart(part: ToolResultPart): part is ProviderToolResultPart {
-  return part.type === "text";
+  return part.type === "text" || part.type === "image";
 }
 
 function assertSafeStorageSegment(value: string, label: string): void {

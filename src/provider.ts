@@ -25,7 +25,7 @@ export type ToolUseBlock = {
 export type ToolResultPart = {
   type: "text";
   text: string;
-};
+} | ImageBlock;
 
 export type ToolResultContent = {
   type: "tool_result";

@@ -27,6 +27,11 @@ export async function truncateToolOutputIfNeeded(
   toolName: string,
   toolUseId?: string,
 ): Promise<ToolOutput> {
+  // Non-text blocks (e.g. images) are intentionally large — never truncate them.
+  if (output.content.some((p) => p.type !== "text")) {
+    return output;
+  }
+
   const fullText = formatToolResultBody(output);
   const fullBytes = Buffer.byteLength(fullText, "utf8");
 

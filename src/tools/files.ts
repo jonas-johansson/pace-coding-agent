@@ -1,8 +1,20 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
-import { dirname } from "path";
+import { mkdir, readFile, stat, writeFile } from "fs/promises";
+import { dirname, extname } from "path";
 import { z } from "zod";
 import { defineTool, throwIfAborted, type ToolOutput } from "./core";
 import { expandHomePath, normalizePath } from "./path";
+
+/** Maximum raw image file size accepted by the read tool (matches Anthropic's per-image limit). */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** Supported image extensions and their MIME types. */
+const IMAGE_MEDIA_TYPES: Record<string, "image/jpeg" | "image/png" | "image/gif" | "image/webp"> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
 
 /** Maximum number of lines returned per read call when no explicit limit is provided. */
 const DEFAULT_READ_LIMIT = 2000;
@@ -38,6 +50,23 @@ export const readTool = defineTool({
   execute: async (input, signal): Promise<ToolOutput> => {
     throwIfAborted(signal);
     const filePath = expandHomePath(input.path);
+
+    // Detect image files and return them as image blocks for vision-capable models.
+    const imageMediaType = IMAGE_MEDIA_TYPES[extname(filePath).toLowerCase()];
+    if (imageMediaType) {
+      const fileStat = await stat(filePath);
+      if (fileStat.size > MAX_IMAGE_BYTES) {
+        return {
+          content: [{ type: "text", text: `Image file too large to read (${(fileStat.size / (1024 * 1024)).toFixed(1)} MB). Maximum size is ${MAX_IMAGE_BYTES / (1024 * 1024)} MB.` }],
+          is_error: true,
+        };
+      }
+      const data = await readFile(filePath);
+      return {
+        content: [{ type: "image", source: { type: "base64", media_type: imageMediaType, data: data.toString("base64") } }],
+      };
+    }
+
     const fullText = await readFile(filePath, 'utf8');
     const allLines = fullText.split("\n");
     const totalLines = allLines.length;
