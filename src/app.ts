@@ -230,6 +230,7 @@ async function getProvider(config: ModelConfig): Promise<Provider> {
 let currentModelId: string = DEFAULT_MODEL_ID;
 const lastVariantByModelId = new Map<string, string>();
 let cycleModelSelections: ModelSelection[] = [
+  { modelId: "opencode/kimi-k2.7-code" },
   { modelId: "opencode/kimi-k2.6" },
   { modelId: "opencode/claude-fable-5" },
   { modelId: "opencode/claude-opus-4-8" },
