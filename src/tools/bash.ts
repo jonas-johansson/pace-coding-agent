@@ -50,6 +50,10 @@ export const bashTool = defineTool({
       BASH_MAX_TIMEOUT,
     );
     try {
+      const shouldPersistLargeOutput = shouldPersistLargeToolOutput();
+      const fullOutputPath = shouldPersistLargeOutput ? await createToolOutputPath("bash") : undefined;
+      const fullOutputStream = fullOutputPath ? createWriteStream(fullOutputPath, { encoding: "utf8" }) : undefined;
+
       // Use spawn with detached: true so the shell and all its children
       // form their own process group. This lets us kill the entire tree
       // (e.g. "sleep 15") instantly via process.kill(-pid, SIGTERM)
@@ -58,10 +62,6 @@ export const bashTool = defineTool({
         detached: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
-
-      const shouldPersistLargeOutput = shouldPersistLargeToolOutput();
-      const fullOutputPath = shouldPersistLargeOutput ? await createToolOutputPath("bash") : undefined;
-      const fullOutputStream = fullOutputPath ? createWriteStream(fullOutputPath, { encoding: "utf8" }) : undefined;
       let stdout = "";
       let stderr = "";
       let previewHead = "";
