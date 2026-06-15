@@ -1649,7 +1649,10 @@ async function prompt(
         messages: sessionToProviderMessages(activeSession, turnDraft),
         tools: toolDefs,
         maxTokens: modelConfig.maxOutputTokens,
-        ...(modelVariant?.providerOptions && { providerOptions: modelVariant.providerOptions }),
+        providerOptions: {
+          ...(modelConfig.providerOptions ?? {}),
+          ...(modelVariant?.providerOptions ?? {}),
+        },
         signal,
       });
 

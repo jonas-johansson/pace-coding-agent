@@ -25,6 +25,8 @@ export type ModelMetadata = {
   maxOutputTokens: number;
   supportsImages: boolean;
   pricing: PricingConfig;
+  /** Provider-native request options always applied for this model. */
+  providerOptions?: Record<string, unknown>;
   longContextPricing?: {
     inputTokenThreshold: number;
     pricing: PricingConfig;
@@ -136,7 +138,7 @@ const FABLE_5_EFFORT_VARIANTS: Record<string, ModelVariant> = {
     id: "low",
     label: "effort: low",
     providerOptions: {
-      thinking: { display: "summarized" },
+      thinking: { type: "adaptive", display: "summarized" },
       output_config: { effort: "low" },
     },
   },
@@ -144,7 +146,7 @@ const FABLE_5_EFFORT_VARIANTS: Record<string, ModelVariant> = {
     id: "medium",
     label: "effort: medium",
     providerOptions: {
-      thinking: { display: "summarized" },
+      thinking: { type: "adaptive", display: "summarized" },
       output_config: { effort: "medium" },
     },
   },
@@ -152,7 +154,7 @@ const FABLE_5_EFFORT_VARIANTS: Record<string, ModelVariant> = {
     id: "high",
     label: "effort: high",
     providerOptions: {
-      thinking: { display: "summarized" },
+      thinking: { type: "adaptive", display: "summarized" },
       output_config: { effort: "high" },
     },
   },
@@ -160,7 +162,7 @@ const FABLE_5_EFFORT_VARIANTS: Record<string, ModelVariant> = {
     id: "xhigh",
     label: "effort: xhigh",
     providerOptions: {
-      thinking: { display: "summarized" },
+      thinking: { type: "adaptive", display: "summarized" },
       output_config: { effort: "xhigh" },
     },
   },
@@ -168,7 +170,7 @@ const FABLE_5_EFFORT_VARIANTS: Record<string, ModelVariant> = {
     id: "max",
     label: "effort: max",
     providerOptions: {
-      thinking: { display: "summarized" },
+      thinking: { type: "adaptive", display: "summarized" },
       output_config: { effort: "max" },
     },
   },
@@ -313,6 +315,7 @@ export const MODEL_METADATA: Record<string, ModelMetadata> = {
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     supportsImages: true,
+    providerOptions: { thinking: { type: "adaptive", display: "summarized" } },
     variants: FABLE_5_EFFORT_VARIANTS,
     pricing: {
       inputPerMTok: 10.00,

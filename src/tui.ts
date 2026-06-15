@@ -3104,8 +3104,12 @@ function renderReasoningBlock(block: RenderBlock, columns: number, sanitizedCont
   const collapsed = block.collapsed === true;
   const title = block.title ?? "Reasoning";
 
-  if (!content || collapsed) {
+  if (collapsed) {
     return [renderBlockRow(reasoningTitleSegments(title, "collapsed"), theme, columns)];
+  }
+
+  if (!content) {
+    return [renderBlockRow(reasoningTitleSegments(title, "expanded"), theme, columns)];
   }
 
   const rows: StyledSegment[][] = [reasoningTitleSegments(title, "expanded"), []];
