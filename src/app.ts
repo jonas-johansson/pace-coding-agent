@@ -326,7 +326,7 @@ const tui = new Tui({
     { label: "/variants", detail: "List model variants", kind: "command", insertText: "/variants", executeOnAccept: true },
     { label: "/sessions", detail: "Open the session picker", kind: "command", insertText: "/sessions", executeOnAccept: true },
     { label: "/resume", detail: "Resume a session by id", kind: "command", insertText: "/resume " },
-    { label: "/tree", detail: "Open the conversation tree", kind: "command", insertText: "/tree", executeOnAccept: true },
+    { label: "/tree", detail: "Open the conversation tree (Ctrl+B)", kind: "command", insertText: "/tree", executeOnAccept: true },
     { label: "/undo", detail: "Undo the last user turn", kind: "command", insertText: "/undo" },
     { label: "/skills", detail: "List available skills", kind: "command", insertText: "/skills " },
     { label: "/skill:<name>", detail: "Load and run a skill", kind: "command", insertText: "/skill:" },
@@ -361,6 +361,14 @@ const tui = new Tui({
   treeOverlay: {
     onPick: (id) => {
       void navigateToEntry(id);
+    },
+    onOpen: () => {
+      const items = sessionToTreeOverlayEntries(activeSession);
+      if (items.length === 0) {
+        tui.addBlock({ role: "assistant", title: "Tree", content: "The current session is empty." });
+        return;
+      }
+      tui.openTreeOverlay(items);
     },
   },
   model: DEFAULT_MODEL_ID,

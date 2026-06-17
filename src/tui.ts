@@ -93,6 +93,8 @@ export type TreeOverlayItem = {
 export type TreeOverlayOptions = {
   /** Called on Enter to make the selected entry the active leaf. */
   onPick: (id: string) => void;
+  /** Called when the user presses the open-tree shortcut. */
+  onOpen: () => void;
 };
 
 type ModelOverlayEntry = { item: ModelOverlayItem; positions: number[] };
@@ -778,6 +780,12 @@ export class Tui {
         } else {
           this.openModelOverlay();
         }
+        continue;
+      }
+
+      // Ctrl+B — open the conversation tree overlay
+      if (char === "\x02") {
+        this.options.treeOverlay?.onOpen();
         continue;
       }
 
@@ -1720,6 +1728,7 @@ export class Tui {
   private handleTreeOverlayKey(data: string) {
     switch (data) {
       case "\u0003": // Ctrl+C
+      case "\x02": // Ctrl+B
       case "\x1b": // Esc
       case "q":
       case "Q":
