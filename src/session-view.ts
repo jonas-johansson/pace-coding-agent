@@ -4,7 +4,6 @@ import {
   type AssistantEntry,
   type Session,
   type SessionEntry,
-  type ThinkingBlock,
   type ToolResultEntry,
   type ToolResultPart,
   type UserEntry,
@@ -189,6 +188,10 @@ export type TreeOverlayEntry = {
   timestamp: string;
 };
 
+function assistantEntryHasVisibleContent(entry: AssistantEntry): boolean {
+  return entry.content.some((block) => block.type === "text" || block.type === "image");
+}
+
 export function sessionToTreeOverlayEntries(session: Session): TreeOverlayEntry[] {
   const activePath = getActivePath(session);
   const activePathIds = new Set(activePath.map((entry) => entry.id));
@@ -196,21 +199,17 @@ export function sessionToTreeOverlayEntries(session: Session): TreeOverlayEntry[
 
   const entriesById = new Map(session.entries.map((entry) => [entry.id, entry]));
   const visibleEntries = session.entries.filter(
-    (entry): entry is UserEntry | AssistantEntry => entry.type === "user" || entry.type === "assistant",
+    (entry): entry is UserEntry | AssistantEntry =>
+      entry.type === "user" || (entry.type === "assistant" && assistantEntryHasVisibleContent(entry)),
   );
+  const visibleEntryIds = new Set(visibleEntries.map((entry) => entry.id));
 
   const visibleParentId = new Map<string, string | null>();
   for (const entry of visibleEntries) {
     let parentId: string | null = entry.parentId;
-    while (parentId !== null) {
+    while (parentId !== null && !visibleEntryIds.has(parentId)) {
       const parent = entriesById.get(parentId);
-      if (!parent) {
-        break;
-      }
-      if (parent.type === "user" || parent.type === "assistant") {
-        break;
-      }
-      parentId = parent.parentId;
+      parentId = parent?.parentId ?? null;
     }
     visibleParentId.set(entry.id, parentId);
   }
@@ -294,14 +293,8 @@ function formatTreePreview(entry: UserEntry | AssistantEntry): string {
   }
 
   for (const block of entry.content) {
-    if (block.type === "thinking") {
-      return "[reasoning]";
-    }
     if (block.type === "image") {
       return "[image]";
-    }
-    if (block.type === "tool_use") {
-      return `[tool: ${block.name}]`;
     }
   }
 
