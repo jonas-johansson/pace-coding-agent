@@ -4,12 +4,14 @@ import {
   type AssistantEntry,
   type Session,
   type SessionEntry,
+  type ThinkingBlock,
   type ToolResultEntry,
   type ToolResultPart,
   type UserEntry,
 } from "./session";
 import { tools, visualizeToolTitle } from "./tool";
 import { reasoningDisplayContent, reasoningDisplayTitle } from "./reasoning";
+import type { TextBlock, ToolUseBlock } from "./provider";
 
 export type SessionRenderBlock = Omit<RenderBlock, "id">;
 
@@ -173,4 +175,135 @@ function formatToolResultPart(part: ToolResultPart): string {
 
 function formatImageBlock(block: { mediaType: string }): string {
   return `[Image: ${block.mediaType}]`;
+}
+
+export type TreeOverlayEntry = {
+  id: string;
+  parentId: string | null;
+  depth: number;
+  role: "user" | "assistant";
+  preview: string;
+  isActive: boolean;
+  isLeaf: boolean;
+  hasChildren: boolean;
+  timestamp: string;
+};
+
+export function sessionToTreeOverlayEntries(session: Session): TreeOverlayEntry[] {
+  const activePath = getActivePath(session);
+  const activePathIds = new Set(activePath.map((entry) => entry.id));
+  const activePathOrder = new Map(activePath.map((entry, index) => [entry.id, index]));
+
+  const entriesById = new Map(session.entries.map((entry) => [entry.id, entry]));
+  const visibleEntries = session.entries.filter(
+    (entry): entry is UserEntry | AssistantEntry => entry.type === "user" || entry.type === "assistant",
+  );
+
+  const visibleParentId = new Map<string, string | null>();
+  for (const entry of visibleEntries) {
+    let parentId: string | null = entry.parentId;
+    while (parentId !== null) {
+      const parent = entriesById.get(parentId);
+      if (!parent) {
+        break;
+      }
+      if (parent.type === "user" || parent.type === "assistant") {
+        break;
+      }
+      parentId = parent.parentId;
+    }
+    visibleParentId.set(entry.id, parentId);
+  }
+
+  const childrenByParent = new Map<string | null, (UserEntry | AssistantEntry)[]>();
+  for (const entry of visibleEntries) {
+    const parentId = visibleParentId.get(entry.id) ?? null;
+    const siblings = childrenByParent.get(parentId) ?? [];
+    siblings.push(entry);
+    childrenByParent.set(parentId, siblings);
+  }
+
+  const hasChildren = new Set<string>();
+  for (const entry of visibleEntries) {
+    const parentId = visibleParentId.get(entry.id) ?? null;
+    if (parentId !== null) {
+      hasChildren.add(parentId);
+    }
+  }
+
+  function sortEntries(entries: (UserEntry | AssistantEntry)[]): (UserEntry | AssistantEntry)[] {
+    return entries.slice().sort((a, b) => {
+      const aActive = activePathOrder.has(a.id);
+      const bActive = activePathOrder.has(b.id);
+      if (aActive && !bActive) {
+        return -1;
+      }
+      if (!aActive && bActive) {
+        return 1;
+      }
+      return a.timestamp.localeCompare(b.timestamp);
+    });
+  }
+
+  const rows: TreeOverlayEntry[] = [];
+
+  function traverse(entry: UserEntry | AssistantEntry, depth: number) {
+    rows.push({
+      id: entry.id,
+      parentId: visibleParentId.get(entry.id) ?? null,
+      depth,
+      role: entry.type,
+      preview: formatTreePreview(entry),
+      isActive: activePathIds.has(entry.id),
+      isLeaf: session.activeEntryId === entry.id,
+      hasChildren: hasChildren.has(entry.id),
+      timestamp: entry.timestamp,
+    });
+
+    const children = sortEntries(childrenByParent.get(entry.id) ?? []);
+    for (const child of children) {
+      traverse(child, depth + 1);
+    }
+  }
+
+  const roots = sortEntries(childrenByParent.get(null) ?? []);
+  for (const root of roots) {
+    traverse(root, 0);
+  }
+
+  return rows;
+}
+
+function formatTreePreview(entry: UserEntry | AssistantEntry): string {
+  if (entry.type === "user") {
+    const text = entry.content
+      .filter((block): block is TextBlock => block.type === "text")
+      .map((block) => block.text)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return text || "[empty message]";
+  }
+
+  // Assistant: prefer text over reasoning/thinking, since thinking blocks
+  // often appear before the visible response.
+  for (const block of entry.content) {
+    if (block.type === "text" && block.text.trim()) {
+      return block.text.trim().replace(/\s+/g, " ");
+    }
+  }
+
+  for (const block of entry.content) {
+    if (block.type === "thinking") {
+      return "[reasoning]";
+    }
+    if (block.type === "image") {
+      return "[image]";
+    }
+    if (block.type === "tool_use") {
+      return `[tool: ${block.name}]`;
+    }
+  }
+
+  return "[assistant]";
 }

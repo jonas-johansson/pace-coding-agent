@@ -76,6 +76,25 @@ export type SessionOverlayOptions = {
   onPick: (id: string) => void;
 };
 
+/** A single row displayed in the conversation tree overlay. */
+export type TreeOverlayItem = {
+  id: string;
+  parentId: string | null;
+  depth: number;
+  role: "user" | "assistant";
+  preview: string;
+  isActive: boolean;
+  isLeaf: boolean;
+  hasChildren: boolean;
+  timestamp: string;
+};
+
+/** Callbacks and data wiring for the conversation tree overlay. */
+export type TreeOverlayOptions = {
+  /** Called on Enter to make the selected entry the active leaf. */
+  onPick: (id: string) => void;
+};
+
 type ModelOverlayEntry = { item: ModelOverlayItem; positions: number[] };
 type SegmentStyle =
   | "normal"
@@ -270,7 +289,14 @@ export class Tui {
   private sessionOverlayScroll = 0;
   private sessionOverlayItems: SessionOverlayItem[] = [];
 
-  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onCycleVariant?: () => void; onEscape?: () => void; onExit?: () => void | Promise<void>; onPasteImage?: () => void | Promise<void>; slashCommands?: SuggestionProvider; fileSuggestions?: FileSuggestionProvider; modelOverlay?: ModelOverlayOptions; sessionOverlay?: SessionOverlayOptions; model?: string; cwd?: string } = {}) {
+  // ── Conversation tree overlay state ──
+  private treeOverlayActive = false;
+  private treeOverlayIndex = 0;
+  private treeOverlayScroll = 0;
+  private treeOverlayItems: TreeOverlayItem[] = [];
+  private treeOverlayExpanded = new Set<string>();
+
+  constructor(private readonly options: { onSubmit?: SubmitHandler; onTab?: () => void; onShiftTab?: () => void; onCycleVariant?: () => void; onEscape?: () => void; onExit?: () => void | Promise<void>; onPasteImage?: () => void | Promise<void>; slashCommands?: SuggestionProvider; fileSuggestions?: FileSuggestionProvider; modelOverlay?: ModelOverlayOptions; sessionOverlay?: SessionOverlayOptions; treeOverlay?: TreeOverlayOptions; model?: string; cwd?: string } = {}) {
     this.model = options.model ?? "";
     this.cwd = options.cwd ?? "";
     this.slashItems = options.slashCommands ? options.slashCommands() : [];
@@ -637,6 +663,11 @@ export class Tui {
 
     if (this.sessionOverlayActive) {
       this.handleSessionOverlayKey(data);
+      return;
+    }
+
+    if (this.treeOverlayActive) {
+      this.handleTreeOverlayKey(data);
       return;
     }
 
@@ -1667,6 +1698,213 @@ export class Tui {
     this.closeSessionOverlay();
   }
 
+  // ── Conversation tree overlay ──────────────────────────────────────────────
+
+  openTreeOverlay(items: TreeOverlayItem[]) {
+    this.treeOverlayActive = true;
+    this.treeOverlayItems = items;
+    this.treeOverlayExpanded = new Set(items.filter((item) => item.hasChildren).map((item) => item.id));
+    const leafIndex = items.findIndex((item) => item.isLeaf);
+    this.treeOverlayIndex = leafIndex >= 0 ? leafIndex : 0;
+    this.treeOverlayScroll = 0;
+    this.treeOverlayAdjustScroll();
+    this.requestRender();
+  }
+
+  private closeTreeOverlay() {
+    this.treeOverlayActive = false;
+    this.previousFrameRows = -1;
+    this.requestRender();
+  }
+
+  private handleTreeOverlayKey(data: string) {
+    switch (data) {
+      case "\u0003": // Ctrl+C
+      case "\x1b": // Esc
+      case "q":
+      case "Q":
+        this.closeTreeOverlay();
+        return;
+      case "\r": // Enter
+        this.pickTreeOverlay();
+        return;
+      case " ": // Space
+        this.toggleTreeOverlayFold();
+        return;
+      case "\x1b[A": // Up
+      case "\u0010": // Ctrl+P
+      case "k":
+      case "K":
+      case "\x1bk": // Alt+K
+        this.moveTreeOverlay(-1);
+        return;
+      case "\x1b[B": // Down
+      case "\u000e": // Ctrl+N
+      case "j":
+      case "J":
+      case "\x1bj": // Alt+J
+        this.moveTreeOverlay(1);
+        return;
+      case "\x1b[5~": // Page Up
+        this.moveTreeOverlay(-this.treeOverlayListRows());
+        return;
+      case "\x1b[6~": // Page Down
+        this.moveTreeOverlay(this.treeOverlayListRows());
+        return;
+    }
+
+    if (data.startsWith("\x1b")) {
+      return;
+    }
+  }
+
+  private treeOverlayVisibleItems(): TreeOverlayItem[] {
+    const visible: TreeOverlayItem[] = [];
+    let i = 0;
+    while (i < this.treeOverlayItems.length) {
+      const item = this.treeOverlayItems[i];
+      visible.push(item);
+      if (!this.treeOverlayExpanded.has(item.id) && item.hasChildren) {
+        const depth = item.depth;
+        i += 1;
+        while (i < this.treeOverlayItems.length && this.treeOverlayItems[i].depth > depth) {
+          i += 1;
+        }
+      } else {
+        i += 1;
+      }
+    }
+    return visible;
+  }
+
+  private treeOverlayListRows(): number {
+    const rows = Math.max(process.stdout.rows ?? 24, 1);
+    return Math.max(1, rows - OVERLAY_HEADER_ROWS - OVERLAY_FOOTER_ROWS);
+  }
+
+  private treeOverlayAdjustScroll() {
+    const visible = this.treeOverlayVisibleItems();
+    const visibleCount = visible.length;
+    const listRows = this.treeOverlayListRows();
+    if (this.treeOverlayIndex >= visibleCount && visibleCount > 0) {
+      this.treeOverlayIndex = Math.max(0, visibleCount - 1);
+    }
+    if (this.treeOverlayScroll > Math.max(0, visibleCount - listRows)) {
+      this.treeOverlayScroll = Math.max(0, visibleCount - listRows);
+    }
+    if (this.treeOverlayIndex < this.treeOverlayScroll) {
+      this.treeOverlayScroll = this.treeOverlayIndex;
+    } else if (this.treeOverlayIndex >= this.treeOverlayScroll + listRows) {
+      this.treeOverlayScroll = this.treeOverlayIndex - listRows + 1;
+    }
+    if (this.treeOverlayScroll < 0) {
+      this.treeOverlayScroll = 0;
+    }
+  }
+
+  private moveTreeOverlay(delta: number) {
+    const visible = this.treeOverlayVisibleItems();
+    if (visible.length === 0) {
+      return;
+    }
+    this.treeOverlayIndex = Math.max(0, Math.min(visible.length - 1, this.treeOverlayIndex + delta));
+    this.treeOverlayAdjustScroll();
+    this.requestRender();
+  }
+
+  private toggleTreeOverlayFold() {
+    const visible = this.treeOverlayVisibleItems();
+    const item = visible[this.treeOverlayIndex];
+    if (!item || !item.hasChildren) {
+      return;
+    }
+    if (this.treeOverlayExpanded.has(item.id)) {
+      this.treeOverlayExpanded.delete(item.id);
+    } else {
+      this.treeOverlayExpanded.add(item.id);
+    }
+    this.requestRender();
+  }
+
+  private pickTreeOverlay() {
+    const visible = this.treeOverlayVisibleItems();
+    const item = visible[this.treeOverlayIndex];
+    if (item) {
+      this.options.treeOverlay?.onPick(item.id);
+    }
+    this.closeTreeOverlay();
+  }
+
+  private renderTreeOverlay(columns: number, rows: number): string[] {
+    const visible = this.treeOverlayVisibleItems();
+
+    if (this.treeOverlayIndex >= visible.length) {
+      this.treeOverlayIndex = Math.max(0, visible.length - 1);
+    }
+    const listRows = this.treeOverlayListRows();
+    if (this.treeOverlayScroll > Math.max(0, visible.length - listRows)) {
+      this.treeOverlayScroll = Math.max(0, visible.length - listRows);
+    }
+    this.treeOverlayAdjustScroll();
+
+    const lines: string[] = [];
+    const title = `  Conversation tree  ·  ${visible.length} visible / ${this.treeOverlayItems.length} total`;
+    lines.push(overlayChromeLine(`${BOLD}${fg(currentTheme.overlay.brightFg)}${title}`, columns));
+    lines.push(overlayLine(`${fg(currentTheme.overlay.fg)}  ↑/↓ move  space fold/unfold  enter jump  esc close`, columns));
+    lines.push(`${bg(currentTheme.overlay.bg)}${fg(240)}${"─".repeat(columns)}${RESET}`);
+
+    if (visible.length === 0) {
+      lines.push(overlayLine(`${fg(currentTheme.overlay.dimFg)}  No entries`, columns));
+      for (let i = 1; i < listRows; i += 1) {
+        lines.push(overlayLine("", columns));
+      }
+    } else {
+      const start = this.treeOverlayScroll;
+      const end = Math.min(visible.length, start + listRows);
+      for (let i = start; i < end; i += 1) {
+        lines.push(this.renderTreeOverlayRow(visible[i], i === this.treeOverlayIndex, columns));
+      }
+      for (let i = end - start; i < listRows; i += 1) {
+        lines.push(overlayLine("", columns));
+      }
+    }
+
+    const hint = "  ↑/↓ or J/K move   space fold/unfold   enter jump to entry   esc close";
+    lines.push(overlayChromeLine(`${fg(currentTheme.overlay.fg)}${hint}`, columns));
+
+    while (lines.length < rows) {
+      lines.push(overlayLine("", columns));
+    }
+    lines.length = rows;
+    return lines;
+  }
+
+  private renderTreeOverlayRow(item: TreeOverlayItem, isCursor: boolean, columns: number): string {
+    const rowBg = isCursor ? currentTheme.overlay.selBg : currentTheme.overlay.bg;
+    const baseFg = isCursor ? 255 : item.isActive ? 252 : 250;
+    const roleColor = item.role === "user" ? currentTheme.blocks.user.accent : currentTheme.blocks.assistant.accent;
+    const indent = "  ".repeat(item.depth);
+    const foldGlyph = item.hasChildren ? (this.treeOverlayExpanded.has(item.id) ? "⊟" : "⊞") : " ";
+    const roleGlyph = item.role === "user" ? ">" : "◇";
+    const activeMarker = item.isLeaf ? "← active" : item.isActive ? "●" : "";
+
+    const prefix = `${indent}${foldGlyph} ${roleGlyph} `;
+    const prefixWidth = displayWidth(prefix);
+    const markerTextWidth = activeMarker ? displayWidth(activeMarker) : 0;
+    const markerWidth = activeMarker ? 2 + markerTextWidth : 0;
+    const leftPadding = 2;
+    const rightPadding = 2;
+    const reserved = leftPadding + prefixWidth + markerWidth + rightPadding;
+    const maxPreviewWidth = Math.max(1, columns - reserved);
+    const preview = truncateToWidth(item.preview, maxPreviewWidth);
+
+    const content = `${fg(baseFg)}  ${prefix}${fg(roleColor)}${preview}${fg(baseFg)}${activeMarker ? `  ${activeMarker}` : ""}`;
+    const contentWidth = leftPadding + prefixWidth + displayWidth(preview) + markerWidth;
+    const trailing = Math.max(0, columns - contentWidth);
+
+    return `${bg(rowBg)}${content}${" ".repeat(trailing)}${RESET}`;
+  }
+
   private handleMouse(data: string) {
     let handled = false;
 
@@ -2084,6 +2322,12 @@ export class Tui {
     if (this.sessionOverlayActive) {
       const overlayLines = this.renderSessionOverlay(columns, rows);
       this.flushFrame(overlayLines, rows, columns, Math.min(rows, this.sessionOverlayIndex - this.sessionOverlayScroll + OVERLAY_HEADER_ROWS + 1), 1);
+      return;
+    }
+
+    if (this.treeOverlayActive) {
+      const overlayLines = this.renderTreeOverlay(columns, rows);
+      this.flushFrame(overlayLines, rows, columns, Math.min(rows, this.treeOverlayIndex - this.treeOverlayScroll + OVERLAY_HEADER_ROWS + 1), 1);
       return;
     }
 

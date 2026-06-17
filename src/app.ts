@@ -3,7 +3,7 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve, extname } from "path";
 import { Tui, formatSessionCost } from "./tui";
-import { sessionToRenderBlocks } from "./session-view";
+import { sessionToRenderBlocks, sessionToTreeOverlayEntries } from "./session-view";
 import { reasoningDisplayContent, reasoningDisplayTitle, reasoningTitle } from "./reasoning";
 import {
   appendTurnDraftEntry,
@@ -20,6 +20,7 @@ import {
   loadSession,
   saveSession,
   sessionToProviderMessages,
+  setActiveEntryId,
   undoLastUserTurn,
   type ContentBlock as SessionContentBlock,
   type Session,
@@ -325,6 +326,7 @@ const tui = new Tui({
     { label: "/variants", detail: "List model variants", kind: "command", insertText: "/variants", executeOnAccept: true },
     { label: "/sessions", detail: "Open the session picker", kind: "command", insertText: "/sessions", executeOnAccept: true },
     { label: "/resume", detail: "Resume a session by id", kind: "command", insertText: "/resume " },
+    { label: "/tree", detail: "Open the conversation tree", kind: "command", insertText: "/tree", executeOnAccept: true },
     { label: "/undo", detail: "Undo the last user turn", kind: "command", insertText: "/undo" },
     { label: "/skills", detail: "List available skills", kind: "command", insertText: "/skills " },
     { label: "/skill:<name>", detail: "Load and run a skill", kind: "command", insertText: "/skill:" },
@@ -354,6 +356,11 @@ const tui = new Tui({
   sessionOverlay: {
     onPick: (id) => {
       void resumeSessionById(id);
+    },
+  },
+  treeOverlay: {
+    onPick: (id) => {
+      void navigateToEntry(id);
     },
   },
   model: DEFAULT_MODEL_ID,
@@ -498,6 +505,57 @@ function refreshSessionStatsFromSession() {
     0,
   );
   updateContextInfo();
+}
+
+async function navigateToEntry(entryId: string) {
+  const targetEntry = activeSession.entries.find((entry) => entry.id === entryId);
+  if (!targetEntry) {
+    tui.addBlock({ role: "error", title: "Error", content: `Entry ${entryId} not found in the current session.` });
+    return;
+  }
+
+  try {
+    let newActiveEntryId: string | null = entryId;
+    let inputText = "";
+
+    if (targetEntry.type === "user") {
+      const texts = targetEntry.content
+        .filter((block): block is TextBlock => block.type === "text")
+        .map((block) => block.text);
+      inputText = texts.join("");
+
+      // Move the leaf to the parent of the selected user message so that
+      // resubmitting creates a sibling branch, not a child.
+      const entriesById = new Map(activeSession.entries.map((entry) => [entry.id, entry]));
+      let parentId: string | null = targetEntry.parentId;
+      while (parentId !== null) {
+        const parent = entriesById.get(parentId);
+        if (!parent) {
+          parentId = null;
+          break;
+        }
+        if (parent.type === "user" || parent.type === "assistant") {
+          break;
+        }
+        parentId = parent.parentId;
+      }
+      newActiveEntryId = parentId;
+    }
+
+    activeSession = setActiveEntryId(activeSession, newActiveEntryId);
+    await saveSession(activeSession);
+    rebuildTuiFromSession();
+    refreshSessionStatsFromSession();
+
+    if (targetEntry.type === "user") {
+      tui.setInput(inputText);
+      tui.setStatus("Jumped to parent of user message — edit and submit to branch");
+    } else {
+      tui.setStatus("Jumped to assistant message — next message will branch from here");
+    }
+  } catch (error) {
+    tui.addBlock({ role: "error", title: "Error", content: formatErrorMessage(error) });
+  }
 }
 
 function clearPendingInputState() {
@@ -991,6 +1049,15 @@ async function handleCommand(command: string): Promise<boolean> {
       }
 
       await resumeSessionById(sessionId);
+      return true;
+    }
+    case "/tree": {
+      const items = sessionToTreeOverlayEntries(activeSession);
+      if (items.length === 0) {
+        tui.addBlock({ role: "assistant", title: "Tree", content: "The current session is empty." });
+        return true;
+      }
+      tui.openTreeOverlay(items);
       return true;
     }
     case "/undo": {

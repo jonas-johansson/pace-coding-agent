@@ -263,6 +263,53 @@ function createBaseEntry(params: NewEntryFields): BaseEntry {
   };
 }
 
+export type SessionTreeNode = {
+  entry: SessionEntry;
+  children: SessionTreeNode[];
+};
+
+export function getTree(session: Session): SessionTreeNode[] {
+  const nodeById = new Map<string, SessionTreeNode>();
+  for (const entry of session.entries) {
+    nodeById.set(entry.id, { entry, children: [] });
+  }
+
+  const roots: SessionTreeNode[] = [];
+  for (const entry of session.entries) {
+    const node = nodeById.get(entry.id);
+    if (!node) {
+      continue;
+    }
+    if (entry.parentId === null) {
+      roots.push(node);
+    } else {
+      const parent = nodeById.get(entry.parentId);
+      if (parent) {
+        parent.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+  }
+  return roots;
+}
+
+export function getChildren(session: Session, parentId: string | null): SessionEntry[] {
+  return session.entries.filter((entry) => entry.parentId === parentId);
+}
+
+export function setActiveEntryId(session: Session, entryId: string | null): Session {
+  if (entryId !== null && !session.entries.some((entry) => entry.id === entryId)) {
+    throw new Error(`Entry ${entryId} not found in session ${session.id}`);
+  }
+
+  return {
+    ...session,
+    activeEntryId: entryId,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export function getActivePath(session: Session): SessionEntry[] {
   if (session.activeEntryId === null) {
     return [];
